@@ -1,0 +1,174 @@
+import { doc, setDoc, getDoc, updateDoc, deleteDoc, serverTimestamp, collection, query, where, limit, getDocs, Timestamp } from "firebase/firestore";
+
+import { db } from "../firebase";
+
+export interface ChurchSite {
+  slug: string;
+  churchName: string;
+  ownerId: string;
+  published: boolean;
+  seo?: { title: string; description: string; ogImage: string };
+//   sections?: Record<string, unknown>;
+  createdAt?: Timestamp;
+  updatedAt?: Timestamp;
+  // BuilderPage.tsx(간편 빌더)에서 쓰는 단순 필드들. WebsiteEditor.tsx의 sections 구조와는 별개.
+  pastor?: string;
+  pastorRole?: string;
+  pastorMessage?: string;
+  pastorTagline?: string; // LEAD PASTOR 카드에서 성함 아래 들어가는 짧은 소개 문구(2~3줄)
+  pastorPhotoUrl?: string; // 담임 목사 소개 카드에 표시되는 프로필 사진
+  phone?: string;
+  email?: string;
+  address?: string;
+  locationDetail?: string; // 상세 위치 안내 (ex. "○○빌딩 3층, 엘리베이터 옆 계단"). 개척교회처럼 상가 건물에 있는 경우를 위한 보충 설명
+
+  worshipTime?: string; // 구버전 단일 텍스트 필드 (하위 호환용, worshipServices가 있으면 그쪽을 우선 사용)
+  worshipServices?: { title: string; time: string; note?: string; group?: string }[]; // group: "주일예배"/"주중예배" 등 같은 이름끼리 카드로 묶어서 표시
+  mainWorshipGroup?: string; // worshipServices의 group 값 중 "본 예배" 뱃지를 표시할 구분 이름
+  visionItems?: { title: string; desc: string }[];
+  newsItems?: { title: string; date: string; content: string }[];
+  staffMembers?: { role: string; name: string; department: string; phone: string; email: string; photoUrl?: string }[]; // 부목사·전도사 등 섬기는 사람들 (숫자 제한 없음)
+  layLeaders?: { role: string; name: string; department: string; photoUrl?: string }[]; // 중직자(장로·권사). 표시 시 시무장로 > 원로장로 > 은퇴장로 > 권사 순으로 정렬
+  youtubeVideoId?: string;
+  // false로 명시하면 youtubeVideoId가 있어도 "교회 소개 영상" 섹션 전체를 숨김. 미설정(기존 사이트)은 true로 취급
+  introVideoEnabled?: boolean;
+  latestSermonTitle?: string;
+  latestSermonSpeaker?: string; // "교회 소개 영상" 캡션에 함께 표시되는 설교자 이름
+  // 홈 화면 "온라인 예배" 섹션에 카드 목록으로 표시되는 지난 설교들. 비워두면 섹션 자체가 안 보임
+  sermons?: { title: string; speaker?: string; scripture?: string; youtubeVideoId?: string; date?: string; comments?: number; views?: string }[];
+  // false로 명시하면 설교가 등록돼 있어도 "온라인 예배" 섹션 전체를 숨김. 미설정(기존 사이트)은 true로 취급
+  onlineWorshipEnabled?: boolean;
+  intro?: string;
+  logoUrl?: string;
+  heroImageUrl?: string; // 메인 화면 상단(히어로) 배경 사진. 없으면 primaryColor 그라데이션으로 대체
+  galleryImages?: string[]; // 홈 화면 "이번 주 예배 시간" 바로 위에 화면 꽉 채워 표시되는 사진(최대 10장, 여러 장이면 슬라이드)
+  buildingImageUrl?: string; // 교회 전경(건물) 사진. 교회 소개 섹션 상단에 표시
+
+  primaryColor?: string;
+  activeMenus?: string[];
+  kakaoLink?: string;
+  youtubeLink?: string;
+  instagramLink?: string;
+  metaTitle?: string;
+  metaDesc?: string;
+
+  // 결제/이용기간 관련 필드 (교회 사이트 제작 기능 전용, 주보 플랫폼과는 무관)
+  firstDeployedAt?: Timestamp; // 최초 배포(발행) 시각. 한 번 설정되면 재배포해도 절대 안 바뀜 — 30일 무료체험 기산점
+  accessExpiresAt?: Timestamp; // 이 사이트를 이용할 수 있는 만료일(무료체험 또는 결제로 연장된 날짜)
+}
+
+// BuilderPage.tsx(빌더 폼)와 WebsiteRenderer.tsx(실제 공개 페이지)가 activeMenus 값을 같은 이름으로 표시하도록 공용으로 관리
+export const MENU_ITEMS = [
+  { id: "home", label: "홈" },
+  { id: "worship", label: "예배 안내" },
+  { id: "community", label: "공동체" },
+  { id: "news", label: "교회 소식" },
+  { id: "online-worship", label: "온라인 예배" },
+  { id: "location", label: "오시는 길" },
+];
+
+export async function createChurchSite(slug: string, churchName: string, ownerId: string) {
+  const ref = doc(db, "churchSites", slug);
+  const existing = await getDoc(ref);
+  if (existing.exists()) throw new Error("이미 사용 중인 주소입니다.");
+
+  await setDoc(ref, {
+    slug,
+    churchName,
+    ownerId,
+    published: false,
+    seo: { title: `${churchName} - 우리 교회 홈페이지`, description: "", ogImage: "" },
+    // sections: {},
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function getChurchSite(slug: string): Promise<ChurchSite | null> {
+  const snap = await getDoc(doc(db, "churchSites", slug));
+  return snap.exists() ? (snap.data() as ChurchSite) : null;
+}
+
+export async function updateChurchSite(slug: string, data: Partial<ChurchSite>) {
+  await updateDoc(doc(db, "churchSites", slug), { ...data, updatedAt: serverTimestamp() });
+}
+
+// 운영자 페이지(/super/church-sites)의 "사이트 삭제" 버튼에서 씀. Firestore 문서만
+// 삭제함 — 실제 서브도메인 접속 시 siteOG/WebsiteRenderer가 문서 없음을 만나면
+// 정상적으로 빈 화면 처리하므로 별도 후처리 불필요
+export async function deleteChurchSite(slug: string) {
+  await deleteDoc(doc(db, "churchSites", slug));
+}
+
+// 날짜에 개월 수를 더함 (년/월 경계 자동 처리)
+function addMonths(date: Date, months: number): Date {
+  const d = new Date(date);
+  d.setMonth(d.getMonth() + months);
+  return d;
+}
+
+// 날짜에 일수를 더함 (음수 가능 — 하루 빼기 등)
+function addDays(date: Date, days: number): Date {
+  const d = new Date(date);
+  d.setDate(d.getDate() + days);
+  return d;
+}
+
+// 배포(발행) 시 호출. 최초 배포인 경우에만 firstDeployedAt/accessExpiresAt(30일 무료체험)를 설정하고,
+// 이미 한 번이라도 배포된 사이트를 재배포할 때는 이용 기한을 절대 건드리지 않음
+export async function publishChurchSite(slug: string) {
+  const existing = await getChurchSite(slug);
+  const patch: Partial<ChurchSite> = { published: true };
+
+  if (!existing?.firstDeployedAt) {
+    const now = new Date();
+    patch.firstDeployedAt = Timestamp.fromDate(now);
+    patch.accessExpiresAt = Timestamp.fromDate(addDays(now, 30));
+  }
+
+  await updateChurchSite(slug, patch);
+}
+
+// 결제 완료 시 이용 만료일을 연장. 아직 이용 가능한 기간(무료체험 포함)이 남아있으면 그 위에
+// 이어붙이고, 이미 만료됐으면 결제 시점부터 새로 시작함.
+export async function extendChurchSiteAccess(slug: string, months: 1 | 3 | 12): Promise<Date> {
+  const existing = await getChurchSite(slug);
+  const now = new Date();
+  const currentExpiry = existing?.accessExpiresAt?.toDate() ?? null;
+  const stillActive = currentExpiry !== null && currentExpiry.getTime() >= now.getTime();
+  const base = stillActive ? addDays(currentExpiry as Date, 1) : now;
+  const newExpiry = addDays(addMonths(base, months), -1);
+
+  await updateChurchSite(slug, { accessExpiresAt: Timestamp.fromDate(newExpiry) });
+  return newExpiry;
+}
+
+export async function getChurchSiteByOwner(ownerId: string): Promise<ChurchSite | null> {
+  const q = query(collection(db, "churchSites"), where("ownerId", "==", ownerId), limit(1));
+  const snap = await getDocs(q);
+  if (snap.empty) return null;
+  return snap.docs[0].data() as ChurchSite;
+}
+
+// 로그인한 회원(ownerId) 소유의 교회 사이트 프로젝트를 전부 불러옴 (빌더 화면의 "내 프로젝트" 목록용)
+export async function getChurchSitesByOwner(ownerId: string): Promise<ChurchSite[]> {
+  const q = query(collection(db, "churchSites"), where("ownerId", "==", ownerId));
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => d.data() as ChurchSite);
+}
+
+// 실제 배포(published)된 교회 사이트 목록을 가져옴. /website 마케팅 페이지의
+// "스테이온과 함께 하고 있는 교회" 섹션에서 씀 — 새 사이트가 배포될 때마다
+// 별도 작업 없이 이 목록에도 자동으로 반영됨
+export async function getPublishedChurchSites(max = 8): Promise<ChurchSite[]> {
+  const q = query(collection(db, "churchSites"), where("published", "==", true), limit(max));
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => d.data() as ChurchSite);
+}
+
+export function extractYoutubeId(input: string): string {
+  const trimmed = input.trim();
+  if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) return trimmed; // 이미 순수 ID면 그대로
+  const match = trimmed.match(/(?:v=|\/embed\/|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+  return match ? match[1] : trimmed;
+}
