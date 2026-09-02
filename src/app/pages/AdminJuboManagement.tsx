@@ -230,15 +230,81 @@ export const AdminJuboManagement = () => {
 
   return (
     // 사이드바 레이아웃 분리에 따라 메인 패딩 영역만 깔끔하게 유지
-    <div className="p-8 md:p-12">
+    <div className="p-4 sm:p-8 md:p-12">
       <div className="max-w-6xl mx-auto">
-        <div className="mb-10">
-          <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">운영자 통합 관리</h1>
-          <p className="text-gray-500 mt-2 font-medium">총 {users.length}개의 교회가 스테이온 서비스를 이용 중입니다.</p>
+        <div className="mb-6 md:mb-10">
+          <h1 className="text-xl sm:text-3xl font-extrabold text-gray-900 tracking-tight">운영자 통합 관리</h1>
+          <p className="text-gray-500 mt-1.5 md:mt-2 text-xs sm:text-base font-medium">총 {users.length}개의 교회가 스테이온 서비스를 이용 중입니다.</p>
         </div>
 
-        <div className="bg-white rounded-3xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-gray-100 overflow-hidden">
-          <div className="overflow-x-auto">
+        <div className="bg-white rounded-2xl md:rounded-3xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-gray-100 overflow-hidden">
+          {/* 모바일: 카드형 목록 (표의 편집 기능을 그대로 유지) */}
+          <div className="md:hidden divide-y divide-gray-100">
+            {users.map((user) => (
+              <div key={user.id} className="p-4 space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="font-bold text-gray-900 text-sm truncate">{user.churchName}</p>
+                  <span className={`shrink-0 px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wide uppercase ${user.status === 'premium' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'
+                    }`}>
+                    {user.status || 'ACTIVE'}
+                  </span>
+                </div>
+                <div className="text-xs text-gray-500 font-medium">
+                  담임목사 {user.seniorPastorName || '-'} · <span className="font-mono">{user.phone || '연락처 미등록'}</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-400 block mb-0.5">신청자</label>
+                    <input
+                      type="text"
+                      defaultValue={user.userName || ''}
+                      placeholder="-"
+                      onBlur={(e) => {
+                        const newValue = e.target.value.trim();
+                        if (newValue !== (user.userName || '')) {
+                          handleUpdateUserField(user.id, 'userName', newValue);
+                        }
+                      }}
+                      className="w-full bg-gray-50 text-gray-700 text-xs rounded-lg px-2.5 py-2 border border-gray-100 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 transition-colors"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-400 block mb-0.5">성도 수</label>
+                    <select
+                      value={user.congregationSize || ''}
+                      onChange={(e) => handleUpdateUserField(user.id, 'congregationSize', e.target.value)}
+                      className="w-full bg-gray-50 text-gray-700 text-xs rounded-lg px-2.5 py-2 border border-gray-100 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 transition-colors"
+                    >
+                      <option value="">-</option>
+                      {CONGREGATION_SIZES.map((size) => (
+                        <option key={size.value} value={size.value}>{size.value}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <p className="text-[11px] text-gray-400 font-mono">
+                  만료일: {user.lastPaymentDate ? new Date(user.lastPaymentDate.toDate()).toLocaleDateString() : '미설정'}
+                </p>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={(e) => handleExtendExpiry(user.id, user.churchName, user.lastPaymentDate, e)}
+                    className="flex-1 px-3 py-2 bg-blue-50 text-blue-600 active:bg-blue-600 active:text-white text-xs font-bold rounded-xl transition-all border border-blue-100"
+                  >
+                    만료일 연장
+                  </button>
+                  <button
+                    onClick={(e) => handleDeleteUser(user.id, user.churchName, e)}
+                    className="flex-1 px-3 py-2 bg-red-50 text-red-600 active:bg-red-600 active:text-white text-xs font-bold rounded-xl transition-all border border-red-100"
+                  >
+                    회원 탈퇴
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* 데스크톱: 기존 표 */}
+          <div className="hidden md:block overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead className="bg-gray-50/50">
                 <tr>

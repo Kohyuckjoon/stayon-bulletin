@@ -26,7 +26,8 @@ import {
   Phone,
   MessageSquare,
   X,
-  ListOrdered
+  ListOrdered,
+  Navigation
 } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { toast } from "sonner";
@@ -47,6 +48,8 @@ export function BulletinView() {
   const [loading, setLoading] = useState(true);
   const [bulletin, setBulletin] = useState<any>(null);
   const [copied, setCopied] = useState(false);
+  const [addressCopied, setAddressCopied] = useState(false);
+  const [shortcutActiveIndex, setShortcutActiveIndex] = useState(0);
   const [isPreviewMode, setIsPreviewMode] = useState(false);
   const [selectedSection, setSelectedSection] = useState<any>(null);
   const [selectedMinister, setSelectedMinister] = useState<any>(null);
@@ -157,6 +160,82 @@ export function BulletinView() {
     document.body.removeChild(textArea);
   };
 
+  // 상단 바로가기 캡슐 버튼 클릭 시 해당 섹션으로 부드럽게 스크롤 이동
+  const scrollToSection = (sectionId: string) => {
+    document.getElementById(sectionId)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  // 상단 바로가기 세그먼트 컨트롤에 표시할 항목 (내용이 있는 섹션만). early return보다 위에서
+  // 미리 계산해둬야 아래 스크롤 감지 useEffect에서도, 아래쪽 렌더링에서도 동일하게 재사용할 수 있다.
+  const shortcutItems = [
+    bulletin?.sections && bulletin.sections.length > 0 && { id: "section-worship", label: "주일 예배" },
+    bulletin?.announcements && bulletin.announcements.length > 0 && { id: "section-news", label: "교회 소식" },
+    (bulletin?.addressEnabled !== false && bulletin?.churchAddress) && { id: "section-location", label: "오시는 길" },
+  ].filter(Boolean) as { id: string; label: string }[];
+  const SEGMENT_WIDTH = 78;
+
+  // 사용자가 버튼을 누르지 않고 직접 스크롤해도, 지금 화면 상단에 걸쳐 있는 섹션에 맞춰
+  // 버튼 활성 상태가 자동으로 따라오도록 스크롤 위치를 감지한다.
+  // (IntersectionObserver의 rootMargin 방식은 상단 히어로 배너가 커서 페이지 맨 위에서는
+  //  어떤 섹션도 감지 영역에 안 걸리는 문제가 있어, 더 단순하고 확실한 스크롤 기준선 방식을 사용)
+  useEffect(() => {
+    if (shortcutItems.length === 0) return;
+
+    const REFERENCE_Y = 120; // 화면 상단에서 이 지점을 "지금 보고 있는 섹션" 기준선으로 삼는다
+
+    const handleScroll = () => {
+      let currentIdx = 0;
+      for (let i = 0; i < shortcutItems.length; i++) {
+        const el = document.getElementById(shortcutItems[i].id);
+        if (!el) continue;
+        // 기준선을 이미 지나쳐 올라간(= 화면 위쪽에 위치한) 섹션 중 가장 마지막(가장 아래) 섹션을 선택
+        if (el.getBoundingClientRect().top <= REFERENCE_Y) {
+          currentIdx = i;
+        }
+      }
+      setShortcutActiveIndex(currentIdx);
+    };
+
+    handleScroll();
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, [bulletin, shortcutItems.length]);
+
+  // "오시는 길" 주소 복사 전용 핸들러. 계좌번호 복사와 문구/상태가 달라서 별도로 둔다.
+  const handleCopyAddress = (text: string) => {
+    if (!text) return;
+
+    const onCopied = () => {
+      setAddressCopied(true);
+      toast.success("주소가 복사되었습니다.");
+      setTimeout(() => setAddressCopied(false), 2000);
+    };
+
+    const legacyCopy = () => {
+      const textArea = document.createElement("textarea");
+      textArea.value = text;
+      textArea.style.top = "0";
+      textArea.style.left = "0";
+      textArea.style.position = "fixed";
+      document.body.appendChild(textArea);
+      textArea.focus();
+      textArea.select();
+      try {
+        document.execCommand("copy");
+        onCopied();
+      } catch (err) {
+        toast.error("복사에 실패했습니다.");
+      }
+      document.body.removeChild(textArea);
+    };
+
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(onCopied).catch(legacyCopy);
+    } else {
+      legacyCopy();
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-[#111827] flex items-center justify-center">
@@ -198,7 +277,7 @@ export function BulletinView() {
           <button onClick={() => navigate("/login")} className="p-2 bg-white/10 rounded-full border border-white/10 hover:bg-white/20 transition-all"><Lock className="w-4 h-4" /></button>
         </div> */}
 
-        <Card className="overflow-hidden rounded-[2.5rem] border-0 bg-white shadow-2xl mt-3 ml-1.5 mr-1.5">
+        <Card className="overflow-hidden rounded-[2.5rem] border-0 bg-white shadow-2xl mt-3 ml-1.5 mr-1.5 gap-0">
           <div
             className="relative h-auto min-h-[300px] bg-cover bg-center flex flex-col items-center justify-center text-white px-6 py-6"
             style={{
@@ -228,7 +307,35 @@ export function BulletinView() {
             </div>
           </div>
 
-          <div className="p-4 space-y-9">
+          {/* 바로가기 세그먼트 컨트롤: 내용이 있는 섹션만 노출, 누르면 선택 배경이 스르륵 이동하며 해당 섹션으로 스크롤.
+              Card 자체의 기본 gap(gap-6)을 gap-0으로 없앤 상태라, 위아래 간격은 여기 padding으로만 직접 결정된다. */}
+          {shortcutItems.length > 0 && (
+            <div className="flex justify-center pt-4">
+              <div className="relative inline-flex bg-slate-100 rounded-full p-1">
+                <div
+                  className="absolute top-1 bottom-1 left-1 rounded-full bg-white shadow-sm transition-transform duration-300 ease-out"
+                  style={{ width: SEGMENT_WIDTH, transform: `translateX(${shortcutActiveIndex * SEGMENT_WIDTH}px)` }}
+                />
+                {shortcutItems.map((item, idx) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    style={{ width: SEGMENT_WIDTH }}
+                    onClick={() => {
+                      setShortcutActiveIndex(idx);
+                      scrollToSection(item.id);
+                    }}
+                    className={`relative z-10 h-8 rounded-full text-[11px] tracking-tight transition-colors duration-300 ${shortcutActiveIndex === idx ? "text-slate-900 font-extrabold" : "text-slate-400 font-bold"
+                      }`}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className={`p-4 space-y-9 ${shortcutItems.length === 0 ? "pt-10" : ""}`}>
             {(bulletin.prayer || bulletin.nextPrayer) && (
               <div className="bg-gray-50/80 rounded-[1.75rem] p-4 border border-gray-100 flex items-center justify-around">
                 {bulletin.prayer && (
@@ -283,7 +390,7 @@ export function BulletinView() {
             )}
 
             {bulletin.sections && bulletin.sections.length > 0 && (
-              <div className="space-y-9">
+              <div className="space-y-9" id="section-worship">
                 {bulletin.sundayServices && bulletin.sundayServices.length > 0 && (
                   <div className="animate-in fade-in duration-500">
                     <div className="flex items-center gap-4 mb-4">
@@ -615,7 +722,7 @@ export function BulletinView() {
             )}
 
             {bulletin.announcements && bulletin.announcements.length > 0 && (
-              <div>
+              <div id="section-news">
                 <div className="flex items-center gap-4 mb-4">
                   <div className="h-[1px] flex-1 bg-gray-100"></div>
                   <div className="flex items-center gap-2">
@@ -717,13 +824,13 @@ export function BulletinView() {
           </div>
         </Card>
 
-        {bulletin.ministers && bulletin.ministers.length > 0 && (
-          <div className="pt-4">
+        {bulletin.ministersEnabled !== false && bulletin.ministers && bulletin.ministers.length > 0 && (
+          <div className="pt-4 mx-1.5">
             <div className="flex items-center justify-between mb-3 px-1">
               <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-blue-600 inline-block"></span>
-                <Users className="w-4 h-4 text-slate-700" />
-                <h3 className="font-extrabold text-slate-800 text-base tracking-tight">섬기는 사람들</h3>
+                <span className="w-2 h-2 rounded-full bg-blue-400 inline-block"></span>
+                <Users className="w-4 h-4 text-slate-300" />
+                <h3 className="font-extrabold text-white text-base tracking-tight">섬기는 사람들</h3>
               </div>
             </div>
 
@@ -776,6 +883,68 @@ export function BulletinView() {
                   </div>
                 );
               })}
+            </div>
+          </div>
+        )}
+
+        {bulletin.addressEnabled !== false && bulletin.churchAddress && (
+          <div className="pt-4 mx-1.5" id="section-location">
+            <div className="flex items-center justify-between mb-3 px-1">
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-blue-400 inline-block"></span>
+                <MapPin className="w-4 h-4 text-slate-300" />
+                <h3 className="font-extrabold text-white text-base tracking-tight">오시는 길</h3>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-[1.8rem] p-4 border border-slate-100 shadow-sm">
+              {(() => {
+                const naverMapUrl = `https://map.naver.com/p/search/${encodeURIComponent(`${bulletin.churchAddress} ${bulletin.churchAddressDetail || ""}`.trim())}`;
+                return (
+                  <>
+                    {/* 교회가 직접 등록한 위치 안내 이미지 (네이버 지도 캡처본 등) - 없으면(구버전 주보 등) 생략. 이미지를 눌러도 길찾기 버튼과 동일하게 네이버 지도로 이동 */}
+                    {bulletin.locationImage && (
+                      <a
+                        href={naverMapUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className={`block w-full rounded-xl overflow-hidden border border-slate-100 mb-3 active:scale-[0.98] transition-transform ${bulletin.locationImageRatio === "1:1" ? "aspect-square" : "aspect-[4/3]"}`}
+                      >
+                        <img
+                          src={bulletin.locationImage}
+                          alt="오시는 길 안내 이미지"
+                          className="w-full h-full object-cover"
+                        />
+                      </a>
+                    )}
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="text-sm font-bold text-slate-800 leading-relaxed break-keep flex-1 min-w-0">
+                        {bulletin.churchAddress}
+                        {bulletin.churchAddressDetail && (
+                          <span className="text-slate-500 font-medium"> {bulletin.churchAddressDetail}</span>
+                        )}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => handleCopyAddress(`${bulletin.churchAddress} ${bulletin.churchAddressDetail || ""}`.trim())}
+                        className="shrink-0 flex items-center gap-1 text-[11px] font-bold text-slate-400 hover:text-blue-600 transition-colors mt-0.5"
+                      >
+                        {addressCopied ? <Check className="w-3 h-3 stroke-[2.5]" /> : <Copy className="w-3 h-3" />}
+                        {addressCopied ? "복사됨" : "주소 복사"}
+                      </button>
+                    </div>
+                    <a
+                      href={naverMapUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-3 w-full flex items-center justify-center gap-2 h-11 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-[0.98] text-white text-sm font-bold transition-all"
+                    >
+                      <Navigation className="w-4 h-4" />
+                      길찾기
+                    </a>
+                  </>
+                );
+              })()}
             </div>
           </div>
         )}

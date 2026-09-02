@@ -250,26 +250,26 @@ export const AdminAdSettings = () => {
 
   return (
     <div className="min-h-screen bg-[#F2F4F6] font-sans">
-      <main className="max-w-[1100px] px-6 md:px-10 py-6 md:py-8">
-        <div className="flex items-center gap-2 mb-6">
+      <main className="max-w-[1100px] px-4 sm:px-6 md:px-10 py-4 sm:py-6 md:py-8">
+        <div className="flex items-center flex-wrap gap-2 mb-5 sm:mb-6">
           <button
             type="button"
             onClick={() => setAdminView("ticker")}
-            className={`px-4 py-2.5 rounded-xl text-[13px] font-black transition-all ${adminView === "ticker" ? "bg-[#191F28] text-white" : "bg-white text-[#8B95A1] border border-[#E5E8EB]"}`}
+            className={`px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-xl text-[12px] sm:text-[13px] font-black transition-all ${adminView === "ticker" ? "bg-[#191F28] text-white" : "bg-white text-[#8B95A1] border border-[#E5E8EB]"}`}
           >
             티커 노출
           </button>
           <button
             type="button"
             onClick={() => setAdminView("top")}
-            className={`px-4 py-2.5 rounded-xl text-[13px] font-black transition-all ${adminView === "top" ? "bg-[#191F28] text-white" : "bg-white text-[#8B95A1] border border-[#E5E8EB]"}`}
+            className={`px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-xl text-[12px] sm:text-[13px] font-black transition-all ${adminView === "top" ? "bg-[#191F28] text-white" : "bg-white text-[#8B95A1] border border-[#E5E8EB]"}`}
           >
             상단 노출
           </button>
           <button
             type="button"
             onClick={() => setAdminView("requests")}
-            className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-[13px] font-black transition-all ${adminView === "requests" ? "bg-[#191F28] text-white" : "bg-white text-[#8B95A1] border border-[#E5E8EB]"}`}
+            className={`flex items-center gap-1.5 px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-xl text-[12px] sm:text-[13px] font-black transition-all ${adminView === "requests" ? "bg-[#191F28] text-white" : "bg-white text-[#8B95A1] border border-[#E5E8EB]"}`}
           >
             신청 현황
             {pendingRequests.length > 0 && (

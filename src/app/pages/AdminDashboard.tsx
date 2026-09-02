@@ -13,18 +13,27 @@ import { Card } from "../components/ui/card";
 import {
   Plus, FileText, History as HistoryIcon, LogOut, Calendar, Eye, Smartphone, Download, Send,
   CheckCircle2, BookOpen, Globe, Copy, Zap, ChevronRight, ShieldCheck, Lock, Megaphone,
-  X, Sparkles, Youtube, ExternalLink, ChevronLeft, Briefcase
+  X, Sparkles, Youtube, ExternalLink, ChevronLeft, Briefcase, ChevronDown
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "../components/ui/dialog";
+import {
+  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
+} from "../components/ui/dropdown-menu";
 import { QRCodeSVG } from "qrcode.react";
 import { toast } from "sonner";
 import { useJobBoardEnabled } from "../../hooks/useJobBoardEnabled";
+import { useFeatureUpdateNotice } from "../../hooks/useFeatureUpdateNotice";
 
 export function AdminDashboard() {
   const navigate = useNavigate();
   const { enabled: jobBoardEnabled } = useJobBoardEnabled();
+  const { message: featureUpdateMessage, show: showFeatureUpdate } = useFeatureUpdateNotice();
+  const [noticeMarqueeNeeded, setNoticeMarqueeNeeded] = useState(true);
+  const [noticeSweepDuration, setNoticeSweepDuration] = useState(10);
+  const noticeContainerRef = useRef<HTMLDivElement>(null);
+  const noticeTextRef = useRef<HTMLSpanElement>(null);
   const [currentSlide, setCurrentSlide] = useState(0);
   const [showWelcomeDialog, setShowWelcomeDialog] = useState(false); // 팝업 이름 변경 (신규 유저 환영)
   const [showTrialDialog, setShowTrialDialog] = useState(false);
@@ -400,6 +409,31 @@ export function AdminDashboard() {
     img.src = "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(svgData)));
   };
 
+  // 기능 업데이트 알림 문구는 전광판처럼 항상 오른쪽에서 등장해 왼쪽으로 흐르다 사라지고,
+  // 잠시 후 다시 오른쪽에서 등장하는 동작을 반복한다(한 줄에 다 들어차도 계속 움직인다).
+  useEffect(() => {
+    if (!showFeatureUpdate) return;
+    const container = noticeContainerRef.current;
+    const text = noticeTextRef.current;
+    if (container && text) {
+      const containerWidth = container.clientWidth;
+      const textWidth = text.scrollWidth;
+      setNoticeMarqueeNeeded(true);
+
+      // 시작 위치: 텍스트 왼쪽 끝이 컨테이너 오른쪽 끝에 딱 붙는 지점(완전히 화면 밖)
+      // 종료 위치: 텍스트 오른쪽 끝이 컨테이너 왼쪽 끝을 완전히 지나는 지점(완전히 화면 밖)
+      container.style.setProperty("--notice-start", `${containerWidth}px`);
+      container.style.setProperty("--notice-end", `${-textWidth}px`);
+
+      // 이동 거리에 비례해 재생 시간을 계산해 문구 길이와 무관하게 일정한 속도로 흐르게 한다.
+      // 키프레임에서 0~70% 구간에 이동을, 70~100% 구간에 정지(사라진 채 대기)를 배치했으므로
+      // 전체 재생시간을 "이동 시간 / 0.7"로 잡으면 실제 이동 속도가 늘 SPEED(px/s)로 맞춰진다.
+      const SPEED = 50; // px/s
+      const travelDuration = (containerWidth + textWidth) / SPEED;
+      setNoticeSweepDuration(travelDuration / 0.7);
+    }
+  }, [showFeatureUpdate, featureUpdateMessage]);
+
   const stats = [
     { label: "전체 주보", value: recentBulletins.length.toString(), icon: <FileText className="w-6 h-6" />, color: "from-blue-500 to-blue-600" },
     { label: "이번 달 조회수", value: (userData?.monthlyViews || 0).toLocaleString(), icon: <Eye className="w-6 h-6" />, color: "from-purple-500 to-purple-600" },
@@ -425,6 +459,20 @@ export function AdminDashboard() {
           pointer-events: none;
           user-select: none;
           cursor: not-allowed;
+        }
+        @keyframes noticeSweep {
+          0% { transform: translateX(var(--notice-start, 100%)); }
+          70% { transform: translateX(var(--notice-end, -100%)); }
+          100% { transform: translateX(var(--notice-end, -100%)); }
+        }
+        .animate-notice-sweep {
+          position: absolute;
+          top: 0;
+          left: 0;
+          white-space: nowrap;
+          animation-name: noticeSweep;
+          animation-timing-function: linear;
+          animation-iteration-count: infinite;
         }
       `}</style>
 
@@ -457,26 +505,59 @@ export function AdminDashboard() {
               </button>
             </div>
 
-            {/* 우측: 청빙 게시판 + 주보 미리보기 + 로그아웃 버튼 그룹 */}
+            {/* 우측: 바로가기(외부사역팀 섭외/청빙 게시판) + 주보 미리보기 + 로그아웃 버튼 그룹 */}
             <div className="flex items-center gap-2">
-              {jobBoardEnabled ? (
-                <button
-                  onClick={() => navigate("/jobs", { state: { from: "admin" } })}
-                  className="flex items-center gap-1.5 shrink-0 bg-blue-600 text-white px-3 sm:px-4 py-2 sm:py-2.5 rounded-full shadow-md active:scale-95 transition-all text-xs sm:text-sm font-black relative"
-                >
-                  <Briefcase className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-white" />
-                  <span className="hidden xs:inline">사역자</span> 청빙 게시판
-                  <span className="w-2 h-2 bg-red-400 rounded-full"></span>
-                </button>
-              ) : (
-                <button
-                  disabled
-                  className="flex items-center gap-1.5 shrink-0 bg-gray-100 text-gray-400 px-3 sm:px-4 py-2 sm:py-2.5 rounded-full text-xs sm:text-sm font-black cursor-not-allowed"
-                >
-                  <Lock className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-gray-400" />
-                  <span className="hidden xs:inline">사역자</span> 청빙 게시판
-                </button>
-              )}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button className="flex items-center gap-1 shrink-0 bg-blue-600 text-white px-3 sm:px-4 py-2 sm:py-2.5 rounded-full shadow-md active:scale-95 transition-all text-xs sm:text-sm font-black relative">
+                    바로가기
+                    <ChevronDown className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                    <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-red-400 rounded-full"></span>
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" sideOffset={8} className="rounded-2xl border-0 shadow-xl p-2 w-64 bg-white">
+                  {/* 1) 외부사역팀 섭외: 항상 이용 가능, 외부 링크로 새 탭 오픈 */}
+                  <DropdownMenuItem
+                    onClick={() => window.open("https://place.stayon-platform.com/teams", "_blank", "noopener,noreferrer")}
+                    className="rounded-xl px-2.5 py-2.5 gap-3 cursor-pointer focus:bg-blue-50"
+                  >
+                    <div className="w-9 h-9 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600 shrink-0">
+                      <Briefcase className="w-4 h-4" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-bold text-sm text-slate-900">외부사역팀 섭외</p>
+                      <p className="text-[11px] text-slate-400 truncate">스테이온 플레이스에서 바로 섭외하기</p>
+                    </div>
+                    <ExternalLink className="w-3.5 h-3.5 text-slate-300 shrink-0" />
+                  </DropdownMenuItem>
+
+                  {/* 2) 청빙 게시판: 기존 기능 플래그(jobBoardEnabled)를 그대로 따름 — 켜지면 활성, 꺼지면 자물쇠+비활성 */}
+                  {jobBoardEnabled ? (
+                    <DropdownMenuItem
+                      onClick={() => navigate("/jobs", { state: { from: "admin" } })}
+                      className="rounded-xl px-2.5 py-2.5 gap-3 cursor-pointer focus:bg-blue-50"
+                    >
+                      <div className="w-9 h-9 rounded-xl bg-blue-50 flex items-center justify-center text-blue-600 shrink-0">
+                        <Briefcase className="w-4 h-4" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-bold text-sm text-slate-900">청빙 게시판</p>
+                        <p className="text-[11px] text-slate-400 truncate">사역자 채용 공고 보기</p>
+                      </div>
+                    </DropdownMenuItem>
+                  ) : (
+                    <DropdownMenuItem disabled className="rounded-xl px-2.5 py-2.5 gap-3">
+                      <div className="w-9 h-9 rounded-xl bg-gray-100 flex items-center justify-center text-gray-400 shrink-0">
+                        <Lock className="w-4 h-4" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-bold text-sm text-gray-400">청빙 게시판</p>
+                        <p className="text-[11px] text-gray-300 truncate">서비스 준비 중입니다</p>
+                      </div>
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
 
               <Button variant="outline" onClick={() => window.open(fixedViewUrl, "_blank")} className="rounded-xl h-10 px-4 hidden sm:flex border-slate-200 bg-slate-50/50 text-slate-700 font-bold hover:bg-slate-100 hover:text-blue-600 text-xs">
                 주보 미리보기
@@ -658,29 +739,58 @@ export function AdminDashboard() {
           </div>
         </Card> */}
 
-        <Card className={`border-none shadow-md overflow-hidden rounded-[1.75rem] transition-all relative h-full flex flex-row items-stretch ${statusUI.cardBg} ${statusUI.isUrgent ? 'animate-strong-glow' : ''}`}>
+        {/* /super > 기능 업데이트 알림. 전광판처럼 항상 왼쪽으로 흘러가다 사라지고,
+            잠시 후 오른쪽에서 다시 나타나는 것을 반복한다. */}
+        {showFeatureUpdate && (
+          <div className="mb-4 flex items-center gap-2.5 bg-gradient-to-r from-blue-600 to-indigo-700 text-white rounded-2xl px-4 py-2.5 shadow-md">
+            <Megaphone className="w-4 h-4 shrink-0" />
+            <div ref={noticeContainerRef} className="flex-1 min-w-0 h-4 overflow-hidden relative">
+              {/* 폭 측정 전용 숨김 사본. 항상 같은 위치에 렌더링해 ref가 흔들리지 않게 한다 */}
+              <span ref={noticeTextRef} className="text-xs font-bold whitespace-nowrap invisible absolute pointer-events-none">
+                {featureUpdateMessage}
+              </span>
+
+              {noticeMarqueeNeeded ? (
+                <span
+                  className="text-xs font-bold animate-notice-sweep"
+                  style={{ animationDuration: `${noticeSweepDuration}s` }}
+                >
+                  {featureUpdateMessage}
+                </span>
+              ) : (
+                <span className="text-xs font-bold whitespace-nowrap block truncate">{featureUpdateMessage}</span>
+              )}
+            </div>
+          </div>
+        )}
+
+        <Card className={`border-none shadow-md overflow-hidden rounded-[1.75rem] transition-all relative h-full flex flex-row items-stretch gap-0 ${statusUI.cardBg} ${statusUI.isUrgent ? 'animate-strong-glow' : ''}`}>
 
           {/* 좌측 파란색 아이콘 박스 (모바일: w-24, PC: sm:w-32) */}
-          <div className={`w-24 sm:w-32 min-h-[120px] ${statusUI.iconBg} flex items-center justify-center relative overflow-hidden shrink-0`}>
+          <div className={`w-24 sm:w-32 min-h-[120px] ${statusUI.iconBg} flex flex-col items-center justify-center gap-2 relative overflow-hidden shrink-0`}>
             <div className="absolute inset-0 bg-black/5"></div>
             <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-2xl bg-white/20 backdrop-blur-md flex items-center justify-center text-white shadow-inner relative z-10">
               <Zap className="w-6 h-6 sm:w-8 sm:h-8 fill-white/20 animate-pulse" />
             </div>
+            {/* 모바일 전용: D-578 배지를 아이콘 하단에 배치 (PC는 우측 타이틀 옆 배지 유지) */}
+            <span className="sm:hidden relative z-10 px-2 py-0.5 rounded-full text-[10px] font-black inline-flex items-center gap-1 bg-white/20 backdrop-blur-md text-white border border-white/30">
+              <Calendar className="w-3 h-3" /> {statusUI.label}
+            </span>
           </div>
 
           {/* 우측 본문 영역 (가로 배치 유지, 모바일 글자/패딩 축소) */}
           <div className="p-4 sm:p-6 flex-1 min-w-0 flex flex-col justify-between">
             <div>
-              <div className="flex items-center justify-between gap-2 mb-1">
-                <h2 className="text-xs sm:text-base font-black text-slate-900 tracking-tight truncate">
+              <div className="flex flex-wrap items-start justify-between gap-2 mb-1">
+                <h2 className="text-xs sm:text-base font-black text-slate-900 tracking-tight">
                   {statusUI.title}
                 </h2>
-                <span className={`px-2 py-0.5 rounded-full text-[10px] sm:text-xs font-black inline-flex items-center gap-1 border shrink-0 ${statusUI.badgeBg}`}>
+                <span className={`hidden sm:inline-flex px-2 py-0.5 rounded-full text-[10px] sm:text-xs font-black items-center gap-1 border shrink-0 ${statusUI.badgeBg}`}>
                   <Calendar className="w-3 h-3" /> {statusUI.label}
                 </span>
               </div>
 
-              <p className="text-[11px] sm:text-xs text-slate-600 font-medium truncate mb-2">
+              <p className="text-[11px] sm:text-xs text-slate-600 font-medium mb-2 leading-relaxed">
                 {statusUI.desc}
               </p>
             </div>
@@ -698,16 +808,15 @@ export function AdminDashboard() {
 
         </Card>
 
-        <div className="grid md:grid-cols-3 gap-6 mb-8 mt-6">
-          {/* <div className="grid md:grid-cols-3 gap-6 mb-8"> */}
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 sm:gap-6 mb-8 mt-6">
           {stats.map((stat, index) => (
-            <Card key={index} className="p-6 rounded-3xl border-0 bg-white shadow-sm hover:shadow-md transition-all">
+            <Card key={index} className={`p-4 sm:p-6 rounded-3xl border-0 bg-white shadow-sm hover:shadow-md transition-all ${index === 2 ? "col-span-2 md:col-span-1" : ""}`}>
               <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-gray-500 font-bold mb-1 text-sm">{stat.label}</p>
-                  <p className="text-3xl font-black text-gray-900">{stat.value}</p>
+                <div className="min-w-0">
+                  <p className="text-gray-500 font-bold mb-1 text-xs sm:text-sm truncate">{stat.label}</p>
+                  <p className="text-2xl sm:text-3xl font-black text-gray-900">{stat.value}</p>
                 </div>
-                <div className={`w-12 h-12 rounded-2xl bg-gradient-to-br ${stat.color} flex items-center justify-center text-white shadow-lg`}>
+                <div className={`w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br ${stat.color} flex items-center justify-center text-white shadow-lg shrink-0 [&_svg]:w-5 [&_svg]:h-5 sm:[&_svg]:w-6 sm:[&_svg]:h-6`}>
                   {stat.icon}
                 </div>
               </div>
@@ -717,38 +826,38 @@ export function AdminDashboard() {
 
         <div className="mb-10 relative">
           <div className="grid md:grid-cols-2 gap-4 mb-6">
-            <Card onClick={() => !isExpired && navigate("/admin/editor")} className={`p-6 rounded-3xl border-0 bg-gradient-to-br from-blue-600 to-indigo-700 text-white transition-all group shadow-lg ${isExpired ? 'locked-feature' : 'cursor-pointer hover:shadow-2xl hover:-translate-y-1'}`}>
-              <div className="flex items-center gap-5">
-                <div className="w-16 h-16 rounded-2xl bg-white/20 backdrop-blur flex items-center justify-center group-hover:scale-110 transition-transform">
-                  {isExpired ? <Lock className="w-8 h-8" /> : <Plus className="w-8 h-8" />}
+            <Card onClick={() => !isExpired && navigate("/admin/editor")} className={`p-5 sm:p-6 rounded-3xl border-0 bg-gradient-to-br from-blue-600 to-indigo-700 text-white transition-all group shadow-lg ${isExpired ? 'locked-feature' : 'cursor-pointer hover:shadow-2xl hover:-translate-y-1'}`}>
+              <div className="flex items-center gap-4 sm:gap-5">
+                <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-2xl bg-white/20 backdrop-blur flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
+                  {isExpired ? <Lock className="w-6 h-6 sm:w-8 sm:h-8" /> : <Plus className="w-6 h-6 sm:w-8 sm:h-8" />}
                 </div>
-                <div>
-                  <h3 className="text-xl font-bold mb-1">새 주보 만들기</h3>
-                  <p className="text-blue-100 opacity-80 text-sm">주보를 작성하고 즉시 발행하세요</p>
+                <div className="min-w-0">
+                  <h3 className="text-base sm:text-xl font-bold mb-1">새 주보 만들기</h3>
+                  <p className="text-blue-100 opacity-80 text-xs sm:text-sm">주보를 작성하고 즉시 발행하세요</p>
                 </div>
               </div>
             </Card>
-            <Card onClick={() => !isExpired && navigate("/admin/history")} className={`p-6 rounded-3xl border-0 bg-white transition-all group shadow-sm border border-gray-50 ${isExpired ? 'locked-feature' : 'cursor-pointer hover:shadow-xl'}`}>
-              <div className="flex items-center gap-5">
-                <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center text-white group-hover:scale-110 transition-transform shadow-lg">
-                  {isExpired ? <Lock className="w-8 h-8" /> : <HistoryIcon className="w-8 h-8" />}
+            <Card onClick={() => !isExpired && navigate("/admin/history")} className={`p-5 sm:p-6 rounded-3xl border-0 bg-white transition-all group shadow-sm border border-gray-50 ${isExpired ? 'locked-feature' : 'cursor-pointer hover:shadow-xl'}`}>
+              <div className="flex items-center gap-4 sm:gap-5">
+                <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-2xl bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center text-white group-hover:scale-110 transition-transform shadow-lg shrink-0">
+                  {isExpired ? <Lock className="w-6 h-6 sm:w-8 sm:h-8" /> : <HistoryIcon className="w-6 h-6 sm:w-8 sm:h-8" />}
                 </div>
-                <div>
-                  <h3 className="text-xl font-bold mb-1 text-gray-900">주보 히스토리</h3>
-                  <p className="text-gray-500 text-sm font-medium">과거 주보 보기 및 간편 재사용</p>
+                <div className="min-w-0">
+                  <h3 className="text-base sm:text-xl font-bold mb-1 text-gray-900">주보 히스토리</h3>
+                  <p className="text-gray-500 text-xs sm:text-sm font-medium">과거 주보 보기 및 간편 재사용</p>
                 </div>
               </div>
             </Card>
           </div>
 
-          <Card className={`mb-6 p-8 rounded-[2rem] border-0 bg-white shadow-lg overflow-hidden relative border border-blue-50 transition-all ${isExpired ? 'locked-feature' : ''}`}>
-            <div className="flex flex-col md:flex-row items-center gap-8">
-              <div className="w-20 h-20 rounded-3xl bg-blue-50 flex items-center justify-center text-blue-600 shadow-inner flex-shrink-0">
-                <Globe className="w-10 h-10 animate-pulse" />
+          <Card className={`mb-6 p-5 sm:p-8 rounded-[2rem] border-0 bg-white shadow-lg overflow-hidden relative border border-blue-50 transition-all ${isExpired ? 'locked-feature' : ''}`}>
+            <div className="flex flex-col md:flex-row items-center gap-4 sm:gap-8">
+              <div className="w-14 h-14 sm:w-20 sm:h-20 rounded-3xl bg-blue-50 flex items-center justify-center text-blue-600 shadow-inner flex-shrink-0">
+                <Globe className="w-7 h-7 sm:w-10 sm:h-10 animate-pulse" />
               </div>
               <div className="flex-1 text-center md:text-left">
-                <div className="flex flex-col md:flex-row items-center gap-3 mb-3">
-                  <h3 className="text-2xl font-black text-gray-900 tracking-tight">현재 게시 중인 주보</h3>
+                <div className="flex flex-col md:flex-row items-center gap-2 sm:gap-3 mb-2 sm:mb-3">
+                  <h3 className="text-lg sm:text-2xl font-black text-gray-900 tracking-tight">현재 게시 중인 주보</h3>
                   {publishedBulletin ? (
                     <span className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-600 text-white text-[10px] font-black shadow-sm border border-blue-700 uppercase tracking-widest">
                       <CheckCircle2 className="w-3.5 h-3.5" /> LIVE 게시 중
@@ -760,35 +869,35 @@ export function AdminDashboard() {
                   )}
                 </div>
                 {publishedBulletin ? (
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 py-2">
-                    <div className="flex items-center justify-center md:justify-start gap-2 text-gray-600 font-bold"><Calendar className="w-5 h-5 text-blue-500" />{publishedBulletin.date}</div>
-                    <div className="flex items-center justify-center md:justify-start gap-2 text-gray-600 font-bold"><BookOpen className="w-5 h-5 text-purple-500" />{publishedBulletin.scripture || "본문 없음"}</div>
-                    <div className="flex items-center justify-center md:justify-start gap-2 text-gray-600 font-bold"><FileText className="w-5 h-5 text-emerald-500" />{publishedBulletin.title}</div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2 sm:gap-4 py-1 sm:py-2 text-sm sm:text-base">
+                    <div className="flex items-center justify-center md:justify-start gap-2 text-gray-600 font-bold"><Calendar className="w-4 h-4 sm:w-5 sm:h-5 text-blue-500" />{publishedBulletin.date}</div>
+                    <div className="flex items-center justify-center md:justify-start gap-2 text-gray-600 font-bold"><BookOpen className="w-4 h-4 sm:w-5 sm:h-5 text-purple-500" />{publishedBulletin.scripture || "본문 없음"}</div>
+                    <div className="flex items-center justify-center md:justify-start gap-2 text-gray-600 font-bold truncate"><FileText className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-500 shrink-0" />{publishedBulletin.title}</div>
                   </div>
                 ) : (
-                  <p className="text-gray-400 font-medium">작성된 주보를 '게시하기'하면 QR에 즉시 반영됩니다.</p>
+                  <p className="text-gray-400 font-medium text-sm sm:text-base">작성된 주보를 '게시하기'하면 QR에 즉시 반영됩니다.</p>
                 )}
               </div>
-              <Button disabled={!publishedBulletin || isExpired} onClick={() => publishedBulletin && window.open(fixedViewUrl, "_blank")} className="bg-gray-900 hover:bg-black text-white px-8 py-6 rounded-2xl font-bold shadow-lg transition-all">성도 화면 확인</Button>
+              <Button disabled={!publishedBulletin || isExpired} onClick={() => publishedBulletin && window.open(fixedViewUrl, "_blank")} className="bg-gray-900 hover:bg-black text-white px-6 py-4 sm:px-8 sm:py-6 rounded-2xl font-bold shadow-lg transition-all w-full md:w-auto">성도 화면 확인</Button>
             </div>
           </Card>
 
-          <Card className={`p-8 rounded-[2rem] border-0 bg-white shadow-lg overflow-hidden relative group border border-blue-50 transition-all ${isExpired ? 'locked-feature' : ''}`}>
-            <div className="relative z-10 flex flex-col md:flex-row items-center gap-10">
-              <div className="bg-white p-4 rounded-3xl shadow-sm border border-gray-100">
+          <Card className={`p-5 sm:p-8 rounded-[2rem] border-0 bg-white shadow-lg overflow-hidden relative group border border-blue-50 transition-all ${isExpired ? 'locked-feature' : ''}`}>
+            <div className="relative z-10 flex flex-col md:flex-row items-center gap-5 sm:gap-10">
+              <div className="bg-white p-3 sm:p-4 rounded-3xl shadow-sm border border-gray-100 shrink-0">
                 <QRCodeSVG id="bulletin-qr" value={fixedViewUrl} size={150} />
               </div>
               <div className="flex-1 text-center md:text-left">
-                <div className="flex flex-col md:flex-row items-center gap-3 mb-4">
+                <div className="flex flex-col md:flex-row items-center gap-2 sm:gap-3 mb-2 sm:mb-4">
                   <div className="px-4 py-1.5 bg-blue-600 text-white rounded-full text-[10px] font-black tracking-widest uppercase">Active</div>
-                  <h3 className="text-2xl font-black text-gray-900 tracking-tight">부서 고정 QR 코드</h3>
+                  <h3 className="text-lg sm:text-2xl font-black text-gray-900 tracking-tight">부서 고정 QR 코드</h3>
                 </div>
-                <p className="text-gray-600 text-base leading-relaxed mb-6 font-medium">이 QR 하나로 매주 새롭게 발행되는 주보를 확인할 수 있습니다.</p>
-                <div className="flex flex-wrap gap-3 justify-center md:justify-start">
-                  <Button onClick={() => !isExpired && downloadQRCode()} disabled={isExpired} className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-6 rounded-2xl font-bold shadow-lg transition-all">
+                <p className="text-gray-600 text-sm sm:text-base leading-relaxed mb-4 sm:mb-6 font-medium">이 QR 하나로 매주 새롭게 발행되는 주보를 확인할 수 있습니다.</p>
+                <div className="flex flex-wrap gap-2 sm:gap-3 justify-center md:justify-start">
+                  <Button onClick={() => !isExpired && downloadQRCode()} disabled={isExpired} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-3 sm:px-8 sm:py-6 rounded-2xl font-bold shadow-lg transition-all text-sm sm:text-base">
                     <Download className="w-4 h-4 mr-2" /> QR 이미지 저장
                   </Button>
-                  <Button onClick={() => !isExpired && copyToClipboard()} disabled={isExpired} variant="outline" className="px-8 py-6 rounded-2xl font-bold border-gray-200 text-gray-600 hover:bg-gray-50 shadow-sm transition-all">
+                  <Button onClick={() => !isExpired && copyToClipboard()} disabled={isExpired} variant="outline" className="px-5 py-3 sm:px-8 sm:py-6 rounded-2xl font-bold border-gray-200 text-gray-600 hover:bg-gray-50 shadow-sm transition-all text-sm sm:text-base">
                     <Copy className="w-4 h-4 mr-2" /> 링크 복사
                   </Button>
                 </div>
@@ -843,36 +952,39 @@ export function AdminDashboard() {
               recentBulletins.map((bullet) => {
                 const isCurrentlyActive = publishedBulletin?.id === bullet.id;
                 return (
-                  <Card key={bullet.id} className={`p-6 rounded-[2rem] border-0 bg-white shadow-sm hover:shadow-xl transition-all group ${isCurrentlyActive ? 'ring-4 ring-blue-500 bg-blue-50/20 shadow-blue-100' : ''} ${isExpired ? 'locked-feature' : ''}`}>
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6">
-                      <div className="flex items-center gap-5 flex-1">
-                        <div className={`w-16 h-16 rounded-2xl flex items-center justify-center shadow-inner transition-all ${isCurrentlyActive ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-400'}`}>
-                          {isExpired ? <Lock className="w-8 h-8" /> : <FileText className="w-8 h-8" />}
+                  <Card key={bullet.id} className={`p-4 sm:p-6 rounded-[1.75rem] sm:rounded-[2rem] border-0 bg-white shadow-sm hover:shadow-xl transition-all group ${isCurrentlyActive ? 'ring-4 ring-blue-500 bg-blue-50/20 shadow-blue-100' : ''} ${isExpired ? 'locked-feature' : ''}`}>
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 sm:gap-6">
+                      <div className="flex items-center gap-3 sm:gap-5 flex-1 min-w-0">
+                        <div className={`w-12 h-12 sm:w-16 sm:h-16 rounded-2xl flex items-center justify-center shadow-inner transition-all shrink-0 ${isCurrentlyActive ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-400'}`}>
+                          {isExpired ? <Lock className="w-6 h-6 sm:w-8 sm:h-8" /> : <FileText className="w-6 h-6 sm:w-8 sm:h-8" />}
                         </div>
-                        <div className="flex-1">
-                          <div className="flex flex-wrap items-center gap-2 mb-2">
-                            <h3 className="font-bold text-xl text-gray-900 group-hover:text-blue-600 transition-colors">{bullet.title}</h3>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex flex-wrap items-center gap-2 mb-1 sm:mb-2">
+                            <h3 className="font-bold text-base sm:text-xl text-gray-900 group-hover:text-blue-600 transition-colors truncate">{bullet.title}</h3>
                             {isCurrentlyActive && (
-                              <span className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-600 text-white text-[10px] font-black uppercase tracking-widest">
-                                <Globe className="w-3 h-3" /> 게시 중
+                              <span className="flex items-center gap-1.5 px-2.5 py-0.5 sm:px-3 sm:py-1 rounded-full bg-blue-600 text-white text-[9px] sm:text-[10px] font-black uppercase tracking-widest shrink-0">
+                                <Globe className="w-2.5 h-2.5 sm:w-3 sm:h-3" /> 게시 중
                               </span>
                             )}
                           </div>
-                          <div className="flex items-center gap-4 text-sm font-bold text-gray-400">
-                            <span className="flex items-center gap-1.5"><Calendar className="w-4 h-4" />{bullet.date}</span>
+                          <div className="flex items-center gap-4 text-xs sm:text-sm font-bold text-gray-400">
+                            <span className="flex items-center gap-1.5"><Calendar className="w-3.5 h-3.5 sm:w-4 sm:h-4" />{bullet.date}</span>
                           </div>
                         </div>
                       </div>
-                      <div className="flex flex-wrap gap-2 w-full sm:w-auto">
-                        <Button
-                          disabled={isCurrentlyActive || isExpired}
-                          onClick={() => handlePublish(bullet.id)}
-                          className={`flex-1 sm:flex-none rounded-2xl font-black transition-all shadow-md ${isCurrentlyActive ? 'bg-gray-100 text-gray-400 border-0' : isExpired ? 'bg-gray-200 text-gray-400' : 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:scale-105'}`}
-                        >
-                          <Send className="w-4 h-4 mr-2" /> {isCurrentlyActive ? "게시 중" : "게시하기"}
-                        </Button>
-                        <Button variant="outline" className="flex-1 sm:flex-none rounded-2xl font-bold border-gray-100 hover:bg-gray-50 px-6 py-2" onClick={() => window.open(`${window.location.origin}/view/${bullet.id}`, "_blank")}>미리보기</Button>
-                        <Button disabled={isExpired} variant="outline" className="flex-1 sm:flex-none rounded-2xl font-bold bg-gray-50 border-0 text-gray-600 hover:bg-gray-100 px-6 py-2" onClick={() => navigate(`/admin/editor/${bullet.id}`)}>수정하기</Button>
+                      <div className="flex gap-2 w-full sm:w-auto shrink-0">
+                        {/* 이미 게시 중인 주보는 제목 옆 배지로 이미 표시되므로, 눌러도 반응 없는 중복 버튼은 생략합니다 */}
+                        {!isCurrentlyActive && (
+                          <Button
+                            disabled={isExpired}
+                            onClick={() => handlePublish(bullet.id)}
+                            className={`flex-1 sm:flex-none rounded-xl sm:rounded-2xl font-black transition-all shadow-md text-xs sm:text-sm px-3 sm:px-6 ${isExpired ? 'bg-gray-200 text-gray-400' : 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:scale-105'}`}
+                          >
+                            <Send className="w-3.5 h-3.5 sm:w-4 sm:h-4 mr-1 sm:mr-2" /> 게시하기
+                          </Button>
+                        )}
+                        <Button variant="outline" className="flex-1 sm:flex-none rounded-xl sm:rounded-2xl font-bold border border-gray-200 hover:bg-gray-50 px-3 sm:px-6 py-2 text-xs sm:text-sm" onClick={() => window.open(`${window.location.origin}/view/${bullet.id}`, "_blank")}>미리보기</Button>
+                        <Button disabled={isExpired} variant="outline" className="flex-1 sm:flex-none rounded-xl sm:rounded-2xl font-bold bg-gray-50 border border-gray-200 text-gray-600 hover:bg-gray-100 px-3 sm:px-6 py-2 text-xs sm:text-sm" onClick={() => navigate(`/admin/editor/${bullet.id}`)}>수정하기</Button>
                       </div>
                     </div>
                   </Card>

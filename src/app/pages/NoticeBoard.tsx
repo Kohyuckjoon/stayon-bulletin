@@ -189,31 +189,31 @@ export function NoticeBoard() {
     };
 
     return (
-        <div className="container mx-auto px-4 py-10 max-w-4xl font-sans">
-            <div className="flex items-center justify-between mb-8">
-                <div className="flex items-center gap-3">
+        <div className="container mx-auto px-4 py-6 sm:py-10 max-w-4xl font-sans">
+            <div className="flex items-center justify-between flex-wrap gap-3 mb-6 sm:mb-8">
+                <div className="flex items-center gap-2.5 sm:gap-3">
                     <Button
                         variant="ghost"
                         onClick={() => navigate(-1)}
-                        className="rounded-full w-10 h-10 p-0 flex items-center justify-center bg-gray-100 hover:bg-gray-200 cursor-pointer"
+                        className="rounded-full w-9 h-9 sm:w-10 sm:h-10 p-0 flex items-center justify-center bg-gray-100 hover:bg-gray-200 cursor-pointer shrink-0"
                     >
-                        <ArrowLeft className="w-5 h-5 text-gray-700" />
+                        <ArrowLeft className="w-4 h-4 sm:w-5 sm:h-5 text-gray-700" />
                     </Button>
                     <div>
                         <div className="flex items-center gap-1.5 text-blue-600 mb-0.5">
                             {/* <Sparkles className="w-4 h-4" /> */}
-                            <span className="text-[11px] font-black tracking-wider uppercase">STAYON NOTICE</span>
+                            <span className="text-[10px] sm:text-[11px] font-black tracking-wider uppercase">STAYON NOTICE</span>
                         </div>
-                        <h1 className="text-2xl sm:text-3xl font-black text-gray-900 tracking-tight">공지사항</h1>
+                        <h1 className="text-xl sm:text-3xl font-black text-gray-900 tracking-tight">공지사항</h1>
                     </div>
                 </div>
 
                 {isSuperUser && (
                     <Button
                         onClick={() => { setIsEditing(false); setTitle(""); setContent(""); setImageFiles([]); setImageUrls([]); setShowModal(true); }}
-                        className="bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold px-5 py-3 shadow-sm cursor-pointer flex items-center gap-2"
+                        className="bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold px-4 sm:px-5 py-2.5 sm:py-3 shadow-sm cursor-pointer flex items-center gap-2 text-sm sm:text-base"
                     >
-                        <Plus className="w-5 h-5" /> 공지 만들기
+                        <Plus className="w-4 h-4 sm:w-5 sm:h-5" /> 공지 만들기
                     </Button>
                 )}
             </div>

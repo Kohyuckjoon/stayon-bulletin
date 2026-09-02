@@ -16,6 +16,7 @@ import { AdminAuthUsers } from "./pages/admin/AdminAuthUsers"; // 전체 가입�
 import { AdminChurchSites } from "./pages/admin/AdminChurchSites"; // 교회 사이트 제작 플랫폼 발행 관리 페이지 임포트
 import { AdminAdSettings } from "./pages/admin/AdminAdSettings"; // 사역자 청빙 게시판 끌어올리기(광고) 설정 페이지 임포트
 import { AdminFeatureSettings } from "./pages/admin/AdminFeatureSettings"; // 화면 노출 on/off 관리 페이지 임포트
+import { AdminFeatureUpdateNotice } from "./pages/admin/AdminFeatureUpdateNotice"; // 기능 업데이트 알림 관리 페이지 임포트
 import { SuperAuthGuard } from "./pages/SuperAuthGuard";
 import { NoticeBoard } from "./pages/NoticeBoard"; // 공지사항 게시판 페이지 컴포넌트 추가
 import { AdminSidebar } from "./components/layout/Sidebar";
@@ -153,10 +154,10 @@ const ChurchOnlineWorshipRoute = churchSectionRoute("online-worship");
 // );
 
 const SuperLayout = () => (
-  <div className="flex min-h-screen bg-[#F9FAFB] font-sans">
+  <div className="flex flex-col md:flex-row min-h-screen bg-[#F9FAFB] font-sans">
     <SEOManager />
     <AdminSidebar />
-    <main className="flex-1 overflow-x-hidden">
+    <main className="flex-1 min-w-0 overflow-x-hidden">
       <Outlet />
     </main>
   </div>
@@ -221,6 +222,7 @@ export const router = createBrowserRouter([
           { path: "church-sites", Component: AdminChurchSites }, // 교회 사이트 제작 플랫폼 발행 관리 라우터 연결
           { path: "ads", Component: AdminAdSettings }, // 사역자 청빙 게시판 끌어올리기(광고) 설정 라우터 연결
           { path: "features", Component: AdminFeatureSettings }, // 화면 노출 on/off 관리 라우터 연결
+          { path: "feature-update", Component: AdminFeatureUpdateNotice }, // 기능 업데이트 알림 관리 라우터 연결
         ],
       },
     ],

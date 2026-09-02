@@ -102,20 +102,20 @@ export const AdminBulletinList = () => {
   };
 
   return (
-    <div className="p-8 md:p-12">
+    <div className="p-4 sm:p-8 md:p-12">
       <div className="max-w-6xl mx-auto">
-        <div className="mb-10">
-          <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">교회별 주보 발행 관리</h1>
-          <p className="text-gray-500 mt-2 font-medium">
+        <div className="mb-6 md:mb-10">
+          <h1 className="text-xl sm:text-3xl font-extrabold text-gray-900 tracking-tight">교회별 주보 발행 관리</h1>
+          <p className="text-gray-500 mt-1.5 md:mt-2 text-xs sm:text-base font-medium">
             전체 교회에서 등록 및 발행한 주보 목록입니다. (총 {bulletins.length}건)
           </p>
         </div>
 
-        <div className="bg-white rounded-3xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-gray-100 overflow-hidden">
+        <div className="bg-white rounded-2xl md:rounded-3xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-gray-100 overflow-hidden">
           {isLoading ? (
-            <div className="p-16 text-center text-gray-400 font-medium">데이터를 불러오는 중입니다...</div>
+            <div className="p-10 md:p-16 text-center text-gray-400 font-medium text-sm">데이터를 불러오는 중입니다...</div>
           ) : bulletins.length === 0 ? (
-            <div className="p-16 text-center text-gray-400 font-medium">발행된 주보 데이터가 없습니다.</div>
+            <div className="p-10 md:p-16 text-center text-gray-400 font-medium text-sm">발행된 주보 데이터가 없습니다.</div>
           ) : (
             <div className="divide-y divide-gray-100">
               {churchGroups.map((group) => {
@@ -126,19 +126,19 @@ export const AdminBulletinList = () => {
                     {/* 교회 요약 줄 — 클릭하면 그 교회의 전체 발행 이력이 펼쳐짐 */}
                     <button
                       onClick={() => toggleChurch(group.authorId)}
-                      className="w-full flex items-center gap-4 p-6 hover:bg-blue-50/30 transition-colors text-left cursor-pointer"
+                      className="w-full flex items-center gap-3 sm:gap-4 p-4 sm:p-6 hover:bg-blue-50/30 transition-colors text-left cursor-pointer"
                     >
-                      <div className="w-9 h-9 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center flex-shrink-0">
+                      <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center flex-shrink-0">
                         <Church className="w-4 h-4" />
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="font-bold text-gray-900">{group.churchName}</p>
-                        <p className="text-xs text-gray-400 mt-0.5">
-                          총 {group.items.length}건 발행 · 최근 {latest?.date || "날짜 미지정"}
+                        <p className="font-bold text-gray-900 text-sm sm:text-base truncate">{group.churchName}</p>
+                        <p className="text-[11px] sm:text-xs text-gray-400 mt-0.5">
+                          총 {group.items.length}건 · 최근 {latest?.date || "날짜 미지정"}
                         </p>
                       </div>
                       <span
-                        className={`px-3 py-1 rounded-full text-[11px] font-bold tracking-wide uppercase shrink-0 ${
+                        className={`px-2 sm:px-3 py-1 rounded-full text-[10px] sm:text-[11px] font-bold tracking-wide uppercase shrink-0 ${
                           latest?.status === "published"
                             ? "bg-emerald-50 text-emerald-600 border border-emerald-100"
                             : "bg-amber-50 text-amber-600 border border-amber-100"
@@ -153,46 +153,45 @@ export const AdminBulletinList = () => {
 
                     {/* 펼쳐진 상태: 이 교회가 발행한 낱개 주보 이력 */}
                     {isOpen && (
-                      <div className="bg-gray-50/50 border-t border-gray-100">
-                        <table className="w-full text-left border-collapse">
-                          <tbody className="divide-y divide-gray-100">
-                            {group.items.map((bulletin: any) => (
-                              <tr key={bulletin.id} className="hover:bg-white transition-colors">
-                                <td className="pl-20 pr-6 py-4 text-gray-600 font-mono text-sm flex items-center gap-1.5">
-                                  <Calendar className="w-3.5 h-3.5 text-gray-400" />
-                                  {bulletin.date || "날짜 미지정"}
-                                </td>
-                                <td className="px-6 py-4">
-                                  <span
-                                    className={`px-3 py-1 rounded-full text-[11px] font-bold tracking-wide uppercase ${
-                                      bulletin.status === "published"
-                                        ? "bg-emerald-50 text-emerald-600 border border-emerald-100"
-                                        : "bg-amber-50 text-amber-600 border border-amber-100"
-                                    }`}
-                                  >
-                                    {bulletin.status === "published" ? "발행 완료" : bulletin.status || "작성중"}
-                                  </span>
-                                </td>
-                                <td className="px-6 py-4 text-right">
-                                  <button
-                                    onClick={() => window.open(`/view/${bulletin.authorId}`, "_blank")}
-                                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white hover:bg-blue-600 hover:text-white text-gray-700 text-xs font-bold transition-all border border-gray-200/60 shadow-xs cursor-pointer"
-                                  >
-                                    주보 보기 <ExternalLink className="w-3.5 h-3.5 opacity-70" />
-                                  </button>
-                                  <button
-                                    onClick={() => handleDeleteBulletin(bulletin.id, bulletin.churchName)}
-                                    className="inline-flex items-center gap-1 ml-2 px-3 py-2 rounded-xl bg-red-50 hover:bg-red-600 hover:text-white text-red-600 text-xs font-bold transition-all border border-red-100 shadow-xs cursor-pointer"
-                                    title="주보 데이터 삭제"
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                    삭제
-                                  </button>
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                      <div className="bg-gray-50/50 border-t border-gray-100 divide-y divide-gray-100">
+                        {group.items.map((bulletin: any) => (
+                          <div
+                            key={bulletin.id}
+                            className="flex flex-col sm:flex-row sm:items-center gap-2.5 sm:gap-3 pl-6 sm:pl-20 pr-4 sm:pr-6 py-3.5 sm:py-4 hover:bg-white transition-colors"
+                          >
+                            <div className="flex items-center justify-between gap-2 sm:flex-1 sm:justify-start">
+                              <span className="text-gray-600 font-mono text-xs sm:text-sm flex items-center gap-1.5">
+                                <Calendar className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                                {bulletin.date || "날짜 미지정"}
+                              </span>
+                              <span
+                                className={`sm:ml-3 px-2.5 py-1 rounded-full text-[10px] sm:text-[11px] font-bold tracking-wide uppercase shrink-0 ${
+                                  bulletin.status === "published"
+                                    ? "bg-emerald-50 text-emerald-600 border border-emerald-100"
+                                    : "bg-amber-50 text-amber-600 border border-amber-100"
+                                }`}
+                              >
+                                {bulletin.status === "published" ? "발행 완료" : bulletin.status || "작성중"}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2 sm:ml-auto">
+                              <button
+                                onClick={() => window.open(`/view/${bulletin.authorId}`, "_blank")}
+                                className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-white hover:bg-blue-600 hover:text-white text-gray-700 text-xs font-bold transition-all border border-gray-200/60 shadow-xs cursor-pointer"
+                              >
+                                주보 보기 <ExternalLink className="w-3.5 h-3.5 opacity-70" />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteBulletin(bulletin.id, bulletin.churchName)}
+                                className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1 px-3 py-2 rounded-xl bg-red-50 hover:bg-red-600 hover:text-white text-red-600 text-xs font-bold transition-all border border-red-100 shadow-xs cursor-pointer"
+                                title="주보 데이터 삭제"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                                삭제
+                              </button>
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     )}
                   </div>
