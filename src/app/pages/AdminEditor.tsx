@@ -17,7 +17,7 @@ import { Checkbox } from "../components/ui/checkbox";
 import {
   ArrowLeft, Eye, Plus, Trash2, Send, Music, UserCheck, Wallet, ChevronUp,
   ChevronDown, Youtube, Check, Copy, CalendarIcon, Clock, BookOpen, Sparkles, Upload,
-  MapPin, Info, ImageIcon, X, Megaphone, Share2, FileText
+  MapPin, Info, ImageIcon, X, Megaphone, Share2, FileText, Move
 } from "lucide-react";
 import { toast } from "sonner";
 import { useFeatureUpdateNotice } from "../../hooks/useFeatureUpdateNotice";
@@ -151,6 +151,24 @@ export function AdminEditor() {
   const [coverImageUploading, setCoverImageUploading] = useState(false);
   const coverImageInputRef = useRef<HTMLInputElement | null>(null);
 
+  // 카카오톡 미리보기에서 실제로 보일 부분을 관리자가 직접 조절할 수 있게 하는 편집 모드.
+  // 자동으로 가운데만 잘라주면 원하는 부분(얼굴, 글씨 등)이 잘려나갈 수 있어서,
+  // 잘리지 않은 원본을 따로 보관해두고 더블클릭하면 위치를 다시 조절할 수 있게 한다.
+  const [coverEditorOpen, setCoverEditorOpen] = useState(false);
+  const [coverOriginal, setCoverOriginal] = useState(""); // 편집용 원본(리사이즈만 하고 자르지 않음)
+  const [coverOffsetX, setCoverOffsetX] = useState(50); // 0~100, CSS object-position과 동일한 의미
+  const [coverOffsetY, setCoverOffsetY] = useState(50);
+  const [coverSavedOffsetX, setCoverSavedOffsetX] = useState(50); // 취소 시 되돌아갈 마지막 저장값
+  const [coverSavedOffsetY, setCoverSavedOffsetY] = useState(50);
+  const coverFrameRef = useRef<HTMLDivElement | null>(null);
+  const coverImgNaturalRef = useRef<{ w: number; h: number } | null>(null);
+  const coverDragRef = useRef<{ startX: number; startY: number; startOffsetX: number; startOffsetY: number } | null>(null);
+
+  // 카카오톡 미리보기 카드 모형에 쓸 교회 정보. bulletinOG 클라우드 함수가 실제로 만드는
+  // og:title/og:description 문구와 동일한 규칙(functions/src/index.ts)을 그대로 따라 표시한다.
+  const [previewChurchName, setPreviewChurchName] = useState("");
+  const [previewDescription, setPreviewDescription] = useState("");
+
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (!user) return;
@@ -159,6 +177,17 @@ export function AdminEditor() {
         if (snap.exists()) {
           const data = snap.data();
           if (typeof data.coverImage === "string") setCoverImage(data.coverImage);
+          if (typeof data.coverImageOriginal === "string") setCoverOriginal(data.coverImageOriginal);
+          if (typeof data.coverImageOffsetX === "number") {
+            setCoverOffsetX(data.coverImageOffsetX);
+            setCoverSavedOffsetX(data.coverImageOffsetX);
+          }
+          if (typeof data.coverImageOffsetY === "number") {
+            setCoverOffsetY(data.coverImageOffsetY);
+            setCoverSavedOffsetY(data.coverImageOffsetY);
+          }
+          if (typeof data.churchName === "string") setPreviewChurchName(data.churchName);
+          if (typeof data.description === "string") setPreviewDescription(data.description);
         }
       } catch (error) {
         console.error("공유 이미지 불러오기 실패:", error);
@@ -168,6 +197,20 @@ export function AdminEditor() {
     });
     return () => unsubscribe();
   }, []);
+
+  // 800x400(2:1) 프레임 기준으로, 주어진 원본 크기와 위치값(offset)에서 실제로 잘라낼
+  // 소스 영역(sx, sy, sWidth, sHeight)을 계산한다. CSS object-fit:cover + object-position의
+  // 동작을 그대로 캔버스 크롭 좌표로 옮긴 것이라, 편집 화면에서 눈으로 본 것과 결과물이 일치한다.
+  const computeCoverCrop = (naturalW: number, naturalH: number, offsetX: number, offsetY: number) => {
+    const TARGET_WIDTH = 800;
+    const TARGET_HEIGHT = 400;
+    const scale = Math.max(TARGET_WIDTH / naturalW, TARGET_HEIGHT / naturalH);
+    const sWidth = TARGET_WIDTH / scale;
+    const sHeight = TARGET_HEIGHT / scale;
+    const sx = (naturalW - sWidth) * (offsetX / 100);
+    const sy = (naturalH - sHeight) * (offsetY / 100);
+    return { sx, sy, sWidth, sHeight };
+  };
 
   const handleCoverImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -180,60 +223,125 @@ export function AdminEditor() {
       toast.error("로그인이 필요합니다");
       return;
     }
-    const uid = auth.currentUser.uid;
 
     const reader = new FileReader();
     reader.onload = (event) => {
       const img = new Image();
       img.src = event.target?.result as string;
       img.onload = () => {
-        // 카카오톡 등 공유 미리보기 표준 크기(800x400, 2:1)에 맞춰 가운데 기준으로 잘라낸다
-        const TARGET_WIDTH = 800;
-        const TARGET_HEIGHT = 400;
+        // 자르지 않은 원본을 편집 가능한 크기로만 축소해서 보관해둔다(잘라내는 건 저장 시점에 한다).
+        const MAX_DIMENSION = 1200;
+        let { width, height } = img;
+        if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
+          const scale = MAX_DIMENSION / Math.max(width, height);
+          width = Math.round(width * scale);
+          height = Math.round(height * scale);
+        }
         const canvas = document.createElement("canvas");
-        canvas.width = TARGET_WIDTH;
-        canvas.height = TARGET_HEIGHT;
+        canvas.width = width;
+        canvas.height = height;
         const ctx = canvas.getContext("2d");
         if (!ctx) return;
+        ctx.drawImage(img, 0, 0, width, height);
 
-        const targetRatio = TARGET_WIDTH / TARGET_HEIGHT;
-        const sourceRatio = img.width / img.height;
-        let sx = 0, sy = 0, sWidth = img.width, sHeight = img.height;
-        if (sourceRatio > targetRatio) {
-          sWidth = img.height * targetRatio; // 원본이 더 넓음 → 좌우를 잘라냄
-          sx = (img.width - sWidth) / 2;
-        } else {
-          sHeight = img.width / targetRatio; // 원본이 더 좁거나 김 → 위아래를 잘라냄
-          sy = (img.height - sHeight) / 2;
-        }
-        ctx.drawImage(img, sx, sy, sWidth, sHeight, 0, 0, TARGET_WIDTH, TARGET_HEIGHT);
-
-        canvas.toBlob(async (blob) => {
-          if (!blob) {
-            toast.error("이미지 처리에 실패했습니다.");
-            return;
-          }
-          setCoverImageUploading(true);
-          try {
-            const fileRef = storageRef(storage, `churchCovers/${uid}.jpg`);
-            await uploadBytes(fileRef, blob, { contentType: "image/jpeg" });
-            const url = await getDownloadURL(fileRef);
-            await setDoc(doc(db, "users", uid), { coverImage: url }, { merge: true });
-            setCoverImage(url);
-            toast.success("공유 이미지가 저장되었습니다.");
-          } catch (error) {
-            console.error("공유 이미지 업로드 실패:", error);
-            toast.error("업로드 중 오류가 발생했습니다.");
-          } finally {
-            setCoverImageUploading(false);
-          }
-        }, "image/jpeg", 0.85);
+        setCoverOriginal(canvas.toDataURL("image/jpeg", 0.85));
+        setCoverOffsetX(50);
+        setCoverOffsetY(50);
+        setCoverEditorOpen(true);
       };
     };
     reader.onerror = () => {
       toast.error("이미지를 읽는 중 오류가 발생했습니다.");
     };
     reader.readAsDataURL(file);
+    e.target.value = ""; // 같은 파일을 다시 선택해도 onChange가 동작하도록 초기화
+  };
+
+  // 편집 화면(더블클릭 진입 포함)에서 드래그로 위치를 옮기는 핸들러들.
+  // 마우스/터치 모두 Pointer Events 하나로 처리한다.
+  const handleCoverPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    coverDragRef.current = { startX: e.clientX, startY: e.clientY, startOffsetX: coverOffsetX, startOffsetY: coverOffsetY };
+  };
+
+  const handleCoverPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = coverDragRef.current;
+    const frame = coverFrameRef.current;
+    const natural = coverImgNaturalRef.current;
+    if (!drag || !frame || !natural) return;
+    const rect = frame.getBoundingClientRect();
+    const scale = Math.max(rect.width / natural.w, rect.height / natural.h);
+    const overflowX = natural.w * scale - rect.width;
+    const overflowY = natural.h * scale - rect.height;
+    const deltaX = e.clientX - drag.startX;
+    const deltaY = e.clientY - drag.startY;
+    // 사진을 직접 드래그하는 느낌을 주기 위해, 드래그 방향과 반대로 노출 위치(offset)를 옮긴다.
+    const newOffsetX = overflowX > 0 ? Math.min(100, Math.max(0, drag.startOffsetX - (deltaX / overflowX) * 100)) : 50;
+    const newOffsetY = overflowY > 0 ? Math.min(100, Math.max(0, drag.startOffsetY - (deltaY / overflowY) * 100)) : 50;
+    setCoverOffsetX(newOffsetX);
+    setCoverOffsetY(newOffsetY);
+  };
+
+  const handleCoverPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    coverDragRef.current = null;
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* noop */ }
+  };
+
+  const handleSaveCoverEditor = () => {
+    if (!coverOriginal || !auth.currentUser) return;
+    const uid = auth.currentUser.uid;
+    const img = new Image();
+    img.onload = () => {
+      const { sx, sy, sWidth, sHeight } = computeCoverCrop(img.width, img.height, coverOffsetX, coverOffsetY);
+      const canvas = document.createElement("canvas");
+      canvas.width = 800;
+      canvas.height = 400;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      ctx.drawImage(img, sx, sy, sWidth, sHeight, 0, 0, 800, 400);
+
+      canvas.toBlob(async (blob) => {
+        if (!blob) {
+          toast.error("이미지 처리에 실패했습니다.");
+          return;
+        }
+        setCoverImageUploading(true);
+        try {
+          const fileRef = storageRef(storage, `churchCovers/${uid}.jpg`);
+          await uploadBytes(fileRef, blob, { contentType: "image/jpeg" });
+          const url = await getDownloadURL(fileRef);
+          await setDoc(doc(db, "users", uid), {
+            coverImage: url,
+            coverImageOriginal: coverOriginal,
+            coverImageOffsetX: coverOffsetX,
+            coverImageOffsetY: coverOffsetY,
+          }, { merge: true });
+          setCoverImage(url);
+          setCoverSavedOffsetX(coverOffsetX);
+          setCoverSavedOffsetY(coverOffsetY);
+          setCoverEditorOpen(false);
+          toast.success("공유 이미지가 저장되었습니다.");
+        } catch (error) {
+          console.error("공유 이미지 업로드 실패:", error);
+          toast.error("업로드 중 오류가 발생했습니다.");
+        } finally {
+          setCoverImageUploading(false);
+        }
+      }, "image/jpeg", 0.85);
+    };
+    img.src = coverOriginal;
+  };
+
+  const handleCancelCoverEditor = () => {
+    if (coverImage) {
+      // 이미 저장된 이미지가 있었다면, 편집 중 옮긴 위치를 마지막 저장값으로 되돌린다.
+      setCoverOffsetX(coverSavedOffsetX);
+      setCoverOffsetY(coverSavedOffsetY);
+    } else {
+      // 처음 업로드하고 저장 전에 취소한 경우엔 원본도 함께 버려 빈 업로드 화면으로 되돌린다.
+      setCoverOriginal("");
+    }
+    setCoverEditorOpen(false);
   };
 
   const [isCustomBank, setIsCustomBank] = useState(false); // 은행명 직접 입력 모드를
@@ -2002,8 +2110,8 @@ export function AdminEditor() {
               <div className="w-2.5 h-8 bg-blue-600 rounded-full shrink-0" /> 카카오톡 공유 이미지
             </h2>
             <p className="text-xs text-gray-500 mt-1.5 leading-relaxed">
-              우리 교회 주보 링크를 카카오톡 등으로 공유했을 때 보이는 대표 이미지예요. 가로형 800×400px 비율에 맞춰 가운데 기준으로 자동으로 잘려서 저장돼요.
-              특정 주보가 아니라 우리 교회 링크 전체에 적용됩니다.
+              우리 교회 주보 링크를 카카오톡 등으로 공유했을 때 보이는 대표 이미지예요. 가로형 800×400px 비율로 저장되고,
+              어느 부분을 보여줄지는 이미지를 더블클릭해서 직접 조절할 수 있어요. 특정 주보가 아니라 우리 교회 링크 전체에 적용됩니다.
             </p>
           </div>
 
@@ -2017,10 +2125,93 @@ export function AdminEditor() {
 
           {coverImageLoading ? (
             <div className="w-full aspect-[2/1] rounded-2xl bg-gray-100 animate-pulse" />
+          ) : coverEditorOpen && coverOriginal ? (
+            <div className="space-y-4">
+              <p className="text-xs font-bold text-blue-600 flex items-center gap-1.5">
+                <Move className="w-3.5 h-3.5" /> 이미지를 드래그해서 보여줄 부분을 조절하세요
+              </p>
+              <div
+                ref={coverFrameRef}
+                onPointerDown={handleCoverPointerDown}
+                onPointerMove={handleCoverPointerMove}
+                onPointerUp={handleCoverPointerUp}
+                onPointerCancel={handleCoverPointerUp}
+                className="relative w-full aspect-[2/1] rounded-2xl overflow-hidden border border-gray-200 bg-gray-100 cursor-grab active:cursor-grabbing touch-none"
+              >
+                <img
+                  src={coverOriginal}
+                  alt="원본 이미지"
+                  draggable={false}
+                  onLoad={(e) => {
+                    const t = e.currentTarget;
+                    coverImgNaturalRef.current = { w: t.naturalWidth, h: t.naturalHeight };
+                  }}
+                  style={{ objectFit: "cover", objectPosition: `${coverOffsetX}% ${coverOffsetY}%` }}
+                  className="w-full h-full select-none pointer-events-none"
+                />
+              </div>
+
+              {/* 실제 카카오톡 채팅창에 뜨는 링크 미리보기 카드를 흉내낸 모형 */}
+              <div>
+                <p className="text-xs font-bold text-gray-400 mb-2">카카오톡 미리보기 예시</p>
+                <div className="max-w-[280px] rounded-2xl overflow-hidden border border-gray-200 shadow-sm bg-white">
+                  <div className="w-full aspect-[2/1] bg-gray-100">
+                    <img
+                      src={coverOriginal}
+                      alt="미리보기"
+                      style={{ objectFit: "cover", objectPosition: `${coverOffsetX}% ${coverOffsetY}%` }}
+                      className="w-full h-full"
+                    />
+                  </div>
+                  <div className="p-3 space-y-0.5">
+                    <p className="text-[13px] font-bold text-gray-900 truncate">
+                      {(previewChurchName || "우리 교회")} 온라인주보 | STAYON_온라인 주보
+                    </p>
+                    <p className="text-[11px] text-gray-500 line-clamp-2 leading-snug">
+                      {previewDescription || "스마트 모바일 주보를 확인해보세요."}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={handleCancelCoverEditor}
+                  disabled={coverImageUploading}
+                  className="flex-1 h-11 rounded-xl border border-gray-200 bg-gray-50 hover:bg-white text-sm font-bold text-gray-600 transition-all disabled:opacity-50"
+                >
+                  취소
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveCoverEditor}
+                  disabled={coverImageUploading}
+                  className="flex-1 h-11 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold transition-all disabled:opacity-50"
+                >
+                  {coverImageUploading ? "저장 중..." : "이 위치로 저장"}
+                </button>
+              </div>
+            </div>
           ) : coverImage ? (
             <div className="space-y-3">
-              <div className="relative w-full aspect-[2/1] rounded-2xl overflow-hidden border border-gray-200 bg-gray-50">
+              <div
+                onDoubleClick={() => {
+                  if (!coverOriginal) {
+                    toast.error("이전에 저장된 원본이 없어 위치 조절이 어려워요. 다른 이미지로 다시 업로드해주세요.");
+                    return;
+                  }
+                  setCoverEditorOpen(true);
+                }}
+                className="relative w-full aspect-[2/1] rounded-2xl overflow-hidden border border-gray-200 bg-gray-50 cursor-pointer group"
+                title="더블클릭하면 위치를 조절할 수 있어요"
+              >
                 <img src={coverImage} alt="카카오톡 공유 이미지" className="w-full h-full object-cover" />
+                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center">
+                  <span className="opacity-0 group-hover:opacity-100 transition-opacity text-white text-xs font-bold bg-black/50 px-3 py-1.5 rounded-full flex items-center gap-1.5">
+                    <Move className="w-3.5 h-3.5" /> 더블클릭해서 위치 조절
+                  </span>
+                </div>
                 {coverImageUploading && (
                   <div className="absolute inset-0 bg-black/50 flex items-center justify-center text-white text-sm font-bold">업로드 중...</div>
                 )}
