@@ -23,9 +23,11 @@ import {
 interface ExtraService {
   id: number;
   icon: React.ReactNode;
+  tickerIcon: React.ReactNode; // 모바일 하단 흐르는 카드용 축소 아이콘
   tag: string;
   tagColor: string;
   title: React.ReactNode;
+  shortTitle: string; // 모바일 하단 흐르는 카드용 한 줄 제목(줄바꿈 없는 일반 텍스트)
   description: string;
   externalUrl: string;
   isReady: boolean;
@@ -35,9 +37,11 @@ const extraServices: ExtraService[] = [
   {
     id: 1,
     icon: <Building className="w-10 h-10 text-slate-400" />,
+    tickerIcon: <Building className="w-5 h-5" />,
     tag: "대기중",
     tagColor: "bg-slate-100 text-slate-500 border-slate-200",
     title: <>올 해, 우리 교회<br />수련회 장소는 어디?</>,
+    shortTitle: "수련회 장소, 어디로 갈까?",
     description: "전국 수련회 전용 기도원, 수양관 정보를 한눈에 비교하고 예약하는 서비스를 준비하고 있습니다.",
     externalUrl: "#",
     isReady: false
@@ -45,24 +49,97 @@ const extraServices: ExtraService[] = [
   {
     id: 2,
     icon: <Users className="w-10 h-10 text-slate-400" />,
+    tickerIcon: <Users className="w-5 h-5" />,
     tag: "런칭 완료",
-    tagColor: "bg-slate-100 text-slate-500 border-slate-200",
+    tagColor: "bg-blue-50 text-blue-500 border-blue-100",
     title: <>올 해, 우리 교회<br />수련회 장소는 어디?</>,
+    shortTitle: "수련회 장소, 최저가로 예약",
     description: "전국 수련회 전용 기도원, 수양관, 캠프장 정보를 한눈에 비교하고 최저가로 예약하세요.",
     externalUrl: "https://place.stayon-platform.com/",
-    isReady: false
+    isReady: true
   },
   {
     id: 3,
+    icon: <Briefcase className="w-10 h-10 text-slate-400" />,
+    tickerIcon: <Briefcase className="w-5 h-5" />,
+    tag: "런칭 완료",
+    tagColor: "bg-blue-50 text-blue-500 border-blue-100",
+    title: <>필요한 사역팀,<br />지금 바로 섭외하세요</>,
+    shortTitle: "외부사역팀, 지금 바로 섭외",
+    description: "찬양팀, 음향·조명, 강사 등 우리 교회에 필요한 외부 사역팀을 지금 바로 찾아 섭외해보세요.",
+    externalUrl: "https://place.stayon-platform.com/teams",
+    isReady: true
+  },
+  {
+    id: 4,
     icon: <MapPin className="w-10 h-10 text-slate-400" />,
+    tickerIcon: <MapPin className="w-5 h-5" />,
     tag: "지도 검색",
     tagColor: "bg-slate-100 text-slate-500 border-slate-200",
     title: <>가까운 수련회<br />장소, 지도로 찾기</>,
+    shortTitle: "가까운 수련회 장소, 지도로",
     description: "우리 교회에서 가장 가까운 최적의 수련회 장소를 지도 기반으로 찾는 기능을 개발하고 있습니다.",
     externalUrl: "#",
     isReady: false
   }
 ];
+
+// 모바일 전용 "다른 서비스" 흐르는 카드 목록. /teams 페이지의 "지금 주목받는 사역팀" 티커와
+// 동일한 방식(카드 배열을 이어붙여 2배로 만들고 -50%까지 끊김없이 흐르게 함)을 그대로 가져왔다.
+function ExtraServicesTicker({ services, onOpen }: { services: ExtraService[]; onOpen: (url: string, isReady: boolean) => void }) {
+  const [paused, setPaused] = useState(false);
+  if (services.length === 0) return null;
+  // 카드 수가 적어도 루프가 짧아 보이지 않도록 최소 반복 횟수를 채운 뒤 두 벌을 이어붙인다.
+  const repeat = Math.max(1, Math.ceil(8 / services.length));
+  const base = Array.from({ length: repeat }, () => services).flat();
+  const looped = [...base, ...base];
+  const duration = base.length * 4.5; // 카드가 커진 만큼 체감 속도가 비슷하게 유지되도록 항목당 재생시간도 같이 늘림
+
+  return (
+    <div
+      className="relative w-full overflow-hidden -mx-4 px-4"
+      onTouchStart={() => setPaused(true)}
+      onTouchEnd={() => setPaused(false)}
+    >
+      <style>{`
+        @keyframes extraServicesTickerScrollX {
+          from { transform: translateX(0); }
+          to { transform: translateX(-50%); }
+        }
+      `}</style>
+      <div className="absolute top-0 bottom-0 left-0 w-10 bg-gradient-to-r from-[#F9FAFB] to-transparent z-10 pointer-events-none" />
+      <div className="absolute top-0 bottom-0 right-0 w-10 bg-gradient-to-l from-[#F9FAFB] to-transparent z-10 pointer-events-none" />
+      <div
+        className="flex items-center gap-4 w-max"
+        style={{ animation: `extraServicesTickerScrollX ${duration}s linear infinite`, animationPlayState: paused ? "paused" : "running" }}
+      >
+        {looped.map((service, i) => (
+          <button
+            type="button"
+            key={`${service.id}-${i}`}
+            onClick={() => onOpen(service.externalUrl, service.isReady)}
+            className="relative w-[196px] h-[132px] rounded-[22px] shrink-0 overflow-hidden text-left bg-white border border-gray-100 shadow-[0_4px_16px_rgba(0,0,0,0.06)] active:scale-95 transition-transform"
+          >
+            <div className="h-full flex flex-col justify-between p-4">
+              <div className="w-11 h-11 rounded-xl bg-[#F2F4F6] flex items-center justify-center text-[#3182F6] shrink-0 [&>svg]:w-5 [&>svg]:h-5">
+                {service.tickerIcon}
+              </div>
+              <div>
+                <span className={`inline-block px-2 py-0.5 rounded-md text-[10px] font-black mb-1.5 ${service.tagColor}`}>{service.tag}</span>
+                <p className="text-[14px] font-black text-[#191F28] leading-snug line-clamp-2 break-keep">{service.shortTitle}</p>
+              </div>
+            </div>
+            {!service.isReady && (
+              <div className="absolute inset-0 bg-white/55 backdrop-blur-[1px] flex items-center justify-center">
+                <Lock className="w-5 h-5 text-[#ADB5BD]" />
+              </div>
+            )}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export function Landing() {
   const navigate = useNavigate();
@@ -251,17 +328,26 @@ export function Landing() {
     }
   ];
 
-  // [EXTENSION] 역동적인 카드 교차 슬라이드를 위한 상태 및 이펙트
-  const [extraSliderIndex, setExtraSliderIndex] = useState(0);
-  const totalExtraServices = extraServices.length;
+  // [EXTENSION] "다른 서비스도 이용해보세요" PC 카드: 실제 이용 가능한(오픈된) 서비스가 여러 개면
+  // 중앙 자리에서 5초마다 서로 교차(크로스페이드)되어 표시된다. 준비 중인 서비스는 좌우에 고정된다.
+  const openExtraServices = extraServices.filter((s) => s.isReady);
+  const lockedExtraServices = extraServices.filter((s) => !s.isReady);
+  const [centerOpenIndex, setCenterOpenIndex] = useState(0);
+  const [centerFading, setCenterFading] = useState(false);
+  const openExtraServicesCount = openExtraServices.length;
 
   useEffect(() => {
+    if (openExtraServicesCount <= 1) return;
     const slideInterval = setInterval(() => {
-      setExtraSliderIndex((prev) => (prev + 1) % totalExtraServices);
-    }, 4000);
+      setCenterFading(true);
+      setTimeout(() => {
+        setCenterOpenIndex((prev) => (prev + 1) % openExtraServicesCount);
+        setCenterFading(false);
+      }, 350);
+    }, 5000);
 
     return () => clearInterval(slideInterval);
-  }, [totalExtraServices]);
+  }, [openExtraServicesCount]);
 
   // 3단계 가이드 이미지 슬라이드 데이터 배열 정의
   const guideSteps = [
@@ -880,87 +966,106 @@ export function Landing() {
 
         {/* 서비스 준비중 */}
         <div className="max-w-7xl mx-auto mb-10 px-4">
-          <div className="text-center mb-10">
-            <div className="inline-flex items-center gap-2 text-[#3182F6] font-black text-sm mb-4 uppercase tracking-widest">
-              <Sparkles className="w-4 h-4" /> StayOn Family Services
+          <div className="text-center mb-8 md:mb-10 px-2">
+            <div className="inline-flex items-center gap-2 text-[#3182F6] font-black text-xs sm:text-sm mb-3 md:mb-4 uppercase tracking-wide sm:tracking-widest">
+              <Sparkles className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> StayOn Family Services
             </div>
-            <h2 className="text-3xl md:text-5xl font-black text-[#191F28] tracking-tight">다른 서비스도 이용해보세요!</h2>
+            <h2 className="text-[28px] sm:text-3xl md:text-5xl font-black text-[#191F28] tracking-normal sm:tracking-tight leading-snug break-keep">다른 서비스도 이용해보세요!</h2>
           </div>
 
-          <div className="relative h-[650px] flex justify-center items-center overflow-visible">
+          {/* 모바일: /teams의 "지금 주목받는 사역팀"과 동일한 스타일로 카드가 끊김없이 옆으로 흐르는 티커 */}
+          <div className="md:hidden py-3">
+            <ExtraServicesTicker
+              services={extraServices}
+              onOpen={(url, isReady) => {
+                if (!isReady || url === "#") return;
+                window.open(url, "_blank");
+              }}
+            />
+          </div>
+
+          <div className="hidden md:flex relative h-[650px] justify-center items-center overflow-visible">
             {/* 배경 오로라 효과 */}
             <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[400px] bg-blue-50/30 rounded-full blur-[120px] pointer-events-none"></div>
 
             <div className="relative w-full max-w-5xl flex justify-center items-center h-full">
-              {extraServices.map((service, index) => {
-                /** * [중요] 안 돌아가게 하는 핵심 로직 
-                 * extraSliderIndex를 무시하고 인덱스 1번을 무조건 센터로 고정합니다.*/
-                const isCenter = index === 1;
-                const isLeft = index === 0;
-                const isRight = index === 2;
+              {/* 좌우: 아직 준비 중인 서비스를 고정으로 흐리게 표시 (자물쇠 오버레이) */}
+              {lockedExtraServices.slice(0, 2).map((service, i) => (
+                <Card
+                  key={`locked-${service.id}`}
+                  className={`absolute w-full max-w-[380px] p-10 rounded-[4rem] shadow-2xl border-0 flex flex-col justify-between h-[540px] z-10 opacity-40 scale-90 bg-white/50 blur-[1px] pointer-events-none ${i === 0 ? "-translate-x-[90%] md:-translate-x-[105%]" : "translate-x-[90%] md:translate-x-[105%]"
+                    }`}
+                >
+                  <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-white/40 rounded-[4rem] backdrop-blur-[1px]">
+                    <div className="w-16 h-16 bg-[#F2F4F6] text-[#ADB5BD] rounded-full flex items-center justify-center border border-white shadow-sm mb-4">
+                      <Lock className="w-7 h-7 fill-current" />
+                    </div>
+                    <span className="text-[#ADB5BD] font-black text-sm">서비스 준비 중</span>
+                  </div>
+                  <div className="relative z-10 h-full flex flex-col opacity-0">
+                    <div className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold mb-6 w-fit ${service.tagColor}`}>
+                      <AlertCircle className="w-3.5 h-3.5" /> {service.tag}
+                    </div>
+                    <div className="w-20 h-20 rounded-[30px] flex items-center justify-center text-[#3182F6] mb-8 shadow-inner bg-[#F2F4F6]">{service.icon}</div>
+                    <h3 className="text-2xl font-black mb-4 text-[#191F28] leading-tight">{service.title}</h3>
+                    <p className="text-[#6B7684] font-semibold leading-relaxed break-keep">{service.description}</p>
+                  </div>
+                </Card>
+              ))}
 
+              {/* 중앙: 실제로 이용 가능한(오픈된) 서비스가 여러 개면 5초마다 서로 교차(크로스페이드)되어 표시 */}
+              {openExtraServices.length > 0 && (() => {
+                const centerService = openExtraServices[centerOpenIndex % openExtraServices.length];
                 return (
                   <Card
-                    key={service.id}
-                    className={`absolute w-full max-w-[380px] p-10 rounded-[4rem] transition-all duration-700 ease-[cubic-bezier(0.23,1,0.32,1)] shadow-2xl border-0 flex flex-col justify-between h-[540px] ${isCenter
-                      ? "z-30 opacity-100 translate-x-0 scale-110 bg-white shadow-[0_40px_80px_rgba(0,0,0,0.1)]"
-                      : isLeft
-                        ? "z-10 opacity-40 -translate-x-[90%] md:-translate-x-[105%] scale-90 bg-white/50 blur-[1px] pointer-events-none"
-                        : "z-10 opacity-40 translate-x-[90%] md:translate-x-[105%] scale-90 bg-white/50 blur-[1px] pointer-events-none"
+                    key="center-open-service"
+                    className={`absolute w-full max-w-[380px] p-10 rounded-[4rem] transition-all duration-500 ease-[cubic-bezier(0.23,1,0.32,1)] shadow-2xl border-0 flex flex-col justify-between h-[540px] z-30 translate-x-0 scale-110 bg-white shadow-[0_40px_80px_rgba(0,0,0,0.1)] ${centerFading ? "opacity-0" : "opacity-100"
                       }`}
                   >
-                    {/* 자물쇠 및 서비스 준비 중 레이어 (왼쪽, 오른쪽 카드에만 적용) */}
-                    {!isCenter && (
-                      <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-white/40 rounded-[4rem] backdrop-blur-[1px]">
-                        <div className="w-16 h-16 bg-[#F2F4F6] text-[#ADB5BD] rounded-full flex items-center justify-center border border-white shadow-sm mb-4">
-                          <Lock className="w-7 h-7 fill-current" />
-                        </div>
-                        <span className="text-[#ADB5BD] font-black text-sm">서비스 준비 중</span>
-                      </div>
-                    )}
-
-                    <div className={`relative z-10 h-full flex flex-col transition-opacity duration-500 ${!isCenter ? 'opacity-0' : 'opacity-100'}`}>
-                      <div className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold mb-6 w-fit ${service.tagColor}`}>
-                        <AlertCircle className="w-3.5 h-3.5" /> {service.tag}
+                    <div className={`relative z-10 h-full flex flex-col transition-opacity duration-300 ${centerFading ? "opacity-0" : "opacity-100"}`}>
+                      <div className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold mb-6 w-fit ${centerService.tagColor}`}>
+                        <AlertCircle className="w-3.5 h-3.5" /> {centerService.tag}
                       </div>
 
-                      <div className={`w-20 h-20 rounded-[30px] flex items-center justify-center text-[#3182F6] mb-8 shadow-inner bg-[#F2F4F6]`}>
-                        {service.icon}
+                      <div className="w-20 h-20 rounded-[30px] flex items-center justify-center text-[#3182F6] mb-8 shadow-inner bg-[#F2F4F6]">
+                        {centerService.icon}
                       </div>
 
                       <h3 className="text-2xl font-black mb-4 text-[#191F28] leading-tight">
-                        {service.title}
+                        {centerService.title}
                       </h3>
 
                       <p className="text-[#6B7684] font-semibold leading-relaxed break-keep">
-                        {service.description}
+                        {centerService.description}
                       </p>
 
                       <div className="mt-auto">
                         <Button
                           size="lg"
-                          onClick={() => window.open("https://place.stayon-platform.com/", '_blank')}
+                          onClick={() => window.open(centerService.externalUrl, '_blank')}
                           className="w-full rounded-[20px] py-8 font-black text-lg transition-all bg-[#3182F6] text-white hover:bg-[#1B64DA] shadow-lg shadow-blue-100"
                         >
                           바로가기 <ChevronRight className="ml-2 w-5 h-5" />
                         </Button>
                       </div>
                     </div>
-                    {isCenter && <div className="absolute top-0 right-0 w-32 h-32 bg-blue-50/50 rounded-full -mr-10 -mt-10 blur-2xl"></div>}
+                    <div className="absolute top-0 right-0 w-32 h-32 bg-blue-50/50 rounded-full -mr-10 -mt-10 blur-2xl"></div>
                   </Card>
                 );
-              })}
+              })()}
             </div>
 
-            {/* 하단 점 표시 (고정형이므로 클릭 함수 제거) */}
-            <div className="absolute -bottom-16 flex gap-3">
-              {extraServices.map((_, i) => (
-                <div
-                  key={i}
-                  className={`h-2.5 rounded-full transition-all duration-500 ${i === 1 ? "w-10 bg-[#3182F6]" : "w-2.5 bg-gray-200"}`}
-                />
-              ))}
-            </div>
+            {/* 하단 점 표시: 중앙에서 교차 표시되는 오픈 서비스 개수만큼, 현재 표시 중인 항목을 강조 */}
+            {openExtraServices.length > 1 && (
+              <div className="absolute -bottom-16 flex gap-3">
+                {openExtraServices.map((s, i) => (
+                  <div
+                    key={s.id}
+                    className={`h-2.5 rounded-full transition-all duration-500 ${i === centerOpenIndex % openExtraServices.length ? "w-10 bg-[#3182F6]" : "w-2.5 bg-gray-200"}`}
+                  />
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
