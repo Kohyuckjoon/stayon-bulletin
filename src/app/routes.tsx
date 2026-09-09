@@ -102,17 +102,23 @@ const BuilderPageRoute = () => {
 };
 
 // 교회 서브도메인(예: stay.stayon-platform.com)에서는 WebsiteRenderer가 이미 자체 footer(교회 이름/
-// 주소/연락처)를 그리고 있으므로, STAYON 플랫폼 자체의 사업자 정보 footer는 중복으로 붙이지 않음
-const RootLayout = () => (
-  <div className="flex flex-col min-h-screen font-sans">
-    <SEOManager />
-    <ScrollRestoration />
-    <div className="flex-grow">
-      <Outlet />
+// 주소/연락처)를 그리고 있으므로, STAYON 플랫폼 자체의 사업자 정보 footer는 중복으로 붙이지 않음.
+// 성도 화면(주보)도 마찬가지로 이 공통 Footer 대신 BulletinView 자체에 있는 작은 하단
+// 정보(상호/문의전화/SNS)만 보여주므로 여기서 숨긴다.
+const RootLayout = () => {
+  const location = useLocation();
+  const isBulletinRoute = location.pathname === "/bulletin" || location.pathname.startsWith("/view/");
+  return (
+    <div className="flex flex-col min-h-screen font-sans">
+      <SEOManager />
+      <ScrollRestoration />
+      <div className="flex-grow">
+        <Outlet />
+      </div>
+      {!getChurchSubdomain() && !isBulletinRoute && <Footer />}
     </div>
-    {!getChurchSubdomain() && <Footer />}
-  </div>
-);
+  );
+};
 
 const getChurchSubdomain = (): string | null => {
   const hostname = window.location.hostname;

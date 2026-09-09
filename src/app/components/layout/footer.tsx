@@ -11,9 +11,9 @@ export function Footer() {
   const [isPrivacyModalOpen, setIsPrivacyModalOpen] = useState(false);
 
   return (
-    <footer className="mt-20 bg-white border-t border-gray-100 py-12 pb-16">
+    <footer className="mt-10 bg-white border-t border-gray-100 py-10">
       <div className="container mx-auto px-4 max-w-5xl">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
           <div className="space-y-4">
             <div className="flex items-center gap-2 mb-2">
               <div className="w-8 h-8 rounded-lg bg-gray-900 flex items-center justify-center text-white font-black italic text-xs">

@@ -3,6 +3,7 @@ import { useParams, useNavigate, useLocation } from "react-router";
 import { db } from "../../firebase";
 import { doc, getDoc, collection, query, where, orderBy, limit, getDocs, updateDoc, increment } from "firebase/firestore";
 import { Card } from "../components/ui/card";
+import { getPageBgGradientClass, isLightPageBgTheme } from "../../utils/pageBgThemes";
 import {
   Lock,
   Loader2,
@@ -27,7 +28,10 @@ import {
   MessageSquare,
   X,
   ListOrdered,
-  Navigation
+  Navigation,
+  ChevronDown,
+  Quote,
+  Instagram
 } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { toast } from "sonner";
@@ -41,6 +45,29 @@ import {
 
 const STAYON_DEFAULT_BG = "/stayon_kakao_pr.png";
 
+// 섬기는 분 상세 팝업에 "화면에 보여줄" 번호를 만들 때만 쓴다. 실제 전화/문자 연결(tel:/sms:)은
+// 항상 원본 번호를 그대로 쓰고, 이 함수는 오직 눈에 보이는 텍스트만 가운데 자리를 가려서
+// 개인정보 노출·스팸/보이스피싱 악용 위험을 줄인다.
+function maskPhoneNumber(phone: string): string {
+  if (!phone) return phone;
+  const trimmed = phone.trim();
+  const parts = trimmed.split("-");
+  if (parts.length === 3) {
+    // 010-1234-5678, 02-123-4567 같은 일반적인 하이픈 3구간 형식: 가운데 구간만 마스킹
+    return `${parts[0]}-${"*".repeat(parts[1].length)}-${parts[2]}`;
+  }
+  // 하이픈이 없거나 자유 입력(phoneFreeFormat)인 경우: 숫자만 세어서 앞 3자리 / 뒤 4자리만
+  // 남기고 그 사이 숫자만 *로 바꾼다(하이픈 등 다른 문자는 원래 위치 그대로 둠).
+  const digits = trimmed.replace(/\D/g, "");
+  if (digits.length <= 7) return trimmed;
+  let digitIndex = 0;
+  return trimmed.replace(/\d/g, (d) => {
+    digitIndex += 1;
+    if (digitIndex <= 3 || digitIndex > digits.length - 4) return d;
+    return "*";
+  });
+}
+
 export function BulletinView() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -53,6 +80,16 @@ export function BulletinView() {
   const [isPreviewMode, setIsPreviewMode] = useState(false);
   const [selectedSection, setSelectedSection] = useState<any>(null);
   const [selectedMinister, setSelectedMinister] = useState<any>(null);
+  // "말씀 적용 질문" 각 항목은 아코디언처럼 접혀있다가, 눌렀을 때 펼쳐진다. 하나를 펼쳐도
+  // 다른 항목이 접히지 않도록(동시에 여러 개 펼침 가능) id 목록으로 펼침 상태를 관리한다.
+  const [expandedQuestionIds, setExpandedQuestionIds] = useState<Set<string>>(new Set());
+  const toggleQuestion = (id: string) => {
+    setExpandedQuestionIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
 
   useEffect(() => {
     const fetchBulletin = async () => {
@@ -257,10 +294,13 @@ export function BulletinView() {
   }
 
   const headerBgImage = bulletin.backgroundImage || STAYON_DEFAULT_BG;
+  // 흰 카드 바깥(섹션 제목/아이콘 등)은 기본적으로 흰 글씨인데, 밝은 배경(화이트 등)을
+  // 고른 경우에는 어두운 색으로 자동 전환해서 대비를 유지한다.
+  const isLightBg = isLightPageBgTheme(bulletin?.pageBgTheme);
 
   return (
 
-    <div className="min-h-screen bg-gradient-to-br from-[#1f2937] via-[#111827] to-black flex flex-col items-center font-sans pb-20 overflow-x-hidden">
+    <div className={`min-h-screen ${getPageBgGradientClass(bulletin?.pageBgTheme)} flex flex-col items-center font-sans pb-20 overflow-x-hidden`}>
       {/* 토스 스타일의 미리보기 알림 바 */}
       {isPreviewMode && (
         <div className="w-full bg-blue-600 text-white py-3 px-4 flex items-center justify-center gap-2 sticky top-0 z-[100] shadow-lg animate-in slide-in-from-top duration-500 font-medium text-sm">
@@ -277,7 +317,7 @@ export function BulletinView() {
           <button onClick={() => navigate("/login")} className="p-2 bg-white/10 rounded-full border border-white/10 hover:bg-white/20 transition-all"><Lock className="w-4 h-4" /></button>
         </div> */}
 
-        <Card className="overflow-hidden rounded-[2.5rem] border-0 bg-white shadow-2xl mt-3 ml-1.5 mr-1.5 gap-0">
+        <Card className="overflow-hidden rounded-[2.5rem] border-0 bg-white mt-3 ml-1.5 mr-1.5 gap-0">
           <div
             className="relative h-auto min-h-[300px] bg-cover bg-center flex flex-col items-center justify-center text-white px-6 py-6"
             style={{
@@ -432,7 +472,8 @@ export function BulletinView() {
                                 <div className="w-2 h-2 rounded-full bg-blue-500 shrink-0" />
 
                                 <div className="flex items-center gap-2 min-w-0 flex-wrap">
-                                  <span className="font-bold text-slate-800 text-[14px] sm:text-[15px] tracking-tight shrink-0">
+                                  {/* <span className="font-bold text-slate-800 text-[14px] sm:text-[15px] tracking-tight shrink-0"> */}
+                                  <span className="font-bold text-[15px] sm:text-[14px]">
                                     {name}
                                   </span>
                                   {location && (
@@ -495,7 +536,7 @@ export function BulletinView() {
                             )}
                           </span> */}
 
-                          <span className={`text-gray-800 font-black text-lg flex items-center gap-2 ${hasContent ? 'group-hover:text-blue-600 transition-colors' : ''}`}>
+                          <span className={`text-gray-800 font-bold text-[16px] sm:text-[15px] flex items-center gap-2 ${hasContent ? 'group-hover:text-blue-600 transition-colors' : ''}`}>
                             {section.label}
                             {hasContent && (
                               <span className="text-xs font-semibold text-slate-400 flex items-center group-hover:text-blue-500 transition-colors">
@@ -824,18 +865,106 @@ export function BulletinView() {
           </div>
         </Card>
 
+        {bulletin.sharingEnabled !== false && bulletin.sharingQuestions && bulletin.sharingQuestions.length > 0 && (
+          <div className="pt-4 mx-1.5">
+            <div className="flex items-center justify-between mb-3 px-1">
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-blue-400 inline-block"></span>
+                <MessageSquare className={`w-4 h-4 ${isLightBg ? "text-slate-400" : "text-slate-300"}`} />
+                <h3 className={`font-extrabold text-base tracking-tight ${isLightBg ? "text-slate-800" : "text-white"}`}>말씀 적용 질문</h3>
+              </div>
+              {(() => {
+                const allIds = bulletin.sharingQuestions.map((q: any, i: number) => q?.id || String(i));
+                const isAllExpanded = allIds.length > 0 && allIds.every((id: string) => expandedQuestionIds.has(id));
+                return (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setExpandedQuestionIds(isAllExpanded ? new Set() : new Set(allIds))
+                    }
+                    className={`inline-flex items-center gap-1 pl-2.5 pr-3 py-1.5 rounded-full border active:scale-95 text-[11px] font-bold transition-all shrink-0 ${isLightBg ? "border-slate-200 bg-slate-100 hover:bg-slate-200 text-slate-700" : "border-white/15 bg-white/5 hover:bg-white/10 text-white"}`}
+                  >
+                    <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isAllExpanded ? "rotate-180" : ""}`} />
+                    {isAllExpanded ? "전부 접기" : "전부 펴기"}
+                  </button>
+                );
+              })()}
+            </div>
+
+            <div className="bg-white rounded-[1.2rem] p-4 border border-slate-100 shadow-sm divide-y divide-slate-100">
+              {bulletin.sharingQuestions.map((q: any, index: number) => {
+                const qId = q?.id || String(index);
+                const isOpen = expandedQuestionIds.has(qId);
+                return (
+                  <div key={qId} className="py-4 first:pt-0 last:pb-0">
+                    <button
+                      type="button"
+                      onClick={() => toggleQuestion(qId)}
+                      className="w-full flex items-center justify-between gap-3 text-left"
+                    >
+                      <div className="min-w-0">
+                        <span className="text-[11px] font-black text-blue-600 uppercase tracking-wider">{index + 1}번째 질문</span>
+                        <p className="font-extrabold text-slate-900 text-base mt-1 leading-snug break-keep">{q?.title || "제목 없음"}</p>
+                      </div>
+                      <ChevronDown className={`w-5 h-5 text-slate-400 shrink-0 transition-transform ${isOpen ? "rotate-180" : ""}`} />
+                    </button>
+                    {isOpen && (
+                      <div className="pt-3.5 space-y-3.5">
+                        {q?.quote && (
+                          <div className="flex gap-2.5 p-3.5 bg-blue-50/60 rounded-xl border border-blue-100/70">
+                            <Quote className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
+                            <p className="text-[13px] text-blue-700 font-semibold leading-relaxed break-keep">{q.quote}</p>
+                          </div>
+                        )}
+                        {q?.content && (
+                          <p className="text-[15px] text-slate-700 leading-[1.75] whitespace-pre-line break-keep">{q.content}</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {bulletin.mottoEnabled !== false && bulletin.mottoText && (
+          <div className="pt-4 mx-1.5">
+            <div className="flex items-center justify-between mb-3 px-1">
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-blue-400 inline-block"></span>
+                <BookOpen className={`w-4 h-4 ${isLightBg ? "text-slate-400" : "text-slate-300"}`} />
+                <h3 className={`font-extrabold text-base tracking-tight ${isLightBg ? "text-slate-800" : "text-white"}`}>
+                  {bulletin.mottoLabelType === "motto" ? "표어" : bulletin.mottoLabelType === "custom" ? (bulletin.mottoCustomLabel || "표어") : "주제 성구"}
+                </h3>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-[1.8rem] p-5 border border-slate-100 shadow-sm">
+              <p className="text-[15px] sm:text-base font-normal text-slate-800 leading-relaxed whitespace-pre-line break-keep">
+                {bulletin.mottoText}
+              </p>
+              {bulletin.mottoReference && (
+                <p className="text-xs font-bold text-blue-600 mt-3 text-right">{bulletin.mottoReference}</p>
+              )}
+            </div>
+          </div>
+        )}
+
         {bulletin.ministersEnabled !== false && bulletin.ministers && bulletin.ministers.length > 0 && (
           <div className="pt-4 mx-1.5">
             <div className="flex items-center justify-between mb-3 px-1">
               <div className="flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-blue-400 inline-block"></span>
-                <Users className="w-4 h-4 text-slate-300" />
-                <h3 className="font-extrabold text-white text-base tracking-tight">섬기는 사람들</h3>
+                <Users className={`w-4 h-4 ${isLightBg ? "text-slate-400" : "text-slate-300"}`} />
+                <h3 className={`font-extrabold text-base tracking-tight ${isLightBg ? "text-slate-800" : "text-white"}`}>섬기는 사람들</h3>
               </div>
             </div>
 
-            {/* 불필요한 패딩 및 마진 압축, 모바일 가독성 최적화 */}
-            <div className="bg-white rounded-[1.8rem] p-2.5 border border-slate-100 shadow-sm space-y-2">
+            {/* 흰 배경 위에 매거진 화보 느낌으로: 이름/직분 + 소개 문구 + 자세히보기, 사진은 우측에 자연스럽게.
+                어두운 배경의 사진(스튜디오 촬영본 등)도 흰 배경 위에서는 경계가 또렷하게 보인다. */}
+            {/* <div className="bg-white rounded-[1.8rem] p-4 border border-slate-100 shadow-sm divide-y divide-slate-100"> */}
+            <div className="bg-white rounded-[1.2rem] p-4 border border-slate-100 shadow-sm divide-y divide-slate-100">
               {bulletin.ministers.map((minister: any, index: number) => {
                 // Firestore 저장 에러 방지 및 undefined 안전 추출
                 const ministerPhoto =
@@ -844,43 +973,35 @@ export function BulletinView() {
                   (typeof minister?.photoUrL === 'string' && minister.photoUrL.trim() !== '' ? minister.photoUrL : null);
 
                 return (
-                  <div
+                  <button
                     key={minister?.id || index}
+                    type="button"
                     onClick={() => setSelectedMinister(minister)}
-                    className="bg-slate-50/70 hover:bg-slate-100/80 rounded-2xl p-3 flex items-center justify-between border border-slate-100 transition-colors cursor-pointer group"
+                    className="w-full text-left py-4 first:pt-0 last:pb-0 flex items-center justify-between gap-4 group"
                   >
-                    <div className="flex items-center gap-3 min-w-0">
-                      {/* 프로필 사진 및 아바타 */}
-                      {ministerPhoto ? (
-                        <img
-                          src={ministerPhoto}
-                          alt={minister?.name || "섬기는분"}
-                          className="w-12 h-12 sm:w-13 sm:h-13 rounded-full object-cover border border-slate-200/60 shadow-sm shrink-0"
-                        />
-                      ) : (
-                        <div className="w-12 h-12 sm:w-13 sm:h-13 rounded-full bg-slate-200 text-slate-600 font-bold text-base flex items-center justify-center shrink-0">
-                          {minister?.name ? minister.name.slice(0, 1) : "섬"}
-                        </div>
+                    <div className="min-w-0 flex-1">
+                      <h4 className="font-extrabold text-slate-900 text-[15px] sm:text-base leading-snug break-keep">
+                        {minister?.name || "이름 없음"}
+                        {minister?.role && <span className="text-slate-400"> {minister.role}</span>}
+                      </h4>
+                      {minister?.description && (
+                        <p className="text-slate-500 text-xs mt-1.5 leading-relaxed line-clamp-2 whitespace-pre-line break-keep">
+                          {minister.description}
+                        </p>
                       )}
-
-                      {/* 직분과 이름 영역 (말줄임 처리로 2줄 방지) */}
-                      <div className="flex flex-col min-w-0 pr-2">
-                        {minister?.role && (
-                          <span className="text-[11px] sm:text-xs font-bold text-slate-500 tracking-wide mb-0.5 truncate">
-                            {minister.role}
-                          </span>
-                        )}
-                        <span className="font-extrabold text-slate-900 text-sm sm:text-base tracking-tight truncate">
-                          {minister?.name || "이름 없음"}
-                        </span>
-                      </div>
+                      <span className="inline-flex items-center gap-0.5 text-blue-600 group-hover:text-blue-700 transition-colors text-xs font-bold mt-2">
+                        자세히보기 <ChevronRight className="w-3 h-3" />
+                      </span>
                     </div>
 
-                    {/* 우측 이동 버튼 */}
-                    <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-white border border-slate-200/70 flex items-center justify-center text-slate-400 group-hover:bg-blue-600 group-hover:text-white group-hover:border-blue-600 transition-all shadow-sm shrink-0">
-                      <span className="text-sm font-bold">›</span>
-                    </div>
-                  </div>
+                    {ministerPhoto && (
+                      <img
+                        src={ministerPhoto}
+                        alt={minister?.name || "섬기는분"}
+                        className="w-20 h-24 sm:w-24 sm:h-28 rounded-xl object-cover shrink-0 border border-slate-100 shadow-sm"
+                      />
+                    )}
+                  </button>
                 );
               })}
             </div>
@@ -892,8 +1013,8 @@ export function BulletinView() {
             <div className="flex items-center justify-between mb-3 px-1">
               <div className="flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-blue-400 inline-block"></span>
-                <MapPin className="w-4 h-4 text-slate-300" />
-                <h3 className="font-extrabold text-white text-base tracking-tight">오시는 길</h3>
+                <MapPin className={`w-4 h-4 ${isLightBg ? "text-slate-400" : "text-slate-300"}`} />
+                <h3 className={`font-extrabold text-base tracking-tight ${isLightBg ? "text-slate-800" : "text-white"}`}>오시는 길</h3>
               </div>
             </div>
 
@@ -998,7 +1119,7 @@ export function BulletinView() {
                     className="w-full py-3 px-4 bg-slate-50 hover:bg-slate-100 rounded-2xl border border-slate-200/60 text-slate-700 font-semibold text-sm flex items-center justify-center gap-2 mb-4 transition-colors"
                   >
                     <Phone className="w-4 h-4 text-slate-500" />
-                    {selectedMinister.phone}
+                    {maskPhoneNumber(selectedMinister.phone)}
                   </a>
                 )}
 
@@ -1024,6 +1145,43 @@ export function BulletinView() {
             </div>
           </div>
         )}
+
+        {/* 성도 화면 전용 하단 정보. 공통 Footer(로그인/랜딩 등에서 쓰는 사업자 정보 전체)
+            대신, 주보 화면에서는 이 작은 버전만 보여준다 - RootLayout에서 이 라우트일 때
+            공통 Footer를 숨기고 있으므로 여기서 필요한 최소 정보를 자체적으로 그린다. */}
+        <div className="pt-8 pb-6 px-2 text-center">
+          <p className={`text-[11px] font-bold ${isLightBg ? "text-slate-500" : "text-slate-400"}`}>
+            상호: 스테이온 (STAYON)
+          </p>
+          <a
+            href="tel:0502-1937-0615"
+            className={`inline-block text-[11px] font-bold mt-1 hover:text-blue-500 transition-colors ${isLightBg ? "text-slate-500" : "text-slate-400"}`}
+          >
+            온라인 주보 도입 문의 0502-1937-0615
+          </a>
+          <div className="flex items-center justify-center gap-3 mt-3">
+            <a
+              href="https://www.instagram.com/place.stayon/"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="스테이온 인스타그램"
+              className={`w-8 h-8 rounded-full border flex items-center justify-center transition-colors ${isLightBg ? "border-slate-200 text-slate-500 hover:text-blue-500 hover:border-blue-300" : "border-white/15 text-slate-400 hover:text-white hover:border-white/40"}`}
+            >
+              <Instagram className="w-4 h-4" />
+            </a>
+            <a
+              href="https://www.threads.com/@place.stayon"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="스테이온 쓰레드"
+              className={`w-8 h-8 rounded-full border flex items-center justify-center transition-colors ${isLightBg ? "border-slate-200 text-slate-500 hover:text-blue-500 hover:border-blue-300" : "border-white/15 text-slate-400 hover:text-white hover:border-white/40"}`}
+            >
+              <svg viewBox="0 0 24 24" className="w-4 h-4" fill="currentColor" aria-hidden="true">
+                <path d="M18.263 11.097c-.03-3.486-1.92-5.586-5.111-5.586-2.13 0-3.922.963-4.863 2.499l2.062 1.438c.535-.843 1.272-1.543 2.628-1.543 1.528 0 2.318.85 2.544 2.431a15 15 0 0 0-2.236-.173c-4.125 0-6.068 1.867-6.068 4.336s1.943 3.99 4.804 3.99c3.139 0 5.013-2.115 5.781-4.735.798.361 1.348 1.204 1.348 2.47 0 3.387-3.907 5.232-7.22 5.232-4.885 0-8.077-3.207-8.077-8.424 0-6.392 4.223-10.487 9.9-10.487 3.808 0 5.69 1.671 6.97 3.914l2.108-1.475C21.44 2.078 18.331 0 13.663 0 6.227 0 1.168 5.277 1.168 12.934c0 7 4.953 11.066 10.856 11.066 4.878 0 9.809-2.846 9.809-7.716 0-2.545-1.46-4.231-3.569-5.187m-6.33 4.855c-1.077 0-2.026-.512-2.026-1.453 0-1.483 1.822-1.934 3.606-1.934.678 0 1.34.045 1.927.173-.422 1.927-1.671 3.215-3.508 3.214Z" />
+              </svg>
+            </a>
+          </div>
+        </div>
       </div>
 
       {/* 순서 상세 내용(사도신경, 주기도문 등) 모달 팝업 */}

@@ -17,7 +17,8 @@ import { Checkbox } from "../components/ui/checkbox";
 import {
   ArrowLeft, Eye, Plus, Trash2, Send, Music, UserCheck, Wallet, ChevronUp,
   ChevronDown, Youtube, Check, Copy, CalendarIcon, Clock, BookOpen, Sparkles, Upload,
-  MapPin, Info, ImageIcon, X, Megaphone, Share2, FileText, Move
+  MapPin, Info, ImageIcon, X, Megaphone, Share2, FileText, Move, Users,
+  Pencil, GripVertical, Quote, MessagesSquare, Lock, Tent
 } from "lucide-react";
 import { toast } from "sonner";
 import { useFeatureUpdateNotice } from "../../hooks/useFeatureUpdateNotice";
@@ -32,6 +33,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "../components/ui/popove
 import { Calendar } from "../components/ui/calendar";
 import { format } from "date-fns";
 import { ko } from "date-fns/locale";
+import { PAGE_BG_THEMES, DEFAULT_PAGE_BG_THEME_ID } from "../../utils/pageBgThemes";
 
 const BANK_LIST = [
   "NH농협", "KB국민", "신한", "우리", "하나", "IBK기업", "카카오뱅크",
@@ -142,7 +144,7 @@ export function AdminEditor() {
 
   const [showPublishDialog, setShowPublishDialog] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<"content" | "cover">("content");
+  const [activeTab, setActiveTab] = useState<"content" | "cover" | "church" | "sharing">("content");
 
   // 카카오톡 등 링크 공유 시 표시할 대표 이미지. 주보 한 건이 아니라 계정(교회) 전체에
   // 적용되는 값(users/{uid}.coverImage)이라 발행 흐름과 별개로 업로드 즉시 저장한다.
@@ -373,6 +375,7 @@ export function AdminEditor() {
     accountHolder: "",
     youtubeId: "",
     backgroundImage: "/stayon_image.png",
+    pageBgTheme: DEFAULT_PAGE_BG_THEME_ID,
   });
 
   // 주일 오전 예배
@@ -469,8 +472,79 @@ export function AdminEditor() {
     }
   });
 
+  // "나눔 설정" (셀모임/구역모임/소그룹 등에서 쓰는 말씀 적용 질문). 매주 말씀이 바뀌므로
+  // 오시는 길/교회소개와 달리 이전 주보에서 carry-forward하지 않고 새 주보마다 새로 입력한다.
+  // 성도 화면에서는 "섬기는 사람들" 바로 위에 표시된다.
+  interface SharingQuestion { id: string; title: string; quote: string; content: string; }
+  const [sharingQuestions, setSharingQuestions] = useState<SharingQuestion[]>([]);
+  const [sharingEnabled, setSharingEnabled] = useState(true);
+  const [newQuestionTitle, setNewQuestionTitle] = useState("");
+  const [newQuestionQuote, setNewQuestionQuote] = useState("");
+  const [newQuestionContent, setNewQuestionContent] = useState("");
+  const [editingQuestionId, setEditingQuestionId] = useState<string | null>(null);
+  const dragQuestionIndexRef = useRef<number | null>(null);
+
+  const addSharingQuestion = () => {
+    if (!newQuestionTitle.trim()) {
+      toast.error("질문 제목을 입력해주세요.");
+      return;
+    }
+    setSharingQuestions([
+      ...sharingQuestions,
+      {
+        id: Date.now().toString(),
+        title: newQuestionTitle.trim(),
+        quote: newQuestionQuote.trim(),
+        content: newQuestionContent.trim(),
+      },
+    ]);
+    setNewQuestionTitle("");
+    setNewQuestionQuote("");
+    setNewQuestionContent("");
+  };
+
+  const removeSharingQuestion = (questionId: string) => {
+    setSharingQuestions(sharingQuestions.filter((q) => q.id !== questionId));
+    if (editingQuestionId === questionId) setEditingQuestionId(null);
+  };
+
+  const updateSharingQuestion = (questionId: string, field: 'title' | 'quote' | 'content', val: string) => {
+    setSharingQuestions(sharingQuestions.map((q) => (q.id === questionId ? { ...q, [field]: val } : q)));
+  };
+
+  const moveSharingQuestion = (index: number, direction: 'up' | 'down') => {
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= sharingQuestions.length) return;
+    const next = [...sharingQuestions];
+    [next[index], next[targetIndex]] = [next[targetIndex], next[index]];
+    setSharingQuestions(next);
+  };
+
+  // PC 전용 드래그 재정렬. 별도 라이브러리 없이 네이티브 드래그 이벤트만 사용하고,
+  // 모바일(터치)에서는 자연스럽게 동작하지 않아 버튼(위/아래)이 대신 그 역할을 한다.
+  const handleQuestionDragStart = (index: number) => {
+    dragQuestionIndexRef.current = index;
+  };
+
+  const handleQuestionDragOver = (index: number, e: React.DragEvent) => {
+    e.preventDefault();
+    const from = dragQuestionIndexRef.current;
+    if (from === null || from === index) return;
+    setSharingQuestions((prev) => {
+      const next = [...prev];
+      const [moved] = next.splice(from, 1);
+      next.splice(index, 0, moved);
+      return next;
+    });
+    dragQuestionIndexRef.current = index;
+  };
+
+  const handleQuestionDragEnd = () => {
+    dragQuestionIndexRef.current = null;
+  };
+
   const [ministers, setMinisters] = useState([
-    { id: "m1", role: "담임목사", name: "홍길동", phone: "", photoUrl: "", phoneFreeFormat: false }
+    { id: "m1", role: "담임목사", name: "홍길동", phone: "", photoUrl: "", phoneFreeFormat: false, description: "" }
   ]);
   // "섬기시는분" 섹션 전체를 주보에 표시할지 여부. 기존에 저장된 주보엔 이 필드가 없으므로
   // 불러올 때 값이 없으면(undefined) true로 취급해 기존 화면과 동일하게 보이도록 한다.
@@ -486,6 +560,16 @@ export function AdminEditor() {
   const [locationImage, setLocationImage] = useState("");
   const [locationImageRatio, setLocationImageRatio] = useState<"4:3" | "1:1">("4:3");
   const locationImageInputRef = useRef<HTMLInputElement | null>(null);
+
+  // "표어 / 주제 성구" - 교회 주소와 마찬가지로 보통 한 번 정하면 오래(보통 1년) 유지되는
+  // 내용이라, 새 주보 작성 시 최근 값을 자동으로 이어서 채워준다(carry-forward). 다만
+  // 값 자체는 주보마다 개별 저장되어 그때그때 수정 가능하고, 주보 복사 시에도 함께 복사된다.
+  // 성도 화면에서는 "섬기는 사람들" 바로 위에 표시되고, labelType이 그대로 화면 제목이 된다.
+  const [mottoEnabled, setMottoEnabled] = useState(true);
+  const [mottoLabelType, setMottoLabelType] = useState<"verse" | "motto" | "custom">("verse");
+  const [mottoCustomLabel, setMottoCustomLabel] = useState("");
+  const [mottoText, setMottoText] = useState("");
+  const [mottoReference, setMottoReference] = useState("");
 
   // 다음 우편번호 찾기 스크립트 로드 (place.stayon-platform.com/register와 동일한 방식)
   useEffect(() => {
@@ -558,6 +642,7 @@ export function AdminEditor() {
 
   // 새 주보 작성 시(수정 화면 아님) 가장 최근에 발행/저장했던 주소를 자동으로 불러와 채워둔다.
   // 교회 주소는 매주 바뀌는 정보가 아니므로, 매번 재입력하지 않아도 되도록 하기 위함.
+  // 표어/주제 성구도 같은 이유(보통 1년 정도 유지)로 같이 이어서 채워준다.
   useEffect(() => {
     if (isEditing) return;
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
@@ -577,6 +662,13 @@ export function AdminEditor() {
               setLocationImageRatio(data.locationImageRatio === "1:1" ? "1:1" : "4:3");
             }
           }
+          if (data.mottoText) {
+            setMottoEnabled(data.mottoEnabled !== false);
+            setMottoLabelType(data.mottoLabelType === "motto" || data.mottoLabelType === "custom" ? data.mottoLabelType : "verse");
+            setMottoCustomLabel(data.mottoCustomLabel || "");
+            setMottoText(data.mottoText || "");
+            setMottoReference(data.mottoReference || "");
+          }
         }
       } catch (error) {
         console.error("최근 주소 불러오기 실패:", error);
@@ -589,15 +681,15 @@ export function AdminEditor() {
   const fileInputRefs = useRef<{ [key: string]: HTMLInputElement | null }>({});
 
   const addMinister = () => {
-    setMinisters([...ministers, { id: Date.now().toString(), role: "", name: "", phone: "", photoUrl: "", phoneFreeFormat: false }]);
+    setMinisters([...ministers, { id: Date.now().toString(), role: "", name: "", phone: "", photoUrl: "", phoneFreeFormat: false, description: "" }]);
   };
 
   const removeMinister = (ministerId: string) => {
     setMinisters(ministers.filter((m) => m.id !== ministerId));
   };
 
-  // updateMinister 함수 타입에 'phone' 추가
-  const updateMinister = (ministerId: string, field: 'role' | 'name' | 'phone' | 'photoUrl', val: string) => {
+  // updateMinister 함수 타입에 'phone', 'description' 추가
+  const updateMinister = (ministerId: string, field: 'role' | 'name' | 'phone' | 'photoUrl' | 'description', val: string) => {
     setMinisters(ministers.map((m) => (m.id === ministerId ? { ...m, [field]: val } : m)));
   };
 
@@ -679,15 +771,22 @@ export function AdminEditor() {
       sundayServices,
       ministers,
       ministersEnabled,
+      sharingQuestions,
+      sharingEnabled,
       churchAddress,
       churchAddressDetail,
       addressEnabled,
       locationImage,
       locationImageRatio,
+      mottoEnabled,
+      mottoLabelType,
+      mottoCustomLabel,
+      mottoText,
+      mottoReference,
       isPreview: true // 미리보기 모드임을 알림
     };
     localStorage.setItem("temp_bulletin", JSON.stringify(tempData));
-  }, [bulletinData, sections, announcements, midweekServices, sundayServices, ministers, ministersEnabled, churchAddress, churchAddressDetail, addressEnabled, locationImage, locationImageRatio]);
+  }, [bulletinData, sections, announcements, midweekServices, sundayServices, ministers, ministersEnabled, sharingQuestions, sharingEnabled, churchAddress, churchAddressDetail, addressEnabled, locationImage, locationImageRatio, mottoEnabled, mottoLabelType, mottoCustomLabel, mottoText, mottoReference]);
 
   useEffect(() => {
     if (isEditing && id) {
@@ -716,9 +815,15 @@ export function AdminEditor() {
               accountHolder: data.accountHolder || "",
               youtubeId: data.youtubeId || "",
               backgroundImage: data.backgroundImage || "/stayon_image.png",
+              pageBgTheme: data.pageBgTheme || DEFAULT_PAGE_BG_THEME_ID,
             });
             setSections(data.sections || []);
             setAnnouncements(data.announcements || []);
+
+            if (data.sharingQuestions && Array.isArray(data.sharingQuestions)) {
+              setSharingQuestions(data.sharingQuestions);
+            }
+            setSharingEnabled(data.sharingEnabled !== false);
 
             if (data.ministers && Array.isArray(data.ministers)) {
               setMinisters(data.ministers);
@@ -730,6 +835,12 @@ export function AdminEditor() {
             setAddressEnabled(data.addressEnabled !== false);
             setLocationImage(data.locationImage || "");
             setLocationImageRatio(data.locationImageRatio === "1:1" ? "1:1" : "4:3");
+
+            setMottoEnabled(data.mottoEnabled !== false);
+            setMottoLabelType(data.mottoLabelType === "motto" || data.mottoLabelType === "custom" ? data.mottoLabelType : "verse");
+            setMottoCustomLabel(data.mottoCustomLabel || "");
+            setMottoText(data.mottoText || "");
+            setMottoReference(data.mottoReference || "");
 
             if (data.sundayServices && Array.isArray(data.sundayServices)) {
               const parsedServices = data.sundayServices.map((service: any) => {
@@ -883,6 +994,14 @@ export function AdminEditor() {
         phone: String(m.phone || ""),
         photoUrl: String(m.photoUrl || ""),
         phoneFreeFormat: Boolean(m.phoneFreeFormat),
+        description: String(m.description || ""),
+      }));
+
+      const sanitizedSharingQuestions = sharingQuestions.map((q) => ({
+        id: String(q.id || Date.now()),
+        title: String(q.title || ""),
+        quote: String(q.quote || ""),
+        content: String(q.content || ""),
       }));
 
       const sanitizedSections = sections.map((s) => ({
@@ -948,6 +1067,7 @@ export function AdminEditor() {
         accountHolder: String(bulletinData.accountHolder || ""),
         youtubeId: String(bulletinData.youtubeId || ""),
         backgroundImage: String(bulletinData.backgroundImage || "/stayon_image.png"),
+        pageBgTheme: String(bulletinData.pageBgTheme || DEFAULT_PAGE_BG_THEME_ID),
         sections: sanitizedSections,
         announcements: sanitizedAnnouncements,
         midweekServices: sanitizedMidweekServices,
@@ -955,11 +1075,18 @@ export function AdminEditor() {
         sundayServices: formattedSundayServices,
         ministers: sanitizedMinisters,
         ministersEnabled,
+        sharingQuestions: sanitizedSharingQuestions,
+        sharingEnabled,
         churchAddress: String(churchAddress || ""),
         churchAddressDetail: String(churchAddressDetail || ""),
         addressEnabled,
         locationImage: String(locationImage || ""),
         locationImageRatio,
+        mottoEnabled,
+        mottoLabelType,
+        mottoCustomLabel: String(mottoCustomLabel || ""),
+        mottoText: String(mottoText || ""),
+        mottoReference: String(mottoReference || ""),
         status: "published",
         authorId: uid,
         updatedAt: serverTimestamp(),
@@ -990,6 +1117,10 @@ export function AdminEditor() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 font-sans pb-20">
+      <style>{`
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+      `}</style>
       <div className="bg-white/80 backdrop-blur-md border-b sticky top-0 z-50 shadow-sm">
         <div className="container mx-auto px-3 sm:px-4 py-3 grid grid-cols-[auto_1fr_auto] items-center gap-2">
           <div className="justify-self-start">
@@ -1011,21 +1142,46 @@ export function AdminEditor() {
           </div>
         </div>
 
-        {/* 상단 탭: 이 주보 자체의 내용 vs 계정(교회) 전체에 적용되는 공유 이미지 설정 */}
-        <div className="container mx-auto px-4 max-w-4xl flex gap-1">
+        {/* 상단 탭: 이 주보 자체의 내용 vs 계정(교회) 전체에 적용되는 공유 이미지 설정/교회 소개 정보 */}
+        <div className="container mx-auto px-4 max-w-4xl flex gap-1 overflow-x-auto no-scrollbar">
           <button
             type="button"
             onClick={() => setActiveTab("content")}
-            className={`flex items-center gap-1.5 px-4 py-3 text-sm font-bold border-b-2 transition-colors ${activeTab === "content" ? "border-blue-600 text-blue-600" : "border-transparent text-slate-400 hover:text-slate-600"}`}
+            className={`flex items-center gap-1.5 px-4 py-3 text-sm font-bold border-b-2 transition-colors shrink-0 whitespace-nowrap ${activeTab === "content" ? "border-blue-600 text-blue-600" : "border-transparent text-slate-400 hover:text-slate-600"}`}
           >
             <FileText className="w-4 h-4" /> 주보 내용
           </button>
           <button
             type="button"
             onClick={() => setActiveTab("cover")}
-            className={`flex items-center gap-1.5 px-4 py-3 text-sm font-bold border-b-2 transition-colors ${activeTab === "cover" ? "border-blue-600 text-blue-600" : "border-transparent text-slate-400 hover:text-slate-600"}`}
+            className={`flex items-center gap-1.5 px-4 py-3 text-sm font-bold border-b-2 transition-colors shrink-0 whitespace-nowrap ${activeTab === "cover" ? "border-blue-600 text-blue-600" : "border-transparent text-slate-400 hover:text-slate-600"}`}
           >
             <Share2 className="w-4 h-4" /> 공유 이미지 설정
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("church")}
+            className={`flex items-center gap-1.5 px-4 py-3 text-sm font-bold border-b-2 transition-colors shrink-0 whitespace-nowrap ${activeTab === "church" ? "border-blue-600 text-blue-600" : "border-transparent text-slate-400 hover:text-slate-600"}`}
+          >
+            <Users className="w-4 h-4" /> 교회 소개
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("sharing")}
+            className={`flex items-center gap-1.5 px-4 py-3 text-sm font-bold border-b-2 transition-colors shrink-0 whitespace-nowrap ${activeTab === "sharing" ? "border-blue-600 text-blue-600" : "border-transparent text-slate-400 hover:text-slate-600"}`}
+          >
+            <MessagesSquare className="w-4 h-4" /> 나눔 설정
+          </button>
+          <button
+            type="button"
+            disabled
+            title="준비 중인 기능이에요"
+            className="flex items-center gap-1.5 px-4 py-3 text-sm font-bold border-b-2 border-transparent text-slate-300 shrink-0 whitespace-nowrap cursor-not-allowed"
+          >
+            <Tent className="w-4 h-4" /> 수련회 설정
+            <span className="flex items-center gap-0.5 text-[9px] font-black tracking-wider text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded-full">
+              <Lock className="w-2.5 h-2.5" /> COMING SOON
+            </span>
           </button>
         </div>
       </div>
@@ -1073,6 +1229,36 @@ export function AdminEditor() {
                 )}
               </button>
             ))}
+          </div>
+        </Card>
+
+        <Card className="p-5 rounded-[1.75rem] border-0 bg-white shadow-xl shadow-blue-500/5">
+          <h2 className="text-xl font-bold mb-1.5 flex items-center gap-3 text-gray-800">
+            <div className="w-2.5 h-8 bg-indigo-500 rounded-full"></div> 주보 화면 배경색
+          </h2>
+          <p className="text-xs text-slate-400 mb-4 font-medium leading-relaxed">
+            "섬기는 사람들", "오시는 길" 등 흰 카드 바깥쪽 배경 색이에요. 밝은 색을 고르면 그 바깥 글씨 색이 자동으로 어둡게 바뀌어서 대비는 항상 유지돼요.
+          </p>
+          <div className="flex flex-wrap gap-3">
+            {PAGE_BG_THEMES.map((theme) => {
+              const isSelected = (bulletinData.pageBgTheme || DEFAULT_PAGE_BG_THEME_ID) === theme.id;
+              return (
+                <button
+                  key={theme.id}
+                  type="button"
+                  onClick={() => setBulletinData({ ...bulletinData, pageBgTheme: theme.id })}
+                  className={`flex flex-col items-center gap-1.5 shrink-0 transition-all ${isSelected ? 'scale-105' : 'opacity-70 hover:opacity-100'}`}
+                >
+                  <div
+                    className={`w-12 h-12 rounded-2xl border-2 flex items-center justify-center transition-all ${isSelected ? 'border-blue-500 ring-2 ring-blue-200' : 'border-slate-200'}`}
+                    style={{ backgroundColor: theme.swatch }}
+                  >
+                    {isSelected && <Check className={`w-4 h-4 stroke-[3px] ${theme.isLight ? 'text-slate-700' : 'text-white'}`} />}
+                  </div>
+                  <span className={`text-[11px] font-bold ${isSelected ? 'text-blue-600' : 'text-slate-400'}`}>{theme.label}</span>
+                </button>
+              );
+            })}
           </div>
         </Card>
 
@@ -1799,6 +1985,94 @@ export function AdminEditor() {
             </div>
           </div>
         </Card>
+      </div>
+      )}
+
+      {activeTab === "church" && (
+      <div className="container mx-auto px-4 py-6 max-w-4xl space-y-5">
+        <Card className="p-5 rounded-[1.75rem] border-0 bg-white shadow-xl shadow-blue-500/5">
+          <div className="flex items-center justify-between gap-3 mb-1.5 flex-wrap">
+            <h2 className="text-xl font-bold flex items-center gap-3 text-slate-800">
+              <div className="w-2.5 h-8 bg-indigo-500 rounded-full shrink-0" /> 표어 / 주제 성구
+            </h2>
+            <label
+              htmlFor="motto-toggle"
+              className={`flex items-center gap-3 py-2 px-4 rounded-full transition-all duration-300 cursor-pointer select-none shrink-0 ${mottoEnabled
+                ? "bg-blue-50/80 shadow-sm border border-blue-100"
+                : "bg-gray-100/70 border border-transparent"
+                }`}
+            >
+              <div className="flex items-center gap-2">
+                <span className={`w-2 h-2 rounded-full transition-colors shrink-0 ${mottoEnabled ? "bg-blue-600 animate-pulse" : "bg-gray-400"}`} />
+                <span className={`text-xs font-bold transition-colors whitespace-nowrap ${mottoEnabled ? "text-blue-700" : "text-gray-500"}`}>
+                  {mottoEnabled ? "노출 중" : "노출 안 함"}
+                </span>
+              </div>
+              <Switch
+                id="motto-toggle"
+                checked={mottoEnabled}
+                onCheckedChange={setMottoEnabled}
+                className="data-[state=checked]:bg-blue-600 data-[state=unchecked]:bg-gray-300 transition-colors duration-200"
+              />
+            </label>
+          </div>
+          <p className="text-xs text-slate-400 mb-4 font-medium leading-relaxed">
+            교회 표어나 이번 주 주제 성구를 입력하면 성도 화면 "섬기는 사람들" 바로 위에 표시돼요. 한 번 입력해두면 다음 주보를 새로 만들 때도 자동으로 이어져요.
+          </p>
+
+          <div className="space-y-4">
+            <div>
+              <label className="block text-xs font-bold text-slate-500 mb-1.5">화면에 표시할 제목</label>
+              <div className="flex gap-2">
+                {([
+                  { value: "verse", label: "주제 성구" },
+                  { value: "motto", label: "표어" },
+                  { value: "custom", label: "직접 입력" },
+                ] as const).map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setMottoLabelType(opt.value)}
+                    className={`flex-1 h-10 rounded-xl text-xs font-bold border transition-all ${mottoLabelType === opt.value
+                      ? "bg-blue-600 border-blue-600 text-white"
+                      : "bg-slate-50 border-slate-200 text-slate-500 hover:bg-white"
+                      }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              {mottoLabelType === "custom" && (
+                <Input
+                  value={mottoCustomLabel}
+                  onChange={(e) => setMottoCustomLabel(e.target.value)}
+                  placeholder="예: 이달의 말씀, 우리 교회 슬로건"
+                  className="rounded-xl h-11 border-slate-200 bg-white text-sm font-bold mt-2"
+                />
+              )}
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-500 mb-1.5">말씀 / 표어 내용</label>
+              <Textarea
+                value={mottoText}
+                onChange={(e) => setMottoText(e.target.value)}
+                placeholder="예: 내가 곧 길이요 진리요 생명이니 나로 말미암지 않고는 아버지께로 올 자가 없느니라"
+                className="rounded-xl border-slate-200 bg-white text-sm min-h-[80px]"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-500 mb-1.5">출처 (성경 구절 등, 선택사항)</label>
+              <Input
+                value={mottoReference}
+                onChange={(e) => setMottoReference(e.target.value)}
+                placeholder="예: 요한복음 14:6"
+                className="rounded-xl h-11 border-slate-200 bg-white text-sm font-bold"
+              />
+            </div>
+          </div>
+        </Card>
 
         <Card className="p-5 rounded-[1.75rem] border-0 bg-white shadow-xl shadow-blue-500/5 relative overflow-hidden">
           <div className="flex flex-col gap-3 mb-4">
@@ -1807,6 +2081,9 @@ export function AdminEditor() {
                 <div className="w-2.5 h-8 bg-blue-600 rounded-full shrink-0" /> 섬기시는분 안내 설정
               </h2>
               <p className="text-xs text-slate-400 mt-1.5 font-medium leading-relaxed">교역자, 부서별 담당자, 찬양대 등 사역자의 직분과 이름, 사진을 함께 관리하세요.</p>
+              <p className="text-[11px] text-blue-500 mt-1 font-bold leading-relaxed flex items-center gap-1">
+                <ImageIcon className="w-3 h-3 shrink-0" /> 사진은 정사각형(1:1)에 가까울수록 예쁘게 나와요 · 최소 600×600px 권장
+              </p>
             </div>
 
             <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -1847,8 +2124,8 @@ export function AdminEditor() {
           <div className="space-y-3">
             {ministers.map((minister, index) => (
               <div key={minister.id} className="p-4 bg-slate-50/80 rounded-[1.5rem] border border-slate-100 hover:bg-white hover:shadow-md transition-all">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-3 min-w-0">
+                <div className="flex items-center justify-between mb-3 flex-wrap gap-y-2">
+                  <div className="flex items-center gap-3 min-w-0 shrink-0">
                     {/* ref 콜백 함수가 불안정한 값을 반환하지 않고 명시적으로 처리되도록 수정 */}
                     <div className="relative group shrink-0">
                       <input
@@ -1949,6 +2226,15 @@ export function AdminEditor() {
                     )}
                   </div>
                 </div>
+
+                <Textarea
+                  value={(minister as any).description || ""}
+                  onChange={(e) => updateMinister(minister.id, 'description', e.target.value)}
+                  placeholder="소개 문구 (선택, 예: 성도들을 섬기는 마음으로 매일을 살아갑니다)"
+                  rows={2}
+                  maxLength={80}
+                  className="rounded-xl border-slate-200 bg-white text-sm font-medium resize-none mt-2.5"
+                />
               </div>
             ))}
           </div>
@@ -1963,6 +2249,9 @@ export function AdminEditor() {
                   <div className="w-2.5 h-8 bg-blue-600 rounded-full shrink-0" /> 오시는 길
                 </h2>
                 <p className="text-xs text-slate-400 mt-1.5 font-medium leading-relaxed">위치 안내 이미지를 올리면 주보에 그대로 표시돼요.</p>
+                <p className="text-[11px] text-blue-500 mt-1 font-bold leading-relaxed flex items-center gap-1">
+                  <ImageIcon className="w-3 h-3 shrink-0" /> 권장 크기: 가로·세로 중 긴 쪽 기준 최소 720px 이상
+                </p>
               </div>
 
               <Popover>
@@ -2071,7 +2360,7 @@ export function AdminEditor() {
                   >
                     <ImageIcon className="w-6 h-6" />
                     <span className="text-xs font-bold">위치 안내 이미지 업로드</span>
-                    <span className="text-[10px] text-blue-400 text-center px-2">네이버 지도 캡처, 오시는 길 안내도 등</span>
+                    <span className="text-[10px] text-blue-400 text-center px-2">네이버 지도 캡처, 오시는 길 안내도 등 · 최소 720px 권장</span>
                   </button>
                 )}
               </div>
@@ -2102,12 +2391,189 @@ export function AdminEditor() {
       </div>
       )}
 
+      {activeTab === "sharing" && (
+      <div className="container mx-auto px-4 py-6 max-w-4xl space-y-5">
+        <Card className="p-5 rounded-[1.75rem] border-0 bg-white shadow-xl shadow-blue-500/5">
+          <div className="flex items-center justify-between gap-3 mb-1.5 flex-wrap">
+            <h2 className="text-xl font-bold flex items-center gap-3 text-slate-800">
+              <div className="w-2.5 h-8 bg-blue-600 rounded-full shrink-0" /> 말씀 적용 질문
+            </h2>
+            <label
+              htmlFor="sharing-toggle"
+              className={`flex items-center gap-3 py-2 px-4 rounded-full transition-all duration-300 cursor-pointer select-none shrink-0 ${sharingEnabled
+                ? "bg-blue-50/80 shadow-sm border border-blue-100"
+                : "bg-gray-100/70 border border-transparent"
+                }`}
+            >
+              <div className="flex items-center gap-2">
+                <span className={`w-2 h-2 rounded-full transition-colors shrink-0 ${sharingEnabled ? "bg-blue-600 animate-pulse" : "bg-gray-400"}`} />
+                <span className={`text-xs font-bold transition-colors whitespace-nowrap ${sharingEnabled ? "text-blue-700" : "text-gray-500"}`}>
+                  {sharingEnabled ? "노출 중" : "노출 안 함"}
+                </span>
+              </div>
+              <Switch
+                id="sharing-toggle"
+                checked={sharingEnabled}
+                onCheckedChange={setSharingEnabled}
+                className="data-[state=checked]:bg-blue-600 data-[state=unchecked]:bg-gray-300 transition-colors duration-200"
+              />
+            </label>
+          </div>
+          <p className="text-xs text-slate-400 mb-4 font-medium leading-relaxed">
+            셀모임·구역모임·소그룹 등 나눔 시간에 쓸 말씀 적용 질문이에요. 성도 화면의 "섬기는 사람들" 바로 위에 표시됩니다.
+          </p>
+
+          {/* 새 질문 추가 폼 */}
+          <div className="space-y-3 p-4 bg-slate-50/70 rounded-2xl border border-slate-100">
+            <div>
+              <Label className="text-xs font-bold text-slate-600 mb-1.5 block">질문 제목</Label>
+              <Input
+                value={newQuestionTitle}
+                onChange={(e) => setNewQuestionTitle(e.target.value)}
+                placeholder="예: 1. 믿음과 삶에 대하여"
+                className="rounded-xl h-11 border-slate-200 bg-white text-sm font-bold"
+              />
+            </div>
+            <div>
+              <Label className="text-xs font-bold text-slate-600 mb-1.5 block">핵심 인용구 (선택사항)</Label>
+              <div className="relative">
+                <Quote className="w-4 h-4 text-slate-300 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <Input
+                  value={newQuestionQuote}
+                  onChange={(e) => setNewQuestionQuote(e.target.value)}
+                  placeholder="질문의 중심이 되는 말씀을 적어주세요"
+                  className="rounded-xl h-11 border-slate-200 bg-white text-sm pl-10"
+                />
+              </div>
+            </div>
+            <div>
+              <Label className="text-xs font-bold text-slate-600 mb-1.5 block">상세 질문 내용</Label>
+              <Textarea
+                value={newQuestionContent}
+                onChange={(e) => setNewQuestionContent(e.target.value)}
+                placeholder="성도들이 깊이 묵상할 수 있는 질문을 입력하세요"
+                rows={3}
+                className="rounded-xl border-slate-200 bg-white text-sm resize-none"
+              />
+            </div>
+            <Button onClick={addSharingQuestion} className="w-full rounded-xl h-12 bg-blue-600 hover:bg-blue-700 text-white font-bold">
+              <Plus className="w-4 h-4 mr-1.5" /> 질문 리스트 추가
+            </Button>
+          </div>
+
+          {/* 질문 리스트: PC는 드래그(그립 아이콘) + 버튼, 모바일은 버튼만으로 순서 변경 */}
+          {sharingQuestions.length > 0 && (
+            <div className="space-y-3 mt-5">
+              {sharingQuestions.map((q, index) => (
+                <div
+                  key={q.id}
+                  draggable={editingQuestionId !== q.id}
+                  onDragStart={() => handleQuestionDragStart(index)}
+                  onDragOver={(e) => handleQuestionDragOver(index, e)}
+                  onDragEnd={handleQuestionDragEnd}
+                  className="p-4 bg-slate-50/70 rounded-2xl border border-slate-100 hover:bg-white hover:shadow-md transition-all"
+                >
+                  <div className="flex items-center justify-between mb-2.5 gap-2 flex-wrap">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <GripVertical className="w-4 h-4 text-slate-300 shrink-0 hidden md:block cursor-grab" />
+                      <span className="text-[11px] font-black text-blue-600 bg-blue-50 px-2.5 py-1 rounded-full shrink-0">
+                        Question {index + 1}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        disabled={index === 0}
+                        onClick={() => moveSharingQuestion(index, 'up')}
+                        className="h-7 w-7 rounded-md bg-white border border-gray-200 shadow-sm"
+                      >
+                        <ChevronUp className="w-3.5 h-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        disabled={index === sharingQuestions.length - 1}
+                        onClick={() => moveSharingQuestion(index, 'down')}
+                        className="h-7 w-7 rounded-md bg-white border border-gray-200 shadow-sm"
+                      >
+                        <ChevronDown className="w-3.5 h-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => setEditingQuestionId(editingQuestionId === q.id ? null : q.id)}
+                        className={`h-7 w-7 rounded-md border shadow-sm ${editingQuestionId === q.id ? 'bg-blue-600 border-blue-600 text-white hover:bg-blue-700' : 'bg-white border-gray-200 text-slate-500'}`}
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => removeSharingQuestion(q.id)}
+                        className="text-gray-300 hover:text-red-500 rounded-full h-7 w-7"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  </div>
+
+                  {editingQuestionId === q.id ? (
+                    <div className="space-y-2.5">
+                      <Input
+                        value={q.title}
+                        onChange={(e) => updateSharingQuestion(q.id, 'title', e.target.value)}
+                        placeholder="질문 제목"
+                        className="rounded-xl h-10 border-slate-200 bg-white text-sm font-bold"
+                      />
+                      <div className="relative">
+                        <Quote className="w-4 h-4 text-slate-300 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                        <Input
+                          value={q.quote}
+                          onChange={(e) => updateSharingQuestion(q.id, 'quote', e.target.value)}
+                          placeholder="핵심 인용구 (선택사항)"
+                          className="rounded-xl h-10 border-slate-200 bg-white text-sm pl-10"
+                        />
+                      </div>
+                      <Textarea
+                        value={q.content}
+                        onChange={(e) => updateSharingQuestion(q.id, 'content', e.target.value)}
+                        placeholder="상세 질문 내용"
+                        rows={3}
+                        className="rounded-xl border-slate-200 bg-white text-sm resize-none"
+                      />
+                      <Button onClick={() => setEditingQuestionId(null)} size="sm" className="w-full rounded-xl h-10 bg-slate-800 hover:bg-slate-900 text-white font-bold text-sm">
+                        완료
+                      </Button>
+                    </div>
+                  ) : (
+                    <div>
+                      <h4 className="font-extrabold text-slate-800 text-sm mb-1 break-keep">{q.title || "제목 없음"}</h4>
+                      {q.quote && (
+                        <p className="text-xs text-blue-600 font-semibold mb-1 flex items-start gap-1 break-keep">
+                          <Quote className="w-3 h-3 shrink-0 mt-0.5" /> {q.quote}
+                        </p>
+                      )}
+                      {q.content && (
+                        <p className="text-xs text-slate-500 leading-relaxed whitespace-pre-line break-keep">{q.content}</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+      </div>
+      )}
+
       {activeTab === "cover" && (
       <div className="container mx-auto px-4 py-6 max-w-4xl">
         <Card className="p-5 rounded-[1.75rem] border-0 bg-white shadow-xl shadow-blue-500/5">
           <div className="mb-4">
             <h2 className="text-xl font-bold flex items-center gap-3 text-gray-800">
               <div className="w-2.5 h-8 bg-blue-600 rounded-full shrink-0" /> 카카오톡 공유 이미지
+              <span className="text-[10px] font-black tracking-widest uppercase text-purple-600 bg-purple-100 px-2 py-0.5 rounded-full">BETA</span>
             </h2>
             <p className="text-xs text-gray-500 mt-1.5 leading-relaxed">
               우리 교회 주보 링크를 카카오톡 등으로 공유했을 때 보이는 대표 이미지예요. 가로형 800×400px 비율로 저장되고,
@@ -2237,7 +2703,11 @@ export function AdminEditor() {
             </button>
           )}
 
-          <p className="text-[11px] text-amber-600/90 font-medium mt-3 leading-relaxed flex items-start gap-1.5">
+          <p className="text-[11px] text-purple-600/90 font-medium mt-3 leading-relaxed flex items-start gap-1.5">
+            <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+            지금은 베타 기간이라 무료로 제공돼요. 정식 버전이 출시되면 요금제에 따라 유료로 바뀔 수 있어요.
+          </p>
+          <p className="text-[11px] text-amber-600/90 font-medium mt-2 leading-relaxed flex items-start gap-1.5">
             <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
             카카오톡은 이미 공유된 적 있는 링크의 미리보기 이미지를 한동안 캐싱해요. 이미지를 바꿔도 예전에 보내둔 링크는 한동안 이전 모습으로 보일 수 있어요.
           </p>
