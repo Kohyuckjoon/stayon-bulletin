@@ -12,7 +12,9 @@ type Theme = { pageBg: string; headerBg: string; line: string; ink: string; mute
 
 const THEMES: Record<string, Theme> = {
   default: { pageBg: "#f1f5f9", headerBg: "rgba(241,245,249,0.92)", line: "#e2e8f0", ink: "#0f172a", muted: "#64748b", accent: "#2563eb", label: "#3b82f6", flat: false },
+  // "모던 & 미니멀 디자인" 계열(커버형/오픈형) 둘 다 이 화면에서는 같은 아이보리 톤을 쓴다.
   "warm-ivory": { pageBg: "#FDFAF5", headerBg: "rgba(253,250,245,0.92)", line: "#EEE6D4", ink: "#1F241F", muted: "#8a8272", accent: "#2F5C52", label: "#B5924A", flat: true },
+  "warm-ivory-open": { pageBg: "#FDFAF5", headerBg: "rgba(253,250,245,0.92)", line: "#EEE6D4", ink: "#1F241F", muted: "#8a8272", accent: "#2F5C52", label: "#B5924A", flat: true },
 };
 
 export function LocationPage() {

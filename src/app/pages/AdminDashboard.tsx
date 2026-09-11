@@ -5,7 +5,7 @@ import { KakaoChannelButton } from "../components/KakaoChannelButton";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   doc, getDoc, updateDoc, serverTimestamp, collection, query,
-  where, orderBy, getDocs, limit, writeBatch
+  where, orderBy, getDocs, limit, writeBatch, addDoc
 } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import { Button } from "../components/ui/button";
@@ -13,7 +13,7 @@ import { Card } from "../components/ui/card";
 import {
   Plus, FileText, History as HistoryIcon, LogOut, Calendar, Eye, Smartphone, Download, Send,
   CheckCircle2, BookOpen, Globe, Copy, Zap, ChevronRight, ShieldCheck, Lock, Megaphone,
-  X, Sparkles, Youtube, ExternalLink, ChevronLeft, Briefcase, ChevronDown, MapPin
+  X, Sparkles, Youtube, ExternalLink, ChevronLeft, Briefcase, ChevronDown, MapPin, Music2
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
@@ -25,6 +25,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { toast } from "sonner";
 import { useJobBoardEnabled } from "../../hooks/useJobBoardEnabled";
 import { useFeatureUpdateNotice } from "../../hooks/useFeatureUpdateNotice";
+import { calculateDaysLeft, getPlanTierMeta } from "../../utils/subscriptionTier";
 
 export function AdminDashboard() {
   const navigate = useNavigate();
@@ -151,36 +152,8 @@ export function AdminDashboard() {
     }
   };
 
-  // 1. 남은 일수 계산 로직 (수정: 결제 개월 수 반영)
-  const calculateDaysLeft = (startDateInput: any, durationMonths: number = 0) => {
-    if (!startDateInput) return 0;
-
-    let startDate: Date;
-    if (typeof startDateInput.toDate === 'function') {
-      startDate = startDateInput.toDate();
-    } else {
-      startDate = new Date(startDateInput);
-    }
-
-    const endDate = new Date(startDate);
-    // 수정 포인트: durationMonths가 0이면 입력된 날짜를 그대로 만료일로 사용합니다.
-    // 결제 로직에서 이미 미래 날짜를 저장한다면 0을 넘겨야 합니다.
-    if (durationMonths > 0) {
-      endDate.setMonth(startDate.getMonth() + durationMonths);
-    }
-
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const targetDate = new Date(endDate);
-    targetDate.setHours(0, 0, 0, 0);
-
-    const diffTime = targetDate.getTime() - today.getTime();
-    // Math.ceil을 사용하면 오늘 기준 24시간 미만으로 남았을 때 1일로 표기됩니다.
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-
-    return diffDays;
-  };
+  // 남은 일수 계산은 /super 회원 관리 화면과 동일한 계산식을 써야 두 화면이 같은 날짜를 보여준다.
+  // → src/utils/subscriptionTier.ts의 calculateDaysLeft를 공용으로 사용 (아래 import 참고).
 
   // 슬라이더를 위한 현재 인덱스 상태 추가
   const [currentNoticeIndex, setCurrentNoticeIndex] = useState(0);
@@ -202,7 +175,13 @@ export function AdminDashboard() {
     }
   };
 
-  // 2. 프리미엄 상태 UI 구성 (디자인 유지)
+  // 화면에 노출할 플랜 등급 정보. "premium"이라는 옛 단일 등급이 사라지고 베이직/스탠다드/프로/올인원으로
+  // 나뉘었으니, 더 이상 "프리미엄"이라는 고정 문구를 쓰면 안 된다 — 실제 등급 이름을 그대로 보여준다.
+  // (PLAN_TIERS의 "active" 라벨이 이미 "무료체험"이라 별도 분기 없이 getPlanTierMeta 하나로 처리된다.)
+  const planMeta = getPlanTierMeta(userData?.status);
+  const tierWord = planMeta.label;
+
+  // 2. 이용 상태 UI 구성 (디자인 유지)
   const getPremiumStatusUI = () => {
     const days = daysLeft ?? 0;
 
@@ -225,7 +204,7 @@ export function AdminDashboard() {
         iconBg: "bg-red-500",
         textColor: "text-red-600",
         badgeBg: "bg-red-50 text-red-600 border-red-100",
-        title: `오늘 프리미엄 기능이 만료됩니다`,
+        title: `오늘 ${tierWord} 이용 기간이 만료됩니다`,
         desc: "내일부터 서비스 이용이 전면 제한됩니다. 지금 연장하세요!",
         accentColor: "text-red-600",
         isUrgent: true,
@@ -238,7 +217,7 @@ export function AdminDashboard() {
         iconBg: "bg-orange-500",
         textColor: "text-orange-600",
         badgeBg: "bg-orange-50 text-orange-600 border-orange-100",
-        title: `프리미엄 만료까지 ${days}일 남았습니다`,
+        title: `${tierWord} 만료까지 ${days}일 남았습니다`,
         desc: "중단 없는 서비스를 위해 미리 결제 정보를 확인해주세요.",
         accentColor: "text-orange-600",
         isUrgent: false,
@@ -250,7 +229,7 @@ export function AdminDashboard() {
       iconBg: "bg-blue-600",
       textColor: "text-blue-600",
       badgeBg: "bg-blue-50 text-blue-600 border-blue-100",
-      title: "프리미엄 기능을 사용 중입니다",
+      title: `${tierWord} 기능을 사용 중입니다`,
       desc: "제한 없는 주보 발행과 모든 관리 도구를 이용하고 있습니다.",
       accentColor: "text-blue-600",
       isUrgent: false,
@@ -357,7 +336,11 @@ export function AdminDashboard() {
     return () => clearInterval(cardTimer);
   }, [cardNotices]);
 
-  const handlePublish = async (bulletinId: string) => {
+  // 최근 주보 목록에서 바로 "게시하기"를 누르는 경로. AdminEditor.tsx의 saveToFirestore와는
+  // 완전히 별개의 함수라서, 발행 알림 메일(bulletin_mail_triggers) 생성 로직을 여기에도
+  // 똑같이 넣어줘야 한다 — 안 그러면 이 버튼으로 게시했을 때는 메일이 안 나간다.
+  const handlePublish = async (bulletin: { id: string; date?: string }) => {
+    const bulletinId = bulletin.id;
     if (isExpired) {
       toast.error("기간이 만료되었습니다. 결제 후 이용 가능합니다.");
       navigate("/admin/pricing");
@@ -372,7 +355,33 @@ export function AdminDashboard() {
       const snapshot = await getDocs(q);
       snapshot.forEach((d) => batch.update(doc(db, "bulletins", d.id), { status: "archived" }));
       batch.update(doc(db, "bulletins", bulletinId), { status: "published", publishedAt: serverTimestamp() });
+
+      // 같은 날짜의 주보가 이 교회 계정에 예전에도 발행/보관된 적 있는지 확인해서
+      // "신규 발행"인지 "재발행(업데이트)"인지 판별 — AdminEditor.tsx의 saveToFirestore와 동일한 규칙.
+      let isPublishUpdate = false;
+      try {
+        const sameDateSnap = await getDocs(
+          query(bulletinsRef, where("authorId", "==", uid), where("date", "==", String(bulletin.date || "")))
+        );
+        isPublishUpdate = sameDateSnap.docs.some((d) => {
+          const st = d.data().status;
+          if (d.id === bulletinId) return st !== "draft";
+          return st === "published" || st === "archived";
+        });
+      } catch (e) {
+        console.error("발행 이력 조회 실패:", e);
+      }
+
       await batch.commit();
+
+      addDoc(collection(db, "bulletin_mail_triggers"), {
+        authorId: uid,
+        bulletinId,
+        date: String(bulletin.date || ""),
+        isUpdate: isPublishUpdate,
+        createdAt: serverTimestamp(),
+      }).catch((err: unknown) => console.error("주보 알림 트리거 생성 실패:", err));
+
       toast.success("게시 완료!");
       fetchBulletinsData(uid);
     } catch (error) {
@@ -437,7 +446,7 @@ export function AdminDashboard() {
   const stats = [
     { label: "전체 주보", value: recentBulletins.length.toString(), icon: <FileText className="w-6 h-6" />, color: "from-blue-500 to-blue-600" },
     { label: "이번 달 조회수", value: (userData?.monthlyViews || 0).toLocaleString(), icon: <Eye className="w-6 h-6" />, color: "from-purple-500 to-purple-600" },
-    { label: "프리미엄 남은 일수", value: daysLeft !== null ? (daysLeft <= 0 ? "만료" : `${daysLeft}일`) : "계산 중", icon: <Calendar className="w-6 h-6" />, color: daysLeft !== null && daysLeft <= 3 ? "from-red-500 to-orange-600" : (daysLeft !== null && daysLeft <= 7 ? "from-emerald-500 to-teal-600" : "from-blue-500 to-indigo-600") }
+    { label: "이용 만료까지", value: daysLeft !== null ? (daysLeft <= 0 ? "만료" : `${daysLeft}일`) : "계산 중", icon: <Calendar className="w-6 h-6" />, color: daysLeft !== null && daysLeft <= 3 ? "from-red-500 to-orange-600" : (daysLeft !== null && daysLeft <= 7 ? "from-emerald-500 to-teal-600" : "from-blue-500 to-indigo-600") }
   ];
 
   const currentNotice = bannerNotices.length > 0 ? bannerNotices[currentSlideIndex] : null;
@@ -487,8 +496,8 @@ export function AdminDashboard() {
               <div>
                 <div className="flex items-center gap-2">
                   <h1 className="text-base sm:text-lg font-bold text-slate-900 tracking-tight">{userData?.churchName || "불러오는 중..."}</h1>
-                  <span className={`hidden sm:inline-flex px-2 py-0.5 rounded-md text-[10px] font-extrabold items-center gap-1 border ${statusUI.badgeBg}`}>
-                    <ShieldCheck className="w-3 h-3" /> {userData?.status === "premium" ? "PREMIUM" : "FREE TRIAL"}
+                  <span className={`hidden sm:inline-flex px-2.5 py-1 rounded-full text-[10px] font-extrabold items-center gap-1 ${planMeta.chipClass} ${planMeta.textClass}`}>
+                    {planMeta.icon ? <planMeta.icon className="w-3 h-3" /> : <ShieldCheck className="w-3 h-3" />} {tierWord}
                   </span>
                 </div>
                 <p className="text-xs text-slate-500 font-medium">{userData?.department || "관리자"}</p>
@@ -516,22 +525,7 @@ export function AdminDashboard() {
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" sideOffset={8} className="rounded-2xl border-0 shadow-xl p-2 w-64 bg-white">
-                  {/* 1) 외부사역팀 섭외: 항상 이용 가능, 외부 링크로 새 탭 오픈 */}
-                  <DropdownMenuItem
-                    onClick={() => window.open("https://place.stayon-platform.com/teams", "_blank", "noopener,noreferrer")}
-                    className="rounded-xl px-2.5 py-2.5 gap-3 cursor-pointer focus:bg-blue-50"
-                  >
-                    <div className="w-9 h-9 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600 shrink-0">
-                      <Briefcase className="w-4 h-4" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="font-bold text-sm text-slate-900">외부사역팀 섭외</p>
-                      <p className="text-[11px] text-slate-400 truncate">스테이온 플레이스에서 바로 섭외하기</p>
-                    </div>
-                    <ExternalLink className="w-3.5 h-3.5 text-slate-300 shrink-0" />
-                  </DropdownMenuItem>
-
-                  {/* 2) 수련회 장소 찾기: 항상 이용 가능, 외부 링크로 새 탭 오픈 */}
+                  {/* 1) 수련회 장소 찾기: 항상 이용 가능, 외부 링크로 새 탭 오픈 */}
                   <DropdownMenuItem
                     onClick={() => window.open("https://place.stayon-platform.com/venues", "_blank", "noopener,noreferrer")}
                     className="rounded-xl px-2.5 py-2.5 gap-3 cursor-pointer focus:bg-blue-50"
@@ -541,12 +535,44 @@ export function AdminDashboard() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="font-bold text-sm text-slate-900">수련회 장소 찾기</p>
-                      <p className="text-[11px] text-slate-400 truncate">스테이온 플레이스에서 수련회 장소 둘러보기</p>
+                      <p className="text-[11px] text-slate-400 truncate">STAYON 수련회 장소 둘러보기</p>
                     </div>
                     <ExternalLink className="w-3.5 h-3.5 text-slate-300 shrink-0" />
                   </DropdownMenuItem>
 
-                  {/* 3) 청빙 게시판: 기존 기능 플래그(jobBoardEnabled)를 그대로 따름 — 켜지면 활성, 꺼지면 자물쇠+비활성 */}
+                  {/* 2) 외부사역팀 섭외: 항상 이용 가능, 외부 링크로 새 탭 오픈 */}
+                  <DropdownMenuItem
+                    onClick={() => window.open("https://place.stayon-platform.com/teams", "_blank", "noopener,noreferrer")}
+                    className="rounded-xl px-2.5 py-2.5 gap-3 cursor-pointer focus:bg-blue-50"
+                  >
+                    <div className="w-9 h-9 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600 shrink-0">
+                      <Briefcase className="w-4 h-4" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-bold text-sm text-slate-900">외부사역팀 섭외</p>
+                      <p className="text-[11px] text-slate-400 truncate">STAYON 에서 섭외하기</p>
+                    </div>
+                    <ExternalLink className="w-3.5 h-3.5 text-slate-300 shrink-0" />
+                  </DropdownMenuItem>
+
+                  
+
+                  {/* 3) 합주실/연습실 찾기: 항상 이용 가능, 외부 링크로 새 탭 오픈 */}
+                  <DropdownMenuItem
+                    onClick={() => window.open("https://place.stayon-platform.com/teams?category=bandroom", "_blank", "noopener,noreferrer")}
+                    className="rounded-xl px-2.5 py-2.5 gap-3 cursor-pointer focus:bg-blue-50"
+                  >
+                    <div className="w-9 h-9 rounded-xl bg-rose-50 flex items-center justify-center text-rose-600 shrink-0">
+                      <Music2 className="w-4 h-4" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-bold text-sm text-slate-900">합주실/연습실 찾기</p>
+                      <p className="text-[11px] text-slate-400 truncate">STAYON 에서 합주실·연습실 둘러보기</p>
+                    </div>
+                    <ExternalLink className="w-3.5 h-3.5 text-slate-300 shrink-0" />
+                  </DropdownMenuItem>
+
+                  {/* 4) 청빙 게시판: 기존 기능 플래그(jobBoardEnabled)를 그대로 따름 — 켜지면 활성, 꺼지면 자물쇠+비활성 */}
                   {jobBoardEnabled ? (
                     <DropdownMenuItem
                       onClick={() => navigate("/jobs", { state: { from: "admin" } })}
@@ -992,7 +1018,7 @@ export function AdminDashboard() {
                         {!isCurrentlyActive && (
                           <Button
                             disabled={isExpired}
-                            onClick={() => handlePublish(bullet.id)}
+                            onClick={() => handlePublish(bullet)}
                             className={`flex-1 sm:flex-none rounded-xl sm:rounded-2xl font-black transition-all shadow-md text-xs sm:text-sm px-3 sm:px-6 ${isExpired ? 'bg-gray-200 text-gray-400' : 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:scale-105'}`}
                           >
                             <Send className="w-3.5 h-3.5 sm:w-4 sm:h-4 mr-1 sm:mr-2" /> 게시하기

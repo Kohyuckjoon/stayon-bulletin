@@ -44,7 +44,7 @@ export function SuccessPage() {
           }
 
           await updateDoc(userRef, {
-            status: "premium",
+            status: "allinone",
             isPaidUser: true,
             isTrialUsed: true,
             lastPaymentDate: Timestamp.fromDate(newStartDate),

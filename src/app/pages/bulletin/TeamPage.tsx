@@ -41,6 +41,17 @@ const THEMES: Record<string, TeamTheme> = {
     label: "#B5924A",
     flat: true,
   },
+  // "모던 & 미니멀 디자인" 계열(커버형/오픈형) 둘 다 이 화면에서는 같은 아이보리 톤을 쓴다.
+  "warm-ivory-open": {
+    pageBg: "#FDFAF5",
+    headerBg: "rgba(253,250,245,0.92)",
+    line: "#EEE6D4",
+    ink: "#1F241F",
+    muted: "#8a8272",
+    accent: "#2F5C52",
+    label: "#B5924A",
+    flat: true,
+  },
 };
 
 export function TeamPage() {
@@ -71,8 +82,12 @@ export function TeamPage() {
 
   const senior =
     bulletin?.seniorPastorEnabled !== false && bulletin?.seniorPastor?.name ? bulletin.seniorPastor : null;
+  // 이름 없는 빈 항목(입력 안 한 기본 행 등)은 표시하지 않는다 - 예전에 발행된 주보에
+  // 이미 빈 행이 저장돼 있어도 여기서 걸러지도록 화면 단에서도 한 번 더 필터링.
   const associates: any[] =
-    bulletin?.ministersEnabled !== false && Array.isArray(bulletin?.ministers) ? bulletin.ministers : [];
+    bulletin?.ministersEnabled !== false && Array.isArray(bulletin?.ministers)
+      ? bulletin.ministers.filter((m: any) => m?.name && String(m.name).trim() !== "")
+      : [];
 
   const SectionLabel = ({ en, ko }: { en: string; ko: string }) => (
     <div className="mb-3 px-1">

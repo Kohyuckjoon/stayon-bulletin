@@ -36,14 +36,24 @@ export const sendAdminEmail = async (
   }
 };
 
+// "YYYY-MM-DD" → "토" 같은 한글 요일. 형식이 어긋나면 빈 문자열.
+const koreanDayOfWeek = (dateStr: string): string => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec((dateStr || "").trim());
+  if (!m) return "";
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  if (isNaN(d.getTime())) return "";
+  return ["일", "월", "화", "수", "목", "금", "토"][d.getDay()];
+};
+
 export const sendMailNotification = async (
-  type: "JOIN" | "PAYMENT",
+  type: "JOIN" | "PAYMENT" | "BULLETIN_PUBLISH" | "BULLETIN_UPDATE",
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  data: any
+  data: any,
 ) => {
   let title = "";
   let color = "#3182f6";
   let fields: { title: string; value: string }[] = [];
+  let footerLink = "";
 
   switch (type) {
   case "JOIN":
@@ -72,6 +82,41 @@ export const sendMailNotification = async (
       {title: "결제 일시", value: data.date},
     ];
     break;
+
+  case "BULLETIN_PUBLISH":
+  case "BULLETIN_UPDATE": {
+    const isUpdate = type === "BULLETIN_UPDATE";
+    const churchName = String(data.churchName || "이름 미등록 교회");
+    const dow = koreanDayOfWeek(String(data.date || ""));
+    const dateLabel = dow ?
+      `${data.date} (${dow})` :
+      String(data.date || "-");
+
+    title = isUpdate ?
+      `🔄 ${churchName}가 ${dateLabel} 주보를 업데이트했습니다!` :
+      `📢 ${churchName}가 ${dateLabel} 주보를 발행했습니다!`;
+    color = isUpdate ? "#e8590c" : "#3182f6";
+    fields = [
+      {title: "교회명", value: churchName},
+      {title: "주보 날짜", value: dateLabel},
+      {title: "담임목사", value: String(data.pastorName || "-")},
+      {
+        title: "구분",
+        value: isUpdate ? "재발행(업데이트)" : "신규 발행",
+      },
+    ];
+    if (data.bulletinId) {
+      const url =
+        "https://bulletin.stayon-platform.com/view/" + data.bulletinId;
+      footerLink =
+        "<div style=\"margin-top:20px;text-align:center;\">" +
+        "<a href=\"" + url + "\" style=\"display:inline-block;" +
+        "background:" + color + ";color:#fff;text-decoration:none;" +
+        "font-size:14px;font-weight:600;padding:12px 24px;" +
+        "border-radius:12px;\">주보 보기</a></div>";
+    }
+    break;
+  }
   }
 
   let fieldsHtml = "";
@@ -107,6 +152,7 @@ export const sendMailNotification = async (
     title + "</h2>" +
     "<div style=\"background: #fff;\">" +
     fieldsHtml + "</div>" +
+    footerLink +
     "<div style=\"margin-top: 32px; " +
     "font-size: 12px; color: #b0b8c1; " +
     "text-align: center;\">" +

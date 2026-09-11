@@ -21,8 +21,15 @@ export const BULLETIN_TEMPLATES: BulletinTemplate[] = [
   },
   {
     id: "warm-ivory",
-    label: "모던 & 미니멀 디자인",
-    description: "따뜻한 아이보리 배경에 번호가 매겨진 예배 순서 리스트가 특징인 디자인이에요.",
+    label: "모던 & 미니멀 디자인(커버형)",
+    description: "따뜻한 아이보리 배경에 번호가 매겨진 예배 순서 리스트가 특징인 디자인이에요. 첫 화면 가득 사진 커버가 떠요.",
+    swatch: "#FDFAF5",
+    accent: "#2F5C52",
+  },
+  {
+    id: "warm-ivory-open",
+    label: "모던 & 미니멀 디자인(오픈형)",
+    description: "커버형과 디자인은 같지만, 사진 커버를 짧은 배너로 줄여서 스크롤 없이 바로 예배 순서부터 보여줘요.",
     swatch: "#FDFAF5",
     accent: "#2F5C52",
   },
@@ -45,4 +52,12 @@ export function isCustomBulletinTemplate(templateId: string | undefined | null):
 
 export function isComingSoonBulletinTemplate(templateId: string | undefined | null): boolean {
   return !!BULLETIN_TEMPLATES.find((t) => t.id === templateId)?.comingSoon;
+}
+
+// "모던 & 미니멀 디자인" 계열(커버형/오픈형)인지. 메인 화면(BulletinView)은 둘이 서로 다른
+// 컴포넌트(WarmIvoryTemplate / WarmIvoryOpenTemplate)를 쓰지만, 메뉴 하위 화면(소개/오시는길/
+// 섬기시는분)은 둘 다 똑같은 "아이보리 톤"을 써야 해서 이 헬퍼로 묶어서 판정한다.
+export const WARM_IVORY_FAMILY_IDS = ["warm-ivory", "warm-ivory-open"] as const;
+export function isWarmIvoryFamily(templateId: string | undefined | null): boolean {
+  return !!templateId && (WARM_IVORY_FAMILY_IDS as readonly string[]).includes(templateId);
 }

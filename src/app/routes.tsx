@@ -6,6 +6,7 @@ import { Login } from "./pages/Login";
 import { BulletinView } from "./pages/BulletinView";
 import { AboutPage } from "./pages/bulletin/AboutPage"; // 성도 화면 메뉴 > 소개
 import { TeamPage } from "./pages/bulletin/TeamPage"; // 성도 화면 메뉴 > 섬기시는 분
+import { OfficersPage } from "./pages/bulletin/OfficersPage"; // 성도 화면 메뉴 > 섬기시는 분 > 중직자
 import { LocationPage } from "./pages/bulletin/LocationPage"; // 성도 화면 메뉴 > 오시는 길
 import { AdminDashboard } from "./pages/AdminDashboard";
 import { AdminEditor } from "./pages/AdminEditor";
@@ -189,6 +190,7 @@ export const router = createBrowserRouter([
       { path: "view/:id", Component: BulletinView },
       { path: "view/:id/about", Component: AboutPage }, // 성도 화면 메뉴 > 소개
       { path: "view/:id/team", Component: TeamPage }, // 성도 화면 메뉴 > 섬기시는 분
+      { path: "view/:id/officers", Component: OfficersPage }, // 성도 화면 메뉴 > 섬기시는 분 > 중직자
       { path: "view/:id/location", Component: LocationPage }, // 성도 화면 메뉴 > 오시는 길
       { path: "pricing", Component: Pricing },
       { path: "success", Component: SuccessPage }, // 모바일/성공 페이지 대응

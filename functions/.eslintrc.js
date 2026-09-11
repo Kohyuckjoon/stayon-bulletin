@@ -21,6 +21,7 @@ module.exports = {
     "/lib/**/*", // Ignore built files.
     "/dist/**/*",
     "/generated/**/*", // Ignore generated files.
+    "/scripts/**/*", // 배포와 무관한 로컬 실행용 스크립트 (tsconfig 밖)
   ],
   plugins: [
     "@typescript-eslint",

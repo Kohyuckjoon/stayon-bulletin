@@ -3,7 +3,7 @@ import { useNavigate, useParams } from "react-router";
 import { auth, db, storage } from "../../firebase";
 import { onAuthStateChanged } from "firebase/auth";
 import {
-  doc, getDoc, setDoc, serverTimestamp, collection,
+  doc, getDoc, setDoc, serverTimestamp, collection, addDoc,
   query, where, orderBy, limit, getDocs, writeBatch
 } from "firebase/firestore";
 import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
@@ -591,6 +591,13 @@ export function AdminEditor() {
   // 불러올 때 값이 없으면(undefined) true로 취급해 기존 화면과 동일하게 보이도록 한다.
   const [ministersEnabled, setMinistersEnabled] = useState(true);
 
+  // 중직자(장로/권사/안수집사 등) 소개. ministers(부교역자)와 별개 리스트 — 연락처 없이
+  // 사진/직위/이름/담당 업무만 관리한다. 메뉴 > 섬기시는 분 > 중직자 화면에 표시된다.
+  const [officers, setOfficers] = useState([
+    { id: "o1", position: "", name: "", photoUrl: "", duty: "" }
+  ]);
+  const [officersEnabled, setOfficersEnabled] = useState(true);
+
   // "오시는 길" (교회 주소) 상태. 주소는 다음(Daum) 우편번호 찾기로 검색해서 채우고,
   // 상세 주소(동/호수 등)는 직접 입력한다. addressEnabled는 ministersEnabled와 동일한 패턴.
   const [churchAddress, setChurchAddress] = useState("");
@@ -893,6 +900,49 @@ export function AdminEditor() {
     reader.readAsDataURL(file);
   };
 
+  // 중직자 사진 파일 입력 참조 + 목록 조작 핸들러. ministers 쪽과 완전히 동일한 패턴.
+  const officerFileInputRefs = useRef<{ [key: string]: HTMLInputElement | null }>({});
+
+  const addOfficer = () => {
+    setOfficers([...officers, { id: Date.now().toString(), position: "", name: "", photoUrl: "", duty: "" }]);
+  };
+
+  const removeOfficer = (officerId: string) => {
+    setOfficers(officers.filter((o) => o.id !== officerId));
+  };
+
+  const updateOfficer = (officerId: string, field: 'position' | 'name' | 'photoUrl' | 'duty', val: string) => {
+    setOfficers(officers.map((o) => (o.id === officerId ? { ...o, [field]: val } : o)));
+  };
+
+  // 중직자 사진 업로드 - handleImageUpload와 동일한 압축 규칙(600px, JPEG 0.75), 저장 위치만 officers로.
+  const handleOfficerImageUpload = (officerId: string, e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      toast.error("이미지 파일(png, jpeg 등)만 업로드 가능합니다.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.src = event.target?.result as string;
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        const MAX = 600;
+        let w = img.width, h = img.height;
+        if (w > h) { if (w > MAX) { h *= MAX / w; w = MAX; } }
+        else { if (h > MAX) { w *= MAX / h; h = MAX; } }
+        canvas.width = w; canvas.height = h;
+        canvas.getContext("2d")?.drawImage(img, 0, 0, w, h);
+        updateOfficer(officerId, 'photoUrl', canvas.toDataURL("image/jpeg", 0.75));
+        toast.success("중직자 사진이 압축되어 성공적으로 등록되었습니다.");
+      };
+    };
+    reader.onerror = () => toast.error("이미지를 읽는 중 오류가 발생했습니다.");
+    reader.readAsDataURL(file);
+  };
+
   // 담임 목사 사진 - handleImageUpload와 같은 리사이즈 규칙, 저장 위치만 seniorPastor 로.
   const handleSeniorPastorImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -938,6 +988,8 @@ export function AdminEditor() {
       sundayServices,
       ministers,
       ministersEnabled,
+      officers,
+      officersEnabled,
       seniorPastor,
       seniorPastorEnabled,
       sharingQuestions,
@@ -962,7 +1014,7 @@ export function AdminEditor() {
       isPreview: true // 미리보기 모드임을 알림
     };
     localStorage.setItem("temp_bulletin", JSON.stringify(tempData));
-  }, [bulletinData, sections, announcements, midweekServices, sundayServices, ministers, ministersEnabled, seniorPastor, seniorPastorEnabled, sharingQuestions, sharingEnabled, churchAddress, churchAddressDetail, addressEnabled, locationImage, locationImageRatio, mottoEnabled, mottoLabelType, mottoCustomLabel, mottoText, mottoReference, bulletinTemplate, accountData, customDesignConfig, churchLogo, churchLogoEnabled, churchLogoSize, churchIntro, churchIntroEnabled, churchImage]);
+  }, [bulletinData, sections, announcements, midweekServices, sundayServices, ministers, ministersEnabled, officers, officersEnabled, seniorPastor, seniorPastorEnabled, sharingQuestions, sharingEnabled, churchAddress, churchAddressDetail, addressEnabled, locationImage, locationImageRatio, mottoEnabled, mottoLabelType, mottoCustomLabel, mottoText, mottoReference, bulletinTemplate, accountData, customDesignConfig, churchLogo, churchLogoEnabled, churchLogoSize, churchIntro, churchIntroEnabled, churchImage]);
 
   useEffect(() => {
     if (isEditing && id) {
@@ -1005,6 +1057,10 @@ export function AdminEditor() {
               setMinisters(data.ministers);
             }
             setMinistersEnabled(data.ministersEnabled !== false);
+            if (data.officers && Array.isArray(data.officers)) {
+              setOfficers(data.officers);
+            }
+            setOfficersEnabled(data.officersEnabled !== false);
             if (data.seniorPastor && typeof data.seniorPastor === "object") {
               setSeniorPastor({
                 role: data.seniorPastor.role || "담임 목사",
@@ -1182,21 +1238,53 @@ export function AdminEditor() {
 
       const bulletinId = id || doc(collection(db, "bulletins")).id;
 
+      // 이 교회가 같은 날짜(date)로 이미 발행한 적이 있으면 "업데이트", 처음이면 "신규 발행".
+      // (같은 주보를 수정해서 재발행하는 경우도 업데이트로 본다)
+      let isPublishUpdate = false;
+      try {
+        const sameDateSnap = await getDocs(
+          query(bulletinsRef, where("authorId", "==", uid), where("date", "==", String(bulletinData.date || "")))
+        );
+        isPublishUpdate = sameDateSnap.docs.some((d) => {
+          const st = d.data().status;
+          if (d.id === bulletinId) return isEditing && st !== "draft"; // 이 주보를 전에 이미 발행했었나
+          return st === "published" || st === "archived"; // 같은 날짜로 다른 주보를 이미 발행했었나
+        });
+      } catch (e) {
+        console.error("발행 이력 조회 실패:", e);
+      }
+
       const formattedOfferingAccount = `${bulletinData.bankName} ${bulletinData.accountNumber} ${bulletinData.accountHolder}`.trim();
 
       const formattedSundayServices = sundayServices.map(
         (s) => `${s.name}, ${s.time}, ${s.location}`
       );
 
-      const sanitizedMinisters = ministers.map((m: any) => ({
-        id: String(m.id || Date.now()),
-        role: String(m.role || ""),
-        name: String(m.name || ""),
-        phone: String(m.phone || ""),
-        photoUrl: String(m.photoUrl || ""),
-        phoneFreeFormat: Boolean(m.phoneFreeFormat),
-        description: String(m.description || ""),
-      }));
+      // 이름을 안 채운 빈 행(기본으로 깔려 있는 입력용 빈 줄 포함)은 저장하지 않는다.
+      // 안 그러면 "섬기시는분 안내 설정"을 아예 건드리지 않은 교회도 성도 화면에
+      // "이름 없음 부목사" 같은 빈 항목이 그대로 발행/노출된다.
+      const sanitizedMinisters = ministers
+        .filter((m: any) => String(m.name || "").trim() !== "")
+        .map((m: any) => ({
+          id: String(m.id || Date.now()),
+          role: String(m.role || ""),
+          name: String(m.name || ""),
+          phone: String(m.phone || ""),
+          photoUrl: String(m.photoUrl || ""),
+          phoneFreeFormat: Boolean(m.phoneFreeFormat),
+          description: String(m.description || ""),
+        }));
+
+      // 중직자도 부교역자와 동일하게, 이름을 안 채운 빈 행은 저장하지 않는다.
+      const sanitizedOfficers = officers
+        .filter((o: any) => String(o.name || "").trim() !== "")
+        .map((o: any) => ({
+          id: String(o.id || Date.now()),
+          position: String(o.position || ""),
+          name: String(o.name || ""),
+          photoUrl: String(o.photoUrl || ""),
+          duty: String(o.duty || ""),
+        }));
 
       const sanitizedSeniorPastor = {
         role: String(seniorPastor.role || "담임 목사"),
@@ -1293,6 +1381,8 @@ export function AdminEditor() {
         sundayServices: formattedSundayServices,
         ministers: sanitizedMinisters,
         ministersEnabled,
+        officers: sanitizedOfficers,
+        officersEnabled,
         seniorPastor: sanitizedSeniorPastor,
         seniorPastorEnabled,
         sharingQuestions: sanitizedSharingQuestions,
@@ -1325,6 +1415,15 @@ export function AdminEditor() {
 
       batch.set(doc(db, "bulletins", bulletinId), payload, { merge: true });
       await batch.commit();
+
+      // 운영자 이메일 알림 트리거 (발행/업데이트). 실패해도 발행 자체엔 영향 없음.
+      addDoc(collection(db, "bulletin_mail_triggers"), {
+        authorId: uid,
+        bulletinId,
+        date: String(bulletinData.date || ""),
+        isUpdate: isPublishUpdate,
+        createdAt: serverTimestamp(),
+      }).catch((err: unknown) => console.error("주보 알림 트리거 생성 실패:", err));
 
       localStorage.removeItem("temp_bulletin");
 
@@ -2859,6 +2958,129 @@ export function AdminEditor() {
           )}
         </Card>
 
+        {/* 중직자(장로/권사/안수집사 등) 소개 - 부교역자와 별개 리스트. 연락처/소개글 없이
+            사진·직위·이름·담당만 관리한다. 메뉴 > 섬기시는 분 > 중직자 화면에 표시. */}
+        <Card className="p-5 rounded-[1.75rem] border-0 bg-white shadow-xl shadow-blue-500/5 relative overflow-hidden">
+          <div className="flex flex-col gap-3 mb-4">
+            <div className="min-w-0">
+              <h2 className="text-xl font-bold flex items-center gap-3 text-slate-800">
+                <div className="w-2.5 h-8 bg-blue-600 rounded-full shrink-0" /> 중직자 소개
+              </h2>
+              <p className="text-xs text-slate-400 mt-1.5 font-medium leading-relaxed">
+                성도 화면 우측 상단 <b>메뉴 &gt; 섬기시는 분 &gt; 중직자</b> 화면에 표시돼요. 시무 장로·권사·안수집사 등을 소개할 때 써보세요.
+              </p>
+              <p className="text-[11px] text-blue-500 mt-1 font-bold leading-relaxed flex items-center gap-1">
+                <ImageIcon className="w-3 h-3 shrink-0" /> 사진은 정사각형(1:1)에 가까울수록 예쁘게 나와요 · 최소 600×600px 권장
+              </p>
+            </div>
+
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <label
+                htmlFor="officers-toggle"
+                className={`flex items-center gap-3 py-2 px-4 rounded-full transition-all duration-300 cursor-pointer select-none shrink-0 ${officersEnabled
+                  ? "bg-blue-50/80 shadow-sm border border-blue-100"
+                  : "bg-gray-100/70 border border-transparent"
+                  }`}
+              >
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`w-2 h-2 rounded-full transition-colors shrink-0 ${officersEnabled ? "bg-blue-600 animate-pulse" : "bg-gray-400"
+                      }`}
+                  />
+                  <span
+                    className={`text-xs font-bold transition-colors whitespace-nowrap ${officersEnabled ? "text-blue-700" : "text-gray-500"
+                      }`}
+                  >
+                    {officersEnabled ? "주보에 표시 중" : "주보에서 숨김"}
+                  </span>
+                </div>
+                <Switch
+                  id="officers-toggle"
+                  checked={officersEnabled}
+                  onCheckedChange={setOfficersEnabled}
+                  className="data-[state=checked]:bg-blue-600 data-[state=unchecked]:bg-gray-300 transition-colors duration-200"
+                />
+              </label>
+
+              <Button onClick={addOfficer} variant="outline" className="rounded-full border-dashed border-2 px-6 border-blue-200 text-blue-600 hover:bg-blue-50 font-bold text-xs h-10 shrink-0">
+                <Plus className="w-4 h-4 mr-1.5" /> 중직자 추가
+              </Button>
+            </div>
+          </div>
+
+          {officersEnabled && (
+          <div className="space-y-3">
+            {officers.map((officer, index) => (
+              <div key={officer.id} className="p-4 bg-slate-50/80 rounded-[1.5rem] border border-slate-100 hover:bg-white hover:shadow-md transition-all">
+                <div className="flex items-center justify-between mb-3 flex-wrap gap-y-2">
+                  <div className="flex items-center gap-3 min-w-0 shrink-0">
+                    <div className="relative group shrink-0">
+                      <input
+                        type="file"
+                        accept="image/png, image/jpeg, image/jpg, image/webp"
+                        ref={(el) => {
+                          officerFileInputRefs.current[officer.id] = el;
+                        }}
+                        onChange={(e) => handleOfficerImageUpload(officer.id, e)}
+                        className="hidden"
+                      />
+                      <div
+                        onClick={() => officerFileInputRefs.current[officer.id]?.click()}
+                        className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center text-blue-600 overflow-hidden border-2 border-dashed border-blue-300 shadow-inner cursor-pointer hover:border-blue-500 hover:bg-blue-50 transition-all relative"
+                        title="클릭하여 이미지 파일(png, jpeg 등) 선택"
+                      >
+                        {officer.photoUrl ? (
+                          <img src={officer.photoUrl} alt="중직자 사진" className="w-full h-full object-cover" />
+                        ) : (
+                          <UserCheck className="w-5 h-5" />
+                        )}
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white">
+                          <Upload className="w-4 h-4" />
+                        </div>
+                      </div>
+                      <span className="absolute -bottom-1 -right-1 bg-red-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full shadow pointer-events-none">사진</span>
+                    </div>
+                    <div className="min-w-0">
+                      <h4 className="font-extrabold text-slate-800 text-sm">중직자 #{index + 1}</h4>
+                      <p className="text-xs text-slate-400 font-medium truncate">사진 클릭 시 파일 선택</p>
+                    </div>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => removeOfficer(officer.id)}
+                    className="text-slate-300 hover:text-red-500 rounded-full h-8 w-8 shrink-0"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  <Input
+                    value={officer.position || ""}
+                    onChange={(e) => updateOfficer(officer.id, 'position', e.target.value)}
+                    placeholder="직위 (예: 시무 장로)"
+                    className="rounded-xl h-11 border-slate-200 bg-white text-sm font-bold"
+                  />
+                  <Input
+                    value={officer.name || ""}
+                    onChange={(e) => updateOfficer(officer.id, 'name', e.target.value)}
+                    placeholder="이름 (예: 홍길동)"
+                    className="rounded-xl h-11 border-slate-200 bg-white text-sm font-bold text-blue-600"
+                  />
+                  <Input
+                    value={officer.duty || ""}
+                    onChange={(e) => updateOfficer(officer.id, 'duty', e.target.value)}
+                    placeholder="담당 (예: 교육위원회)"
+                    className="rounded-xl h-11 border-slate-200 bg-white text-sm font-bold"
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+          )}
+        </Card>
+
         <Card className="p-5 rounded-[1.75rem] border-0 bg-white shadow-xl shadow-blue-500/5 relative overflow-hidden">
           <div className="flex flex-col gap-3 mb-4">
             <div className="min-w-0 flex items-start justify-between gap-2">
@@ -3298,7 +3520,19 @@ export function AdminEditor() {
               {/* 실제 휴대폰(390px 폭) 그대로 렌더한 뒤 zoom으로 축소 → 글자·간격 비율이 실제와 동일 */}
               <div className="flex justify-center">
                 <div className="rounded-[2.25rem] bg-slate-900 p-2 shadow-2xl shrink-0">
-                  <div className="rounded-[1.9rem] overflow-hidden bg-white" style={{ width: 312, height: 620 }}>
+                  <div className="relative rounded-[1.9rem] overflow-hidden bg-white" style={{ width: 312, height: 620 }}>
+                    {/* 이 미리보기는 실제 성도 화면을 그대로 iframe으로 띄운 거라 휠/스와이프가 이미
+                        다 되는데, "작은 목업 사진"처럼 보여서 스크롤 가능한 줄 모르는 경우가 많다.
+                        그래서 스크롤 가능하다는 걸 알려주는 힌트만 얹는다(pointer-events-none이라
+                        실제 휠/터치 조작은 그대로 iframe으로 전달됨) — 준비중 화면일 땐 스크롤할
+                        내용이 없으니 표시하지 않는다. */}
+                    {!previewComingSoon && (
+                      <div className="absolute bottom-2.5 left-1/2 -translate-x-1/2 z-10 pointer-events-none flex items-center gap-1 px-3 py-1.5 rounded-full bg-black/55 backdrop-blur-sm text-white text-[10px] font-bold whitespace-nowrap animate-bounce">
+                        <ChevronDown className="w-3 h-3 shrink-0" />
+                        <span className="hidden sm:inline">마우스 휠로 스크롤하면 더 볼 수 있어요</span>
+                        <span className="sm:hidden">화면을 스크롤해서 더 볼 수 있어요</span>
+                      </div>
+                    )}
                     {previewComingSoon ? (
                       <div className="w-full h-full flex flex-col items-center justify-center gap-4 px-6 text-center" style={{ background: `linear-gradient(160deg, ${previewTpl?.swatch || "#1f2937"} 0%, #0f172a 100%)` }}>
                         <div className="w-16 h-16 rounded-full bg-white/10 border border-white/15 flex items-center justify-center">

@@ -4,12 +4,13 @@ import { db } from "../../firebase";
 import { doc, getDoc, collection, query, where, orderBy, limit, getDocs, updateDoc, increment } from "firebase/firestore";
 import { Card } from "../components/ui/card";
 import { getPageBgGradientClass, isLightPageBgTheme } from "../../utils/pageBgThemes";
-import { isCustomBulletinTemplate } from "../../utils/bulletinTemplates";
+import { isCustomBulletinTemplate, isWarmIvoryFamily } from "../../utils/bulletinTemplates";
 import { resolveEffectiveTemplateId, isCustomDesignFreePeriod, type CustomDesignConfig } from "../../utils/customDesignAccess";
 import { SAMPLE_BULLETIN } from "../../utils/sampleBulletin";
 import { churchLogoHeightClass } from "../../utils/churchLogo";
 import { BulletinMenu } from "./bulletin/BulletinMenu";
 import { WarmIvoryTemplate } from "./bulletinTemplates/WarmIvoryTemplate";
+import { WarmIvoryOpenTemplate } from "./bulletinTemplates/WarmIvoryOpenTemplate";
 import {
   Lock,
   Loader2,
@@ -305,7 +306,7 @@ export function BulletinView() {
           bulletinId={id}
           churchLogo={bulletin.churchLogo}
           variant="over-hero"
-          accent={effectiveTemplateId === "warm-ivory" ? "#2F5C52" : "#2563eb"}
+          accent={isWarmIvoryFamily(effectiveTemplateId) ? "#2F5C52" : "#2563eb"}
         />
       )}
       {/* 토스 스타일의 미리보기 알림 바 */}
@@ -326,6 +327,16 @@ export function BulletinView() {
 
         {isCustomTemplate && effectiveTemplateId === "warm-ivory" ? (
           <WarmIvoryTemplate
+            bulletin={bulletin}
+            expandedQuestionIds={expandedQuestionIds}
+            toggleQuestion={toggleQuestion}
+            setExpandedQuestionIds={setExpandedQuestionIds}
+            setSelectedSection={setSelectedSection}
+            copied={copied}
+            handleCopyAccount={handleCopyAccount}
+          />
+        ) : isCustomTemplate && effectiveTemplateId === "warm-ivory-open" ? (
+          <WarmIvoryOpenTemplate
             bulletin={bulletin}
             expandedQuestionIds={expandedQuestionIds}
             toggleQuestion={toggleQuestion}

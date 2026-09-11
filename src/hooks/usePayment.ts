@@ -77,7 +77,7 @@ export const usePayment = () => {
 
             // Firestore 사용자 정보 업데이트
             await updateDoc(userDocRef, {
-              status: "premium", 
+              status: "allinone",
               isPaidUser: true,
               isTrialUsed: true,
               lastPaymentDate: Timestamp.fromDate(newExpirationDate),

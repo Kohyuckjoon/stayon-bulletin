@@ -78,6 +78,70 @@ export const onPaymentMailTrigger = onDocumentCreated(
   }
 );
 
+// 주보 발행/업데이트 시 운영자에게 메일 알림.
+// 클라이언트(AdminEditor)가 발행 성공 후 bulletin_mail_triggers 에 문서를 하나
+// 쓰면 이 함수가 감지한다. (mail_triggers / payment_mail_triggers 와 동일한 패턴)
+export const onBulletinMailTrigger = onDocumentCreated(
+  {
+    document: "bulletin_mail_triggers/{docId}",
+  },
+  async (event) => {
+    const data = event.data?.data();
+    if (!data) {
+      console.log("❌ 주보 알림 문서 데이터가 비어있습니다.");
+      return;
+    }
+
+    try {
+      let churchName = "이름 미등록 교회";
+      let pastorName = "";
+
+      if (data.authorId) {
+        const userSnap = await db
+          .collection("users")
+          .doc(String(data.authorId))
+          .get();
+        const user = (userSnap.data() || {}) as Record<string, unknown>;
+        if (typeof user.churchName === "string" && user.churchName) {
+          churchName = user.churchName;
+        }
+        if (
+          typeof user.seniorPastorName === "string" &&
+          user.seniorPastorName
+        ) {
+          pastorName = user.seniorPastorName;
+        }
+      }
+
+      // users 에 담임목사 이름이 없으면 이번 주보의 "담임 목사" 자리에서 폴백
+      if (!pastorName && data.bulletinId) {
+        const bSnap = await db
+          .collection("bulletins")
+          .doc(String(data.bulletinId))
+          .get();
+        const b = bSnap.data() as Record<string, unknown> | undefined;
+        const sp = b?.seniorPastor as { name?: unknown } | undefined;
+        if (sp && typeof sp.name === "string" && sp.name) {
+          pastorName = sp.name;
+        }
+      }
+
+      await sendMailNotification(
+        data.isUpdate ? "BULLETIN_UPDATE" : "BULLETIN_PUBLISH",
+        {
+          churchName,
+          pastorName: pastorName || "-",
+          date: String(data.date || ""),
+          bulletinId: String(data.bulletinId || ""),
+        },
+      );
+      console.log("✅ [주보 발행 알림 메일 완료]");
+    } catch (error) {
+      console.error("❌ [주보 발행 알림 메일 실패]:", error);
+    }
+  },
+);
+
 // 매일 00:00(한국 시간)에 딱 1번 실행되는 스케줄 함수.
 // 각 교회(authorId)별 이번 달 발행 주보들의 views 합계를 계산해 users/{uid}.monthlyViews에 저장.
 // 문서 변경 트리거가 아닌 시간 트리거라 자기 자신이나 다른 함수를 재호출할 수 없음.
@@ -164,9 +228,13 @@ export const bulletinOG = functions.https.onRequest(async (req, res) => {
       const userDocRef = await db.collection("users").doc(bulletinId).get();
 
       let userData: Record<string, unknown> | null = null;
+      let bulletinData: Record<string, unknown> | null = null;
+
       if (userDocRef.exists) {
+        // ① /view/{교회 UID}
         userData = userDocRef.data() as Record<string, unknown>;
       } else {
+        // ② users 중 currentBulletinId == 이 값
         const querySnapshot = await db
           .collection("users")
           .where("currentBulletinId", "==", bulletinId)
@@ -177,16 +245,39 @@ export const bulletinOG = functions.https.onRequest(async (req, res) => {
         }
       }
 
+      // ③ /view/{주보 문서 ID} — 주보에서 authorId 뽑아 그 교회 users 조회
+      if (!userData) {
+        const bDoc = await db.collection("bulletins").doc(bulletinId).get();
+        if (bDoc.exists) {
+          bulletinData = bDoc.data() as Record<string, unknown>;
+          const authorId = bulletinData.authorId;
+          if (typeof authorId === "string" && authorId) {
+            const uDoc = await db.collection("users").doc(authorId).get();
+            if (uDoc.exists) {
+              userData = uDoc.data() as Record<string, unknown>;
+            }
+          }
+        }
+      }
+
       if (userData) {
         if (typeof userData.churchName === "string") {
           churchName = userData.churchName;
         }
-        if (typeof userData.description === "string") {
+        if (typeof userData.description === "string" && userData.description) {
           description = userData.description;
         }
-        if (typeof userData.coverImage === "string") {
+        if (typeof userData.coverImage === "string" && userData.coverImage) {
           imageUrl = userData.coverImage;
         }
+      }
+
+      // 설명은 이 주보의 설교 제목이 있으면 그걸로 더 풍성하게
+      if (bulletinData) {
+        const sermon =
+          (typeof bulletinData.title === "string" && bulletinData.title) ||
+          (typeof bulletinData.subtitle === "string" && bulletinData.subtitle);
+        if (sermon) description = `이번 주 말씀 — ${sermon}`;
       }
     } catch (error) {
       console.error("Firestore 조회 에러:", error);

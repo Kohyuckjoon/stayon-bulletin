@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router";
-import { Menu, X, Home, Church, Users, Clock, Share2, MapPin, Network, Lock, ChevronRight } from "lucide-react";
+import { Menu, X, Home, Church, Users, Clock, Share2, MapPin, Network, Lock, ChevronRight, Landmark } from "lucide-react";
 import { toast } from "sonner";
 
 // 성도 화면(및 그 하위 메뉴 화면) 우측 상단의 메뉴 버튼 + 우측 슬라이드 시트.
@@ -68,6 +68,7 @@ export function BulletinMenu({ bulletinId, churchLogo, variant = "over-hero", ac
     { key: "home", label: "홈", icon: Home, to: base, ready: true, active: pathname === base },
     { key: "about", label: "소개", sub: "우리 교회 이야기", icon: Church, to: `${base}/about`, ready: true, active: pathname === `${base}/about` },
     { key: "team", label: "섬기시는 분", sub: "담임 목사 · 부교역자", icon: Users, to: `${base}/team`, ready: true, active: pathname === `${base}/team` },
+    { key: "officers", label: "중직자", sub: "장로 · 권사 · 안수집사", icon: Landmark, to: `${base}/officers`, ready: true, active: pathname === `${base}/officers` },
     { key: "location", label: "오시는 길", sub: "약도 · 주소 · 길찾기", icon: MapPin, to: `${base}/location`, ready: true, active: pathname === `${base}/location` },
     { key: "history", label: "교회 연혁", icon: Clock, ready: false },
     { key: "sns", label: "교회 SNS · 유튜브 · 네이버 카페", icon: Share2, ready: false },
