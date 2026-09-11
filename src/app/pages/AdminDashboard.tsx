@@ -13,7 +13,7 @@ import { Card } from "../components/ui/card";
 import {
   Plus, FileText, History as HistoryIcon, LogOut, Calendar, Eye, Smartphone, Download, Send,
   CheckCircle2, BookOpen, Globe, Copy, Zap, ChevronRight, ShieldCheck, Lock, Megaphone,
-  X, Sparkles, Youtube, ExternalLink, ChevronLeft, Briefcase, ChevronDown
+  X, Sparkles, Youtube, ExternalLink, ChevronLeft, Briefcase, ChevronDown, MapPin
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
@@ -531,7 +531,22 @@ export function AdminDashboard() {
                     <ExternalLink className="w-3.5 h-3.5 text-slate-300 shrink-0" />
                   </DropdownMenuItem>
 
-                  {/* 2) 청빙 게시판: 기존 기능 플래그(jobBoardEnabled)를 그대로 따름 — 켜지면 활성, 꺼지면 자물쇠+비활성 */}
+                  {/* 2) 수련회 장소 찾기: 항상 이용 가능, 외부 링크로 새 탭 오픈 */}
+                  <DropdownMenuItem
+                    onClick={() => window.open("https://place.stayon-platform.com/venues", "_blank", "noopener,noreferrer")}
+                    className="rounded-xl px-2.5 py-2.5 gap-3 cursor-pointer focus:bg-blue-50"
+                  >
+                    <div className="w-9 h-9 rounded-xl bg-emerald-50 flex items-center justify-center text-emerald-600 shrink-0">
+                      <MapPin className="w-4 h-4" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-bold text-sm text-slate-900">수련회 장소 찾기</p>
+                      <p className="text-[11px] text-slate-400 truncate">스테이온 플레이스에서 수련회 장소 둘러보기</p>
+                    </div>
+                    <ExternalLink className="w-3.5 h-3.5 text-slate-300 shrink-0" />
+                  </DropdownMenuItem>
+
+                  {/* 3) 청빙 게시판: 기존 기능 플래그(jobBoardEnabled)를 그대로 따름 — 켜지면 활성, 꺼지면 자물쇠+비활성 */}
                   {jobBoardEnabled ? (
                     <DropdownMenuItem
                       onClick={() => navigate("/jobs", { state: { from: "admin" } })}

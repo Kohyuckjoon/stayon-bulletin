@@ -4,6 +4,9 @@ import { Landing } from "./pages/Landing";
 import { SignUp } from "./pages/SignUp";
 import { Login } from "./pages/Login";
 import { BulletinView } from "./pages/BulletinView";
+import { AboutPage } from "./pages/bulletin/AboutPage"; // 성도 화면 메뉴 > 소개
+import { TeamPage } from "./pages/bulletin/TeamPage"; // 성도 화면 메뉴 > 섬기시는 분
+import { LocationPage } from "./pages/bulletin/LocationPage"; // 성도 화면 메뉴 > 오시는 길
 import { AdminDashboard } from "./pages/AdminDashboard";
 import { AdminEditor } from "./pages/AdminEditor";
 import { History } from "./pages/History";
@@ -17,6 +20,7 @@ import { AdminChurchSites } from "./pages/admin/AdminChurchSites"; // 교회 사
 import { AdminAdSettings } from "./pages/admin/AdminAdSettings"; // 사역자 청빙 게시판 끌어올리기(광고) 설정 페이지 임포트
 import { AdminFeatureSettings } from "./pages/admin/AdminFeatureSettings"; // 화면 노출 on/off 관리 페이지 임포트
 import { AdminFeatureUpdateNotice } from "./pages/admin/AdminFeatureUpdateNotice"; // 기능 업데이트 알림 관리 페이지 임포트
+import { AdminCustomDesign } from "./pages/admin/AdminCustomDesign"; // 커스텀 디자인(주보 템플릿) 교회별 사용 권한 관리 페이지 임포트
 import { SuperAuthGuard } from "./pages/SuperAuthGuard";
 import { NoticeBoard } from "./pages/NoticeBoard"; // 공지사항 게시판 페이지 컴포넌트 추가
 import { AdminSidebar } from "./components/layout/Sidebar";
@@ -183,6 +187,9 @@ export const router = createBrowserRouter([
       { path: "online-worship", Component: ChurchOnlineWorshipRoute }, // 교회 사이트 "온라인 예배" 하위 페이지
       { path: "bulletin", Component: BulletinView },
       { path: "view/:id", Component: BulletinView },
+      { path: "view/:id/about", Component: AboutPage }, // 성도 화면 메뉴 > 소개
+      { path: "view/:id/team", Component: TeamPage }, // 성도 화면 메뉴 > 섬기시는 분
+      { path: "view/:id/location", Component: LocationPage }, // 성도 화면 메뉴 > 오시는 길
       { path: "pricing", Component: Pricing },
       { path: "success", Component: SuccessPage }, // 모바일/성공 페이지 대응
       {
@@ -227,6 +234,7 @@ export const router = createBrowserRouter([
           { path: "auth-users", Component: AdminAuthUsers }, // 전체 가입자 현황 라우터 연결
           { path: "church-sites", Component: AdminChurchSites }, // 교회 사이트 제작 플랫폼 발행 관리 라우터 연결
           { path: "ads", Component: AdminAdSettings }, // 사역자 청빙 게시판 끌어올리기(광고) 설정 라우터 연결
+          { path: "custom-design", Component: AdminCustomDesign }, // 커스텀 디자인 교회별 사용 권한 관리 라우터 연결
           { path: "features", Component: AdminFeatureSettings }, // 화면 노출 on/off 관리 라우터 연결
           { path: "feature-update", Component: AdminFeatureUpdateNotice }, // 기능 업데이트 알림 관리 라우터 연결
         ],

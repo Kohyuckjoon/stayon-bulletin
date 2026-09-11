@@ -5,7 +5,7 @@ import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage"; // 파이어베이스 스토리지 함수 임포트
 import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
-import { Megaphone, ArrowLeft, Plus, Edit2, Trash2, Sparkles, Search, ChevronDown, ChevronUp, Image as ImageIcon, X } from "lucide-react"; // 이미지 아이콘 및 X 아이콘 임포트
+import { Megaphone, ArrowLeft, Plus, Edit2, Trash2, Sparkles, Search, ChevronDown, ChevronUp, Image as ImageIcon, X, Link2, ExternalLink } from "lucide-react"; // 이미지 아이콘, X 아이콘, 링크 아이콘 임포트
 import { toast } from "sonner";
 import { KakaoChannelButton } from "../components/KakaoChannelButton";
 import { NoticeImageCarousel } from "../components/NoticeImageCarousel";
@@ -20,6 +20,8 @@ export function NoticeBoard() {
     const [currentId, setCurrentId] = useState("");
     const [title, setTitle] = useState("");
     const [content, setContent] = useState("");
+    const [linkUrl, setLinkUrl] = useState(""); // 공지에 첨부할 링크(선택) - 있으면 성도/관리자 화면에 바로가기 버튼으로 표시
+    const [linkLabel, setLinkLabel] = useState(""); // 버튼에 표시할 문구(선택, 비워두면 "바로가기")
     const [searchTerm, setSearchTerm] = useState(""); 
     const [expandedIds, setExpandedIds] = useState<string[]>([]); 
     const [imageFiles, setImageFiles] = useState<File[]>([]); // 업로드할 이미지 파일 목록 (다중)
@@ -121,12 +123,21 @@ export function NoticeBoard() {
         setImageUrls(prev => prev.filter((_, i) => i !== index));
     };
 
+    // 프로토콜 없이 붙여넣어도(예: bulletin.stayon-platform.com/pricing) 정상적인 링크로 동작하도록 보정
+    const normalizeUrl = (url: string) => {
+        const trimmed = url.trim();
+        if (!trimmed) return "";
+        return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+    };
+
     const handleSave = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!title.trim() || !content.trim()) {
             toast.error("제목과 내용을 모두 입력해주세요.");
             return;
         }
+
+        const normalizedLinkUrl = normalizeUrl(linkUrl);
 
         try {
             setUploading(true);
@@ -137,6 +148,8 @@ export function NoticeBoard() {
                     title,
                     content,
                     imageUrls,
+                    linkUrl: normalizedLinkUrl,
+                    linkLabel: linkLabel.trim(),
                     updatedAt: serverTimestamp(),
                 });
                 toast.success("공지사항이 수정되었습니다.");
@@ -145,6 +158,8 @@ export function NoticeBoard() {
                     title,
                     content,
                     imageUrls,
+                    linkUrl: normalizedLinkUrl,
+                    linkLabel: linkLabel.trim(),
                     createdAt: serverTimestamp(),
                 });
                 toast.success("새로운 공지사항이 등록되었습니다.");
@@ -154,6 +169,8 @@ export function NoticeBoard() {
             setContent("");
             setImageFiles([]);
             setImageUrls([]);
+            setLinkUrl("");
+            setLinkLabel("");
             setIsEditing(false);
             fetchNotices();
         } catch (error) {
@@ -210,7 +227,7 @@ export function NoticeBoard() {
 
                 {isSuperUser && (
                     <Button
-                        onClick={() => { setIsEditing(false); setTitle(""); setContent(""); setImageFiles([]); setImageUrls([]); setShowModal(true); }}
+                        onClick={() => { setIsEditing(false); setTitle(""); setContent(""); setImageFiles([]); setImageUrls([]); setLinkUrl(""); setLinkLabel(""); setShowModal(true); }}
                         className="bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold px-4 sm:px-5 py-2.5 sm:py-3 shadow-sm cursor-pointer flex items-center gap-2 text-sm sm:text-base"
                     >
                         <Plus className="w-4 h-4 sm:w-5 sm:h-5" /> 공지 만들기
@@ -275,7 +292,20 @@ export function NoticeBoard() {
                                         {isExpanded && (
                                             <div className="pt-3 border-t border-gray-100 mt-3 space-y-4">
                                                 <p className="text-sm text-gray-600 font-medium whitespace-pre-wrap leading-relaxed">{notice.content}</p>
-                                                
+
+                                                {/* 참조 링크가 있으면 바로 이동할 수 있는 버튼으로 표시 */}
+                                                {notice.linkUrl && (
+                                                    <a
+                                                        href={notice.linkUrl}
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                        onClick={(e) => e.stopPropagation()}
+                                                        className="inline-flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold px-4 py-2.5 rounded-xl transition-colors"
+                                                    >
+                                                        {notice.linkLabel || "바로가기"} <ExternalLink className="w-3.5 h-3.5" />
+                                                    </a>
+                                                )}
+
                                                 {/* 공지사항 내 첨부된 이미지 렌더링 영역: 여러 장을 캐러셀로 한 장씩 넘겨보기 (구 데이터 호환) */}
                                                 {(notice.imageUrls?.length > 0 || notice.imageUrl) && (
                                                     <div className="mt-3">
@@ -289,7 +319,7 @@ export function NoticeBoard() {
                                     {isSuperUser && (
                                         <div className="flex items-center gap-1 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
                                             <button
-                                                onClick={() => { setIsEditing(true); setCurrentId(notice.id); setTitle(notice.title); setContent(notice.content); setImageUrls(notice.imageUrls ?? (notice.imageUrl ? [notice.imageUrl] : [])); setImageFiles([]); setShowModal(true); }}
+                                                onClick={() => { setIsEditing(true); setCurrentId(notice.id); setTitle(notice.title); setContent(notice.content); setImageUrls(notice.imageUrls ?? (notice.imageUrl ? [notice.imageUrl] : [])); setImageFiles([]); setLinkUrl(notice.linkUrl ?? ""); setLinkLabel(notice.linkLabel ?? ""); setShowModal(true); }}
                                                 className="p-2 rounded-xl text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors cursor-pointer"
                                             >
                                                 <Edit2 className="w-4 h-4" />
@@ -336,6 +366,29 @@ export function NoticeBoard() {
                                     placeholder="공지 내용을 입력하세요"
                                     className="w-full px-4 py-3 rounded-xl bg-gray-50 border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium resize-none"
                                 />
+                            </div>
+
+                            {/* 참조 링크(선택) - 등록하면 공지 카드에 바로가기 버튼으로 표시됨 */}
+                            <div>
+                                <label className="block text-xs font-bold text-gray-700 mb-1 flex items-center gap-1">
+                                    <Link2 className="w-3.5 h-3.5 text-gray-400" /> 링크 첨부 (선택)
+                                </label>
+                                <div className="space-y-2">
+                                    <input
+                                        type="text"
+                                        value={linkUrl}
+                                        onChange={(e) => setLinkUrl(e.target.value)}
+                                        placeholder="예: https://bulletin.stayon-platform.com/pricing"
+                                        className="w-full px-4 py-3 rounded-xl bg-gray-50 border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+                                    />
+                                    <input
+                                        type="text"
+                                        value={linkLabel}
+                                        onChange={(e) => setLinkLabel(e.target.value)}
+                                        placeholder='버튼에 표시할 문구 (비워두면 "바로가기")'
+                                        className="w-full px-4 py-3 rounded-xl bg-gray-50 border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+                                    />
+                                </div>
                             </div>
 
                             {/* 이미지 첨부 파일 입력 및 미리보기 UI 영역 (최대 MAX_IMAGES장 다중 첨부) */}

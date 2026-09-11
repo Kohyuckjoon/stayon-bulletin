@@ -7,7 +7,7 @@ import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
 import { motion } from "framer-motion";
 import {
-  Check, ArrowLeft, Sparkles, Info, User, LogIn, Lock, MessageCircle, Clock, Calendar
+  Check, ArrowLeft, Sparkles, Info, User, LogIn, Lock, MessageCircle, Clock, Calendar, Rocket
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
@@ -122,6 +122,44 @@ export function Pricing() {
 
   const commonFeatures = [
     "무제한 모바일 주보 발행", "교회 소식 실시간 동기화", "주보 히스토리 자동 저장", "프리미엄 주보 디자인 이용", "온라인 고객 지원 서비스"
+  ];
+
+  // 앞으로 지금의 성도 수 기준 요금제를 대체할 예정인 "기능별" 요금제 구조 미리보기.
+  // 아직 준비중이라 결제로 이어지지 않으며, 이 페이지에는 안내용으로만 노출한다.
+  const UPCOMING_FEATURE_TIERS = [
+    {
+      name: "베이직", monthly: 990, threeMonth: 1990,
+      features: [
+        "예배 정보에 관련된 내용", "예배순서", "찬양 곡 미리듣기(Youtube)", "성경본문", "말씀구절",
+        "예배 시간표(주일 1부/2부, 수요 예배, 새벽기도 등)", "지난 주보 보기(다시 보기/발행하기/열람만)",
+        "교회소식", "기도 순서(이번주/다음주)", "열람 통계(관리자 기능)", "섬기는 분(담임 목사/부 교역자 등)",
+      ],
+    },
+    {
+      name: "스탠다드", monthly: 2900, threeMonth: 5900,
+      features: [
+        "교회 소개", "섬기는이 명단(예배 위원/반주자/찬양대)", "찬양 곡 미리듣기(Youtube + 카드뷰 형태)",
+        "부서/기관 조직도", "카카오톡 URL 링크 전달 시 교회 이미지 시각화(프리뷰)", "지난 주 다운로드(데이터 백업용)",
+        "담임 목사/교역자 소개 상세페이지", "교회 연혁/비전선언문", "목회칼럼(짧은글)", "교회 SNS·유튜브 채널 링크 모음",
+        "오시는길·주차안내(지도 임베드)", "기도 순서(1달치 제공)", "릴레이 기도표 = 1달치 제공", "기도 요청",
+      ],
+    },
+    {
+      name: "프로", monthly: 5900, threeMonth: 11900,
+      features: [
+        "훈련 / 양육 관련", "헌금 현황(이름만)", "심방 / 모임(구역 셀 일정)", "새가족 환영", "성경 읽기표",
+        "릴레이 기도표", "제자 훈련반 / 양육과정 모집 및 신청", "성경 공부반 소그룹 시간표", "세례 입교 신청",
+        "온라인 헌금 QR", "선교사 소식 / 후원 현황", "구역 셀 리더 연락처",
+      ],
+    },
+    {
+      name: "올인원", monthly: 9900, threeMonth: 19900,
+      features: [
+        "전도", "관리자 계정 다중 초대", "헌금 현황(관리자 대시보드(금액포함) 표시)",
+        "온라인 주보 실시간 예배 자동 최신화", "수련회 관련 모든 기능(모집 및 신청)",
+        "새가족 온라인 등록 폼", "전도 행사 & 광고 배너 기능(띠 형태)",
+      ],
+    },
   ];
 
   // 가입 시 입력한 성도 수(congregationSize) 등급. 미로그인/미입력 시 전체 요금제를 제한 없이 볼 수 있음
@@ -260,6 +298,76 @@ export function Pricing() {
             </div>
           </div>
         </motion.div>
+
+        {/* 앞으로 지금의 성도 수 기준 요금제를 대체할 예정인 기능별 요금제(베이직/스탠다드/프로/올인원)
+            미리보기. 아직 기능이 준비중이라 결제/선택은 막아두고 안내용으로만 노출한다. */}
+        <div className="max-w-6xl mx-auto mb-12">
+          <div className="rounded-[2.5rem] bg-gradient-to-br from-indigo-50 via-white to-blue-50 border border-indigo-100 p-6 sm:p-10">
+            <div className="text-center mb-8">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-100 text-indigo-600 text-xs sm:text-sm font-bold mb-4">
+                <Rocket className="w-4 h-4" /> 대규모 기능 업데이트 예정
+              </div>
+              <h2 className="text-2xl sm:text-3xl font-black text-slate-900 mb-3 tracking-tight">
+                앞으로 이런 요금제로 확장돼요
+              </h2>
+              <p className="text-sm sm:text-base text-slate-500 font-medium break-keep max-w-2xl mx-auto leading-relaxed">
+                지금의 성도 수 기준 요금제는 앞으로 <strong className="text-slate-700">베이직 · 스탠다드 · 프로 · 올인원</strong> 기능별 요금제로 순차 개편될 예정이에요. 아래는 준비 중인 기능들을 미리 보여드리는 화면이며, 아직 결제·가입은 불가능해요.
+              </p>
+
+              <p className="text-sm sm:text-base text-slate-500 font-medium break-keep max-w-2xl mx-auto leading-relaxed">
+                현재는 <strong className="text-slate-700">현 페이지 하단에 월 플랜</strong> 요금제로 결제가 가능해요.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+              {UPCOMING_FEATURE_TIERS.map((tier) => {
+                // 베이직은 지금 요금제와 거의 동일해 공개해도 무방하지만, 스탠다드/프로/올인원은
+                // 아직 확정되지 않은 세부 기능 로드맵이라 경쟁사 등에 노출되지 않도록 블러 처리한다.
+                const isLocked = tier.name !== "베이직";
+                // const isLocked = false;
+                return (
+                  <Card key={tier.name} className="relative p-5 pt-6 rounded-[1.75rem] border-0 bg-white/90 shadow-sm flex flex-col overflow-hidden">
+                    <div className="absolute top-3 right-3 flex items-center gap-1 px-2 py-1 rounded-full bg-slate-100 border border-slate-200 text-slate-400 text-[9px] font-black uppercase tracking-wider whitespace-nowrap">
+                      <Lock className="w-2.5 h-2.5" /> Coming Soon
+                    </div>
+                    <h3 className="text-base font-black mb-1 text-slate-900 pr-24">{tier.name}</h3>
+                    <div className="flex items-end gap-1 mb-1">
+                      <span className="text-xl font-black text-slate-400">{tier.monthly.toLocaleString()}원</span>
+                      <span className="text-slate-300 text-[11px] mb-0.5 font-bold">/ 월</span>
+                    </div>
+                    <p className="text-[10px] text-slate-300 font-bold mb-4">3개월 {tier.threeMonth.toLocaleString()}원</p>
+
+                    <div className="relative flex-grow mb-4">
+                      <div className={`space-y-2 ${isLocked ? "blur-[5px] opacity-50 select-none pointer-events-none" : ""}`}>
+                        {tier.features.map((feature, fIndex) => (
+                          <div key={fIndex} className="flex items-start gap-2">
+                            <Check className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-slate-300" />
+                            <span className="text-[11px] leading-snug font-medium text-slate-500 break-keep">{feature}</span>
+                          </div>
+                        ))}
+                      </div>
+
+                      {isLocked && (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
+                          <div className="w-10 h-10 rounded-full bg-white shadow-md border border-slate-200 flex items-center justify-center text-slate-400">
+                            <Lock className="w-4 h-4" />
+                          </div>
+                          <span className="text-[10px] font-bold text-slate-400 text-center px-4 leading-relaxed">
+                            세부 기능은<br />업데이트 시 공개돼요
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    <Button disabled className="w-full rounded-xl font-black text-xs py-4 bg-slate-100 text-slate-400 cursor-not-allowed hover:bg-slate-100">
+                      준비중
+                    </Button>
+                  </Card>
+                );
+              })}
+            </div>
+          </div>
+        </div>
 
         {!isAdminPath && !currentUserInfo && (
           <Card className="mb-12 p-6 md:p-8 rounded-[2.5rem] bg-gradient-to-r from-blue-600 to-indigo-600 text-white border-0 shadow-xl shadow-blue-200 max-w-4xl mx-auto relative overflow-hidden group animate-in fade-in zoom-in-95 duration-500">

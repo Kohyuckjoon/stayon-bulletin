@@ -10,6 +10,7 @@ const NAV_ITEMS = [
   { label: "주보 발행 관리", path: "/super/bulletins", match: (p: string) => p.includes("bulletins") },
   { label: "공지사항 관리", path: "/super/notify", match: (p: string) => p.includes("notify") },
   { label: "사이트 발행 관리", path: "/super/church-sites", match: (p: string) => p.includes("church-sites") },
+  { label: "커스텀 디자인 관리", path: "/super/custom-design", match: (p: string) => p.includes("custom-design") },
   { label: "광고 설정", path: "/super/ads", match: (p: string) => p.includes("/super/ads") },
   { label: "화면 관리", path: "/super/features", match: (p: string) => p.includes("/super/features") },
   { label: "기능 업데이트 알림", path: "/super/feature-update", match: (p: string) => p.includes("/super/feature-update") },

@@ -18,7 +18,7 @@ import {
   ArrowLeft, Eye, Plus, Trash2, Send, Music, UserCheck, Wallet, ChevronUp,
   ChevronDown, Youtube, Check, Copy, CalendarIcon, Clock, BookOpen, Sparkles, Upload,
   MapPin, Info, ImageIcon, X, Megaphone, Share2, FileText, Move, Users,
-  Pencil, GripVertical, Quote, MessagesSquare, Lock, Tent
+  Pencil, GripVertical, Quote, MessagesSquare, Lock, Tent, Palette, ExternalLink
 } from "lucide-react";
 import { toast } from "sonner";
 import { useFeatureUpdateNotice } from "../../hooks/useFeatureUpdateNotice";
@@ -34,6 +34,9 @@ import { Calendar } from "../components/ui/calendar";
 import { format } from "date-fns";
 import { ko } from "date-fns/locale";
 import { PAGE_BG_THEMES, DEFAULT_PAGE_BG_THEME_ID } from "../../utils/pageBgThemes";
+import { BULLETIN_TEMPLATES, DEFAULT_BULLETIN_TEMPLATE_ID, isCustomBulletinTemplate } from "../../utils/bulletinTemplates";
+import { canApplyCustomTemplate, isCustomDesignFreePeriod, type CustomDesignConfig } from "../../utils/customDesignAccess";
+import { CHURCH_LOGO_SIZE_OPTIONS, DEFAULT_CHURCH_LOGO_SIZE, normalizeChurchLogoSize, churchLogoHeightClass, type ChurchLogoSize } from "../../utils/churchLogo";
 
 const BANK_LIST = [
   "NH농협", "KB국민", "신한", "우리", "하나", "IBK기업", "카카오뱅크",
@@ -56,7 +59,8 @@ interface BulletinSection {
   id: string;
   label: string;
   value: string;
-  content?: string;
+  content?: string; // 클릭 시 팝업으로 보여주는 상세 전문(사도신경/주기도문 등)
+  preview?: string; // 항목 바로 아래 인라인으로 짧게 보여주는 문구(찬송가 가사 등) - 성도 화면에서 최대 3줄
 }
 
 interface Announcement {
@@ -144,7 +148,20 @@ export function AdminEditor() {
 
   const [showPublishDialog, setShowPublishDialog] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<"content" | "cover" | "church" | "sharing">("content");
+  const [activeTab, setActiveTab] = useState<"content" | "cover" | "church" | "sharing" | "design">("content");
+  // "커스텀 디자인" 템플릿 - 표어와 같은 이유(보통 오래 유지)로 새 주보 작성 시 최근 값을 이어받는다.
+  const [bulletinTemplate, setBulletinTemplate] = useState(DEFAULT_BULLETIN_TEMPLATE_ID);
+  // 이 교회 계정(users/{uid}) 데이터 - 커스텀 디자인 사용 권한(allowedTemplates, 요금제) 판정에 쓴다.
+  const [accountData, setAccountData] = useState<any>(null);
+  // 커스텀 디자인 유료화 설정(settings/customDesign). 유료화 시작일 등.
+  const [customDesignConfig, setCustomDesignConfig] = useState<CustomDesignConfig | null>(null);
+  const customDesignFreePeriod = isCustomDesignFreePeriod(customDesignConfig);
+  const isTemplateUnlocked = (templateId: string) =>
+    canApplyCustomTemplate({ templateId, config: customDesignConfig, userData: accountData });
+  // 아이폰 미리보기에서 "지금 보고 있는" 디자인. 잠긴 디자인도 맛보기로 눌러볼 수 있어서
+  // 실제 적용값(bulletinTemplate)과 분리한다. 적용 가능한 디자인을 고르면 둘이 같이 움직인다.
+  const [previewTemplateId, setPreviewTemplateId] = useState(bulletinTemplate);
+  useEffect(() => { setPreviewTemplateId(bulletinTemplate); }, [bulletinTemplate]);
 
   // 카카오톡 등 링크 공유 시 표시할 대표 이미지. 주보 한 건이 아니라 계정(교회) 전체에
   // 적용되는 값(users/{uid}.coverImage)이라 발행 흐름과 별개로 업로드 즉시 저장한다.
@@ -190,6 +207,8 @@ export function AdminEditor() {
           }
           if (typeof data.churchName === "string") setPreviewChurchName(data.churchName);
           if (typeof data.description === "string") setPreviewDescription(data.description);
+          // 커스텀 디자인 사용 권한 판정용 계정 데이터(allowedTemplates, 요금제 등).
+          setAccountData(data);
         }
       } catch (error) {
         console.error("공유 이미지 불러오기 실패:", error);
@@ -198,6 +217,13 @@ export function AdminEditor() {
       }
     });
     return () => unsubscribe();
+  }, []);
+
+  // 커스텀 디자인 유료화 설정(settings/customDesign). 유료화 시작일 전이면 요금제와 무관하게 사용 가능.
+  useEffect(() => {
+    getDoc(doc(db, "settings", "customDesign"))
+      .then((snap) => setCustomDesignConfig(snap.exists() ? (snap.data() as CustomDesignConfig) : {}))
+      .catch(() => setCustomDesignConfig({}));
   }, []);
 
   // 800x400(2:1) 프레임 기준으로, 주어진 원본 크기와 위치값(offset)에서 실제로 잘라낼
@@ -469,6 +495,13 @@ export function AdminEditor() {
       scripture: "",
       preacher: "",
       dateTime: "",
+    },
+    dawn: {
+      name: "새벽기도회",
+      title: "",
+      scripture: "",
+      preacher: "",
+      dateTime: "",
     }
   });
 
@@ -543,8 +576,16 @@ export function AdminEditor() {
     dragQuestionIndexRef.current = null;
   };
 
+  // 담임 목사 - 부교역자(ministers) 리스트와 분리된 별도 자리. 토글로 표시 여부만 관리한다.
+  const [seniorPastorEnabled, setSeniorPastorEnabled] = useState(true);
+  const [seniorPastor, setSeniorPastor] = useState<{ role: string; name: string; phone: string; photoUrl: string; phoneFreeFormat: boolean; description: string }>(
+    { role: "담임 목사", name: "", phone: "", photoUrl: "", phoneFreeFormat: false, description: "" }
+  );
+  const seniorPastorInputRef = useRef<HTMLInputElement | null>(null);
+  const updateSeniorPastor = (field: string, val: any) => setSeniorPastor((p) => ({ ...p, [field]: val }));
+
   const [ministers, setMinisters] = useState([
-    { id: "m1", role: "담임목사", name: "홍길동", phone: "", photoUrl: "", phoneFreeFormat: false, description: "" }
+    { id: "m1", role: "부목사", name: "", phone: "", photoUrl: "", phoneFreeFormat: false, description: "" }
   ]);
   // "섬기시는분" 섹션 전체를 주보에 표시할지 여부. 기존에 저장된 주보엔 이 필드가 없으므로
   // 불러올 때 값이 없으면(undefined) true로 취급해 기존 화면과 동일하게 보이도록 한다.
@@ -560,6 +601,21 @@ export function AdminEditor() {
   const [locationImage, setLocationImage] = useState("");
   const [locationImageRatio, setLocationImageRatio] = useState<"4:3" | "1:1">("4:3");
   const locationImageInputRef = useRef<HTMLInputElement | null>(null);
+
+  // "교회 로고" - 교회 주소·표어처럼 거의 안 바뀌는 값이라 새 주보 작성 시 최근 값을 이어받는다.
+  // 성도 화면 맨 위(히어로 사진 바로 아래)에 흰색 띠로 표시된다.
+  const [churchLogo, setChurchLogo] = useState("");
+  const [churchLogoEnabled, setChurchLogoEnabled] = useState(true);
+  const [churchLogoSize, setChurchLogoSize] = useState<ChurchLogoSize>(DEFAULT_CHURCH_LOGO_SIZE);
+  const churchLogoInputRef = useRef<HTMLInputElement | null>(null);
+
+  // "교회 소개" - 로고·표어처럼 거의 안 바뀌므로 새 주보 작성 시 최근 값을 이어받는다.
+  // 성도 화면 우측 상단 메뉴 > 소개(/view/:id/about)에 표시된다.
+  const [churchIntro, setChurchIntro] = useState("");
+  const [churchIntroEnabled, setChurchIntroEnabled] = useState(true);
+  // 소개 화면에서 로고 아래 크게 보여줄 교회 사진 (모바일 세로형 권장).
+  const [churchImage, setChurchImage] = useState("");
+  const churchImageInputRef = useRef<HTMLInputElement | null>(null);
 
   // "표어 / 주제 성구" - 교회 주소와 마찬가지로 보통 한 번 정하면 오래(보통 1년) 유지되는
   // 내용이라, 새 주보 작성 시 최근 값을 자동으로 이어서 채워준다(carry-forward). 다만
@@ -640,6 +696,66 @@ export function AdminEditor() {
     reader.readAsDataURL(file);
   };
 
+  // 교회 로고 업로드. 로고는 투명 배경 PNG가 많으므로 JPEG로 바꾸지 않고 PNG로 유지한다.
+  const handleChurchLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      toast.error("이미지 파일(png, jpeg 등)만 업로드 가능합니다.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.src = event.target?.result as string;
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        const MAX_SIZE = 1000;
+        let width = img.width;
+        let height = img.height;
+        if (width > height) {
+          if (width > MAX_SIZE) { height *= MAX_SIZE / width; width = MAX_SIZE; }
+        } else {
+          if (height > MAX_SIZE) { width *= MAX_SIZE / height; height = MAX_SIZE; }
+        }
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext("2d")?.drawImage(img, 0, 0, width, height);
+        setChurchLogo(canvas.toDataURL("image/png"));
+        toast.success("교회 로고가 등록되었습니다.");
+      };
+    };
+    reader.onerror = () => toast.error("이미지를 읽는 중 오류가 발생했습니다.");
+    reader.readAsDataURL(file);
+  };
+
+  // 교회 이미지(소개 화면용). 모바일 세로 화면에서 크게 보이므로 해상도를 넉넉히(1400px) 유지.
+  const handleChurchImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !file.type.startsWith("image/")) {
+      if (file) toast.error("이미지 파일(png, jpeg 등)만 업로드 가능합니다.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.src = event.target?.result as string;
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        const MAX = 1400;
+        let w = img.width, h = img.height;
+        if (w > h) { if (w > MAX) { h *= MAX / w; w = MAX; } }
+        else { if (h > MAX) { w *= MAX / h; h = MAX; } }
+        canvas.width = w; canvas.height = h;
+        canvas.getContext("2d")?.drawImage(img, 0, 0, w, h);
+        setChurchImage(canvas.toDataURL("image/jpeg", 0.8));
+        toast.success("교회 이미지가 등록되었습니다.");
+      };
+    };
+    reader.onerror = () => toast.error("이미지를 읽는 중 오류가 발생했습니다.");
+    reader.readAsDataURL(file);
+  };
+
   // 새 주보 작성 시(수정 화면 아님) 가장 최근에 발행/저장했던 주소를 자동으로 불러와 채워둔다.
   // 교회 주소는 매주 바뀌는 정보가 아니므로, 매번 재입력하지 않아도 되도록 하기 위함.
   // 표어/주제 성구도 같은 이유(보통 1년 정도 유지)로 같이 이어서 채워준다.
@@ -668,6 +784,31 @@ export function AdminEditor() {
             setMottoCustomLabel(data.mottoCustomLabel || "");
             setMottoText(data.mottoText || "");
             setMottoReference(data.mottoReference || "");
+          }
+          if (data.bulletinTemplate) {
+            setBulletinTemplate(data.bulletinTemplate);
+          }
+          if (data.churchLogo) {
+            setChurchLogo(data.churchLogo);
+            setChurchLogoEnabled(data.churchLogoEnabled !== false);
+            setChurchLogoSize(normalizeChurchLogoSize(data.churchLogoSize));
+          }
+          if (data.churchIntro) {
+            setChurchIntro(data.churchIntro);
+            setChurchIntroEnabled(data.churchIntroEnabled !== false);
+          }
+          if (data.churchImage) setChurchImage(data.churchImage);
+          // 담임 목사는 표어·로고처럼 거의 안 바뀌므로 최근 값을 이어받는다.
+          if (data.seniorPastor && data.seniorPastor.name) {
+            setSeniorPastor({
+              role: data.seniorPastor.role || "담임 목사",
+              name: data.seniorPastor.name || "",
+              phone: data.seniorPastor.phone || "",
+              photoUrl: data.seniorPastor.photoUrl || "",
+              phoneFreeFormat: !!data.seniorPastor.phoneFreeFormat,
+              description: data.seniorPastor.description || "",
+            });
+            setSeniorPastorEnabled(data.seniorPastorEnabled !== false);
           }
         }
       } catch (error) {
@@ -752,6 +893,32 @@ export function AdminEditor() {
     reader.readAsDataURL(file);
   };
 
+  // 담임 목사 사진 - handleImageUpload와 같은 리사이즈 규칙, 저장 위치만 seniorPastor 로.
+  const handleSeniorPastorImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !file.type.startsWith("image/")) {
+      if (file) toast.error("이미지 파일(png, jpeg 등)만 업로드 가능합니다.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.src = event.target?.result as string;
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        const MAX = 600;
+        let w = img.width, h = img.height;
+        if (w > h) { if (w > MAX) { h *= MAX / w; w = MAX; } }
+        else { if (h > MAX) { w *= MAX / h; h = MAX; } }
+        canvas.width = w; canvas.height = h;
+        canvas.getContext("2d")?.drawImage(img, 0, 0, w, h);
+        updateSeniorPastor("photoUrl", canvas.toDataURL("image/jpeg", 0.75));
+        toast.success("담임 목사 사진이 등록되었습니다.");
+      };
+    };
+    reader.readAsDataURL(file);
+  };
+
   const [sundayServices, setSundayServices] = useState([
     { name: "1부 예배", time: "오전 09:00", location: "대예배실" },
     { name: "2부 예배", time: "오전 11:00", location: "대예배실" }
@@ -771,6 +938,8 @@ export function AdminEditor() {
       sundayServices,
       ministers,
       ministersEnabled,
+      seniorPastor,
+      seniorPastorEnabled,
       sharingQuestions,
       sharingEnabled,
       churchAddress,
@@ -783,10 +952,17 @@ export function AdminEditor() {
       mottoCustomLabel,
       mottoText,
       mottoReference,
+      bulletinTemplate: isTemplateUnlocked(bulletinTemplate) ? bulletinTemplate : DEFAULT_BULLETIN_TEMPLATE_ID,
+      churchLogo,
+      churchLogoEnabled,
+      churchLogoSize,
+      churchIntro,
+      churchIntroEnabled,
+      churchImage,
       isPreview: true // 미리보기 모드임을 알림
     };
     localStorage.setItem("temp_bulletin", JSON.stringify(tempData));
-  }, [bulletinData, sections, announcements, midweekServices, sundayServices, ministers, ministersEnabled, sharingQuestions, sharingEnabled, churchAddress, churchAddressDetail, addressEnabled, locationImage, locationImageRatio, mottoEnabled, mottoLabelType, mottoCustomLabel, mottoText, mottoReference]);
+  }, [bulletinData, sections, announcements, midweekServices, sundayServices, ministers, ministersEnabled, seniorPastor, seniorPastorEnabled, sharingQuestions, sharingEnabled, churchAddress, churchAddressDetail, addressEnabled, locationImage, locationImageRatio, mottoEnabled, mottoLabelType, mottoCustomLabel, mottoText, mottoReference, bulletinTemplate, accountData, customDesignConfig, churchLogo, churchLogoEnabled, churchLogoSize, churchIntro, churchIntroEnabled, churchImage]);
 
   useEffect(() => {
     if (isEditing && id) {
@@ -829,18 +1005,36 @@ export function AdminEditor() {
               setMinisters(data.ministers);
             }
             setMinistersEnabled(data.ministersEnabled !== false);
+            if (data.seniorPastor && typeof data.seniorPastor === "object") {
+              setSeniorPastor({
+                role: data.seniorPastor.role || "담임 목사",
+                name: data.seniorPastor.name || "",
+                phone: data.seniorPastor.phone || "",
+                photoUrl: data.seniorPastor.photoUrl || "",
+                phoneFreeFormat: !!data.seniorPastor.phoneFreeFormat,
+                description: data.seniorPastor.description || "",
+              });
+            }
+            setSeniorPastorEnabled(data.seniorPastorEnabled !== false);
 
             setChurchAddress(data.churchAddress || "");
             setChurchAddressDetail(data.churchAddressDetail || "");
             setAddressEnabled(data.addressEnabled !== false);
             setLocationImage(data.locationImage || "");
             setLocationImageRatio(data.locationImageRatio === "1:1" ? "1:1" : "4:3");
+            setChurchLogo(data.churchLogo || "");
+            setChurchLogoEnabled(data.churchLogoEnabled !== false);
+            setChurchLogoSize(normalizeChurchLogoSize(data.churchLogoSize));
+            setChurchIntro(data.churchIntro || "");
+            setChurchIntroEnabled(data.churchIntroEnabled !== false);
+            setChurchImage(data.churchImage || "");
 
             setMottoEnabled(data.mottoEnabled !== false);
             setMottoLabelType(data.mottoLabelType === "motto" || data.mottoLabelType === "custom" ? data.mottoLabelType : "verse");
             setMottoCustomLabel(data.mottoCustomLabel || "");
             setMottoText(data.mottoText || "");
             setMottoReference(data.mottoReference || "");
+            setBulletinTemplate(data.bulletinTemplate || DEFAULT_BULLETIN_TEMPLATE_ID);
 
             if (data.sundayServices && Array.isArray(data.sundayServices)) {
               const parsedServices = data.sundayServices.map((service: any) => {
@@ -864,6 +1058,7 @@ export function AdminEditor() {
                 enabled: data.midweekServices.enabled ?? true,
                 wednesday: data.midweekServices.wednesday || midweekServices.wednesday,
                 friday: data.midweekServices.friday || midweekServices.friday,
+                dawn: data.midweekServices.dawn || midweekServices.dawn,
               });
             }
 
@@ -887,9 +1082,15 @@ export function AdminEditor() {
                 ],
               });
             }
-            // 데이터로드 시 주중 예배 복원
+            // 데이터로드 시 주중 예배 복원. dawn(새벽기도)은 이 기능 추가 이전에 저장된
+            // 기존 주보엔 없을 수 있으므로, 없으면 기본값으로 채워 넣어 화면이 깨지지 않게 한다.
             if (data.midweekServices) {
-              setMidweekServices(data.midweekServices);
+              setMidweekServices({
+                enabled: data.midweekServices.enabled ?? true,
+                wednesday: data.midweekServices.wednesday || midweekServices.wednesday,
+                friday: data.midweekServices.friday || midweekServices.friday,
+                dawn: data.midweekServices.dawn || midweekServices.dawn,
+              });
             }
           }
         } catch (error) {
@@ -922,7 +1123,7 @@ export function AdminEditor() {
   // const updateSection = (sectionId: string, field: 'label' | 'value', val: string) => 
   //   setSections(sections.map(s => s.id === sectionId ? { ...s, [field]: val } : s));
 
-  const updateSection = (sectionId: string, field: 'label' | 'value' | 'content', val: string) =>
+  const updateSection = (sectionId: string, field: 'label' | 'value' | 'content' | 'preview', val: string) =>
     setSections(sections.map(s => s.id === sectionId ? { ...s, [field]: val } : s));
 
   const addAnnouncement = () => setAnnouncements([...announcements, { id: Date.now().toString(), title: "", content: "" }]);
@@ -997,6 +1198,15 @@ export function AdminEditor() {
         description: String(m.description || ""),
       }));
 
+      const sanitizedSeniorPastor = {
+        role: String(seniorPastor.role || "담임 목사"),
+        name: String(seniorPastor.name || ""),
+        phone: String(seniorPastor.phone || ""),
+        photoUrl: String(seniorPastor.photoUrl || ""),
+        phoneFreeFormat: Boolean(seniorPastor.phoneFreeFormat),
+        description: String(seniorPastor.description || ""),
+      };
+
       const sanitizedSharingQuestions = sharingQuestions.map((q) => ({
         id: String(q.id || Date.now()),
         title: String(q.title || ""),
@@ -1009,6 +1219,7 @@ export function AdminEditor() {
         label: String(s.label || ""),
         value: String(s.value || ""),
         content: String(s.content || ""),
+        preview: String(s.preview || ""),
       }));
 
       const sanitizedAnnouncements = announcements.map((a) => ({
@@ -1051,6 +1262,13 @@ export function AdminEditor() {
           preacher: String(midweekServices.friday?.preacher || ""),
           dateTime: String(midweekServices.friday?.dateTime || ""),
         },
+        dawn: {
+          name: String(midweekServices.dawn?.name || ""),
+          title: String(midweekServices.dawn?.title || ""),
+          scripture: String(midweekServices.dawn?.scripture || ""),
+          preacher: String(midweekServices.dawn?.preacher || ""),
+          dateTime: String(midweekServices.dawn?.dateTime || ""),
+        },
       };
 
       const payload: any = {
@@ -1075,6 +1293,8 @@ export function AdminEditor() {
         sundayServices: formattedSundayServices,
         ministers: sanitizedMinisters,
         ministersEnabled,
+        seniorPastor: sanitizedSeniorPastor,
+        seniorPastorEnabled,
         sharingQuestions: sanitizedSharingQuestions,
         sharingEnabled,
         churchAddress: String(churchAddress || ""),
@@ -1082,11 +1302,20 @@ export function AdminEditor() {
         addressEnabled,
         locationImage: String(locationImage || ""),
         locationImageRatio,
+        churchLogo: String(churchLogo || ""),
+        churchLogoEnabled,
+        churchLogoSize: normalizeChurchLogoSize(churchLogoSize),
+        churchIntro: String(churchIntro || ""),
+        churchIntroEnabled,
+        churchImage: String(churchImage || ""),
         mottoEnabled,
         mottoLabelType,
         mottoCustomLabel: String(mottoCustomLabel || ""),
         mottoText: String(mottoText || ""),
         mottoReference: String(mottoReference || ""),
+        // 권한이 없는 템플릿이 선택된 채로 발행되면 성도 화면이 깨질 수 있어, 저장 시점에
+        // 사용 가능한 값으로 정규화한다(권한 없으면 기본). BulletinView는 저장된 값을 그대로 신뢰.
+        bulletinTemplate: isTemplateUnlocked(bulletinTemplate) ? String(bulletinTemplate) : DEFAULT_BULLETIN_TEMPLATE_ID,
         status: "published",
         authorId: uid,
         updatedAt: serverTimestamp(),
@@ -1174,6 +1403,13 @@ export function AdminEditor() {
           </button>
           <button
             type="button"
+            onClick={() => setActiveTab("design")}
+            className={`flex items-center gap-1.5 px-4 py-3 text-sm font-bold border-b-2 transition-colors shrink-0 whitespace-nowrap ${activeTab === "design" ? "border-blue-600 text-blue-600" : "border-transparent text-slate-400 hover:text-slate-600"}`}
+          >
+            <Palette className="w-4 h-4" /> 커스텀 디자인
+          </button>
+          <button
+            type="button"
             disabled
             title="준비 중인 기능이에요"
             className="flex items-center gap-1.5 px-4 py-3 text-sm font-bold border-b-2 border-transparent text-slate-300 shrink-0 whitespace-nowrap cursor-not-allowed"
@@ -1239,7 +1475,13 @@ export function AdminEditor() {
           <p className="text-xs text-slate-400 mb-4 font-medium leading-relaxed">
             "섬기는 사람들", "오시는 길" 등 흰 카드 바깥쪽 배경 색이에요. 밝은 색을 고르면 그 바깥 글씨 색이 자동으로 어둡게 바뀌어서 대비는 항상 유지돼요.
           </p>
-          <div className="flex flex-wrap gap-3">
+          {isCustomBulletinTemplate(bulletinTemplate) && (
+            <p className="text-[11px] text-purple-600 bg-purple-50 border border-purple-100 rounded-xl px-3 py-2 mb-4 font-bold leading-relaxed flex items-start gap-1.5">
+              <Palette className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+              커스텀 디자인 템플릿을 사용 중이라 배경색은 템플릿 고유 색상으로 표시돼요. 배경색을 직접 고르려면 "커스텀 디자인" 탭에서 "기본"을 선택하세요.
+            </p>
+          )}
+          <div className={`flex flex-wrap gap-3 ${isCustomBulletinTemplate(bulletinTemplate) ? "opacity-40 pointer-events-none" : ""}`}>
             {PAGE_BG_THEMES.map((theme) => {
               const isSelected = (bulletinData.pageBgTheme || DEFAULT_PAGE_BG_THEME_ID) === theme.id;
               return (
@@ -1634,9 +1876,16 @@ export function AdminEditor() {
                     />
                   </div>
                   <Textarea
+                    value={section.preview || ""}
+                    onChange={(e) => updateSection(section.id, 'preview', e.target.value)}
+                    placeholder="[선택] 항목 바로 아래에 짧게 표시할 문구 (예: 찬송가 가사) · 성도 화면에서 최대 3줄까지만 보이고 넘치면 …"
+                    className="rounded-xl text-xs bg-white border-gray-200"
+                    rows={2}
+                  />
+                  <Textarea
                     value={section.content || ""}
                     onChange={(e) => updateSection(section.id, 'content', e.target.value)}
-                    placeholder="[선택] 성도가 클릭했을 때 보여줄 상세 전문(사도신경, 주기도문 등)을 입력하세요."
+                    placeholder="[선택] 성도가 클릭했을 때 팝업으로 보여줄 상세 전문(사도신경, 주기도문 등)을 입력하세요."
                     className="rounded-xl text-xs bg-white border-gray-200"
                     rows={2}
                   />
@@ -1653,33 +1902,55 @@ export function AdminEditor() {
               <h2 className="text-xl font-bold flex items-center gap-3 text-gray-900 tracking-tight">
                 <div className="w-2.5 h-8 bg-blue-600 rounded-full shrink-0"></div> 주중예배 안내
               </h2>
-              <p className="text-xs text-gray-500 mt-1.5 pl-0 sm:pl-5 font-medium leading-relaxed">수요예배, 금요철야 등 주중 모임 정보를 직관적으로 관리하세요.</p>
+              <p className="text-xs text-gray-500 mt-1.5 pl-0 sm:pl-5 font-medium leading-relaxed">수요예배, 금요철야, 새벽기도 등 주중 모임 정보를 직관적으로 관리하세요.</p>
             </div>
 
-            {/* 머티리얼 스타일 커스텀 토글 영역 */}
-            <label
-              htmlFor="midweek-toggle"
-              className={`flex items-center gap-3 py-2 px-4 rounded-full transition-all duration-300 cursor-pointer select-none shrink-0 self-start ${midweekServices.enabled
-                ? "bg-blue-50/80 shadow-sm border border-blue-100"
-                : "bg-gray-100/70 border border-transparent"
-                }`}
-            >
-              <div className="flex items-center gap-2">
-                <span className={`w-2 h-2 rounded-full transition-colors shrink-0 ${midweekServices.enabled ? "bg-blue-600 animate-pulse" : "bg-gray-400"
-                  }`} />
-                <span className={`text-xs font-bold transition-colors whitespace-nowrap ${midweekServices.enabled ? "text-blue-700" : "text-gray-500"
-                  }`}>
-                  {midweekServices.enabled ? "사용 중" : "비활성화"}
-                </span>
-              </div>
+            <div className="flex items-center gap-2 shrink-0 self-start sm:self-center">
+              <Popover>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    title="도움말"
+                    className="w-6 h-6 rounded-full border border-slate-200 text-slate-400 hover:text-blue-600 hover:border-blue-300 flex items-center justify-center shrink-0 transition-colors"
+                  >
+                    <Info className="w-3.5 h-3.5" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent align="end" className="w-72 rounded-2xl border-0 shadow-xl p-4">
+                  <p className="font-bold text-slate-800 text-sm mb-2">이렇게 사용하세요</p>
+                  <ul className="space-y-2 text-xs text-slate-500 leading-relaxed">
+                    <li>· 없는 모임은 그냥 비워두세요. 일시/시간, 말씀 제목이 둘 다 비어있으면 그 카드는 성도 화면에 자동으로 안 보여요.</li>
+                    <li>· 새벽기도처럼 매일이 아니라 특정 요일에만 있다면, "일시/시간" 칸에 "매주 화·목 새벽 5시"처럼 직접 적어주세요.</li>
+                    <li>· 말씀 제목·본문·설교자는 모임 하나당 1개씩만 들어가요. 요일마다 내용이 다르면 이 칸 하나에 함께 적어주세요.</li>
+                  </ul>
+                </PopoverContent>
+              </Popover>
 
-              <Switch
-                id="midweek-toggle"
-                checked={midweekServices.enabled}
-                onCheckedChange={(checked) => setMidweekServices({ ...midweekServices, enabled: checked })}
-                className="data-[state=checked]:bg-blue-600 data-[state=unchecked]:bg-gray-300 transition-colors duration-200"
-              />
-            </label>
+              {/* 머티리얼 스타일 커스텀 토글 영역 */}
+              <label
+                htmlFor="midweek-toggle"
+                className={`flex items-center gap-3 py-2 px-4 rounded-full transition-all duration-300 cursor-pointer select-none shrink-0 ${midweekServices.enabled
+                  ? "bg-blue-50/80 shadow-sm border border-blue-100"
+                  : "bg-gray-100/70 border border-transparent"
+                  }`}
+              >
+                <div className="flex items-center gap-2">
+                  <span className={`w-2 h-2 rounded-full transition-colors shrink-0 ${midweekServices.enabled ? "bg-blue-600 animate-pulse" : "bg-gray-400"
+                    }`} />
+                  <span className={`text-xs font-bold transition-colors whitespace-nowrap ${midweekServices.enabled ? "text-blue-700" : "text-gray-500"
+                    }`}>
+                    {midweekServices.enabled ? "사용 중" : "비활성화"}
+                  </span>
+                </div>
+
+                <Switch
+                  id="midweek-toggle"
+                  checked={midweekServices.enabled}
+                  onCheckedChange={(checked) => setMidweekServices({ ...midweekServices, enabled: checked })}
+                  className="data-[state=checked]:bg-blue-600 data-[state=unchecked]:bg-gray-300 transition-colors duration-200"
+                />
+              </label>
+            </div>
           </div>
 
           {midweekServices.enabled ? (
@@ -1845,6 +2116,87 @@ export function AdminEditor() {
                   </div>
                 </div>
               </div>
+
+              {/* 3. 새벽기도 영역 */}
+              <div className="p-4 bg-slate-50/80 rounded-[1.5rem] border border-slate-200/60 transition-all hover:bg-slate-50">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 pb-3 border-b border-slate-200/50 mb-4">
+                  <div className="flex items-center gap-2.5">
+                    <span className="w-7 h-7 rounded-lg bg-amber-500 text-white font-black text-xs flex items-center justify-center shadow-sm shrink-0">새</span>
+                    <span className="font-bold text-gray-800 text-base">새벽 모임</span>
+                  </div>
+                  <Input
+                    placeholder="예배명 (예: 새벽기도회)"
+                    value={midweekServices.dawn.name}
+                    onChange={(e) => setMidweekServices({
+                      ...midweekServices,
+                      dawn: { ...midweekServices.dawn, name: e.target.value }
+                    })}
+                    className="w-full sm:w-48 rounded-xl border-slate-200 bg-white h-9 text-xs font-bold text-gray-800 focus:border-amber-500 focus:ring-1 focus:ring-amber-500"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-semibold text-gray-600 flex items-center gap-1.5">
+                      <Clock className="w-3.5 h-3.5 text-amber-500" /> 일시 / 시간
+                    </Label>
+                    <Input
+                      placeholder="예: 매일 새벽 5:30 (월~토)"
+                      value={midweekServices.dawn.dateTime}
+                      onChange={(e) => setMidweekServices({
+                        ...midweekServices,
+                        dawn: { ...midweekServices.dawn, dateTime: e.target.value }
+                      })}
+                      className="rounded-2xl border-slate-200 bg-white h-11 text-sm shadow-sm focus:border-amber-500"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-semibold text-gray-600 flex items-center gap-1.5">
+                      <UserCheck className="w-3.5 h-3.5 text-amber-500" /> 설교자
+                    </Label>
+                    <Input
+                      placeholder="예: 김성경 목사"
+                      value={midweekServices.dawn.preacher}
+                      onChange={(e) => setMidweekServices({
+                        ...midweekServices,
+                        dawn: { ...midweekServices.dawn, preacher: e.target.value }
+                      })}
+                      className="rounded-2xl border-slate-200 bg-white h-11 text-sm shadow-sm focus:border-amber-500"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-semibold text-gray-600 flex items-center gap-1.5">
+                      <BookOpen className="w-3.5 h-3.5 text-amber-500" /> 말씀 제목
+                    </Label>
+                    <Input
+                      placeholder="말씀 제목을 입력하세요"
+                      value={midweekServices.dawn.title}
+                      onChange={(e) => setMidweekServices({
+                        ...midweekServices,
+                        dawn: { ...midweekServices.dawn, title: e.target.value }
+                      })}
+                      className="rounded-2xl border-slate-200 bg-white h-11 text-sm shadow-sm focus:border-amber-500"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-semibold text-gray-600 flex items-center gap-1.5">
+                      <BookOpen className="w-3.5 h-3.5 text-amber-500" /> 본문 구절
+                    </Label>
+                    <Input
+                      placeholder="예: 시편 5:3"
+                      value={midweekServices.dawn.scripture}
+                      onChange={(e) => setMidweekServices({
+                        ...midweekServices,
+                        dawn: { ...midweekServices.dawn, scripture: e.target.value }
+                      })}
+                      className="rounded-2xl border-slate-200 bg-white h-11 text-sm shadow-sm focus:border-amber-500"
+                    />
+                  </div>
+                </div>
+              </div>
             </div>
           ) : (
             <div className="bg-slate-50/50 rounded-[2rem] p-6 border border-dashed border-slate-200 text-center text-gray-400 text-xs font-medium">
@@ -1993,6 +2345,177 @@ export function AdminEditor() {
         <Card className="p-5 rounded-[1.75rem] border-0 bg-white shadow-xl shadow-blue-500/5">
           <div className="flex items-center justify-between gap-3 mb-1.5 flex-wrap">
             <h2 className="text-xl font-bold flex items-center gap-3 text-slate-800">
+              <div className="w-2.5 h-8 bg-teal-500 rounded-full shrink-0" /> 교회 로고
+            </h2>
+            <label
+              htmlFor="churchlogo-toggle"
+              className={`flex items-center gap-3 py-2 px-4 rounded-full transition-all duration-300 cursor-pointer select-none shrink-0 ${churchLogoEnabled ? "bg-blue-50/80 shadow-sm border border-blue-100" : "bg-gray-100/70 border border-transparent"}`}
+            >
+              <div className="flex items-center gap-2">
+                <span className={`w-2 h-2 rounded-full transition-colors shrink-0 ${churchLogoEnabled ? "bg-blue-600 animate-pulse" : "bg-gray-400"}`} />
+                <span className={`text-xs font-bold transition-colors whitespace-nowrap ${churchLogoEnabled ? "text-blue-700" : "text-gray-500"}`}>
+                  {churchLogoEnabled ? "노출 중" : "노출 안 함"}
+                </span>
+              </div>
+              <Switch
+                id="churchlogo-toggle"
+                checked={churchLogoEnabled}
+                onCheckedChange={setChurchLogoEnabled}
+                className="data-[state=checked]:bg-blue-600 data-[state=unchecked]:bg-gray-300 transition-colors duration-200"
+              />
+            </label>
+          </div>
+          <p className="text-xs text-slate-400 font-medium leading-relaxed">
+            성도 화면 맨 위(대표 사진 바로 아래)에 흰색 띠로 표시되는 교회 로고예요.
+          </p>
+          <p className="text-[11px] text-teal-600 font-bold leading-relaxed flex items-start gap-1">
+            <ImageIcon className="w-3 h-3 shrink-0 mt-0.5" /> 가로형 권장 · 가로 1000px 이상 · 배경 투명 PNG면 가장 깔끔해요. 성도 화면에서는 아래에서 고른 크기로 표시됩니다.
+          </p>
+          <p className="text-[11px] text-purple-600/90 font-medium mt-3 leading-relaxed flex items-start gap-1.5">
+            <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+            지금은 베타 기간이라 무료로 제공돼요. 정식 버전이 출시되면 요금제에 따라 유료로 바뀔 수 있어요.
+          </p>
+
+          <input
+            type="file"
+            accept="image/png, image/jpeg, image/jpg, image/webp"
+            ref={churchLogoInputRef}
+            onChange={handleChurchLogoUpload}
+            className="hidden"
+          />
+
+          {churchLogo ? (
+            <div className="space-y-3">
+              {/* 미리보기: 성도 화면 로고 띠와 같은 흰 배경 + 고른 크기 그대로 */}
+              <div className="w-full rounded-xl border border-slate-200 bg-white flex items-center justify-center px-4 py-6">
+                <img src={churchLogo} alt="교회 로고" className={`${churchLogoHeightClass(churchLogoSize)} w-auto max-w-full object-contain`} />
+              </div>
+
+              {/* 표시 크기 선택 */}
+              <div>
+                <p className="text-xs font-bold text-slate-500 mb-2">성도 화면 표시 크기</p>
+                <div className="grid grid-cols-3 gap-2">
+                  {CHURCH_LOGO_SIZE_OPTIONS.map((opt) => {
+                    const active = normalizeChurchLogoSize(churchLogoSize) === opt.id;
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => setChurchLogoSize(opt.id)}
+                        className={`rounded-xl border-2 px-2 py-2.5 text-center transition-all ${active ? "border-teal-500 bg-teal-50/60" : "border-slate-200 bg-white hover:border-slate-300"}`}
+                      >
+                        <span className={`block text-sm font-bold ${active ? "text-teal-700" : "text-slate-600"}`}>{opt.label}</span>
+                        <span className="block text-[10px] text-slate-400 font-medium mt-0.5 leading-tight">{opt.hint}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="flex gap-2">
+                <button type="button" onClick={() => churchLogoInputRef.current?.click()} className="flex-1 h-11 rounded-xl border border-slate-200 bg-slate-50 hover:bg-white text-sm font-bold text-slate-600 transition-all">
+                  다른 이미지로 교체
+                </button>
+                <button type="button" onClick={() => { setChurchLogo(""); setChurchLogoSize(DEFAULT_CHURCH_LOGO_SIZE); }} className="h-11 px-4 rounded-xl border border-red-100 bg-red-50 hover:bg-red-100 text-sm font-bold text-red-500 transition-all">
+                  삭제
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => churchLogoInputRef.current?.click()}
+              className="w-full h-24 rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50/40 hover:bg-slate-50 hover:border-slate-300 transition-all flex flex-col items-center justify-center gap-2 text-slate-400"
+            >
+              <ImageIcon className="w-6 h-6" />
+              <span className="text-sm font-bold">교회 로고 이미지 업로드</span>
+            </button>
+          )}
+        </Card>
+
+        {/* 교회 소개 */}
+        <Card className="p-5 rounded-[1.75rem] border-0 bg-white shadow-xl shadow-blue-500/5">
+          <div className="flex items-center justify-between gap-3 mb-1.5 flex-wrap">
+            <h2 className="text-xl font-bold flex items-center gap-3 text-slate-800">
+              <div className="w-2.5 h-8 bg-sky-500 rounded-full shrink-0" /> 교회 소개
+            </h2>
+            <label
+              htmlFor="church-intro-toggle"
+              className={`flex items-center gap-3 py-2 px-4 rounded-full transition-all duration-300 cursor-pointer select-none shrink-0 ${churchIntroEnabled ? "bg-blue-50/80 shadow-sm border border-blue-100" : "bg-gray-100/70 border border-transparent"}`}
+            >
+              <div className="flex items-center gap-2">
+                <span className={`w-2 h-2 rounded-full transition-colors shrink-0 ${churchIntroEnabled ? "bg-blue-600 animate-pulse" : "bg-gray-400"}`} />
+                <span className={`text-xs font-bold transition-colors whitespace-nowrap ${churchIntroEnabled ? "text-blue-700" : "text-gray-500"}`}>
+                  {churchIntroEnabled ? "노출 중" : "노출 안 함"}
+                </span>
+              </div>
+              <Switch
+                id="church-intro-toggle"
+                checked={churchIntroEnabled}
+                onCheckedChange={setChurchIntroEnabled}
+                className="data-[state=checked]:bg-blue-600 data-[state=unchecked]:bg-gray-300 transition-colors duration-200"
+              />
+            </label>
+          </div>
+          <p className="text-xs text-slate-400 font-medium leading-relaxed">
+            성도 화면 우측 상단 <b>메뉴 &gt; 소개</b>에 표시돼요. 한 번 써두면 다음 주보에도 자동으로 이어집니다.
+          </p>
+          <p className="text-[11px] text-sky-600 font-bold leading-relaxed flex items-start gap-1 mt-1">
+            <Info className="w-3 h-3 shrink-0 mt-0.5" />
+            모바일에서 읽기 좋게 <b>4~5줄 안</b>으로 간단·명료하게. 우리 교회가 지향하는 예배·훈련·섬김의 모습을 한 문단으로.
+          </p>
+
+          {/* 교회 이미지 - 소개 화면에서 로고 아래에 크게 표시 */}
+          <div className="mt-4">
+            <p className="text-xs font-bold text-slate-500 mb-1">교회 이미지 <span className="text-slate-400 font-medium">(선택)</span></p>
+            <p className="text-[11px] text-sky-600 font-bold mb-2">📱 모바일 세로 화면에 크게 보여서 <b>세로형 이미지</b>가 잘 어울려요 (예: 3:4, 예배당·성도들 사진)</p>
+            <input
+              type="file"
+              accept="image/png, image/jpeg, image/jpg, image/webp"
+              ref={churchImageInputRef}
+              onChange={handleChurchImageUpload}
+              className="hidden"
+            />
+            {churchImage ? (
+              <div className="space-y-2">
+                <div className="w-full rounded-xl overflow-hidden border border-slate-200 bg-slate-50 max-h-64 flex items-center justify-center">
+                  <img src={churchImage} alt="교회 이미지" className="w-full max-h-64 object-contain" />
+                </div>
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => churchImageInputRef.current?.click()} className="flex-1 h-10 rounded-xl border border-slate-200 bg-slate-50 hover:bg-white text-sm font-bold text-slate-600 transition-all">
+                    다른 이미지로 교체
+                  </button>
+                  <button type="button" onClick={() => setChurchImage("")} className="h-10 px-4 rounded-xl border border-red-100 bg-red-50 hover:bg-red-100 text-sm font-bold text-red-500 transition-all">
+                    삭제
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => churchImageInputRef.current?.click()}
+                className="w-full h-20 rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50/40 hover:bg-slate-50 hover:border-slate-300 transition-all flex flex-col items-center justify-center gap-1.5 text-slate-400"
+              >
+                <ImageIcon className="w-5 h-5" />
+                <span className="text-sm font-bold">교회 이미지 업로드</span>
+              </button>
+            )}
+          </div>
+
+          <Textarea
+            value={churchIntro}
+            onChange={(e) => setChurchIntro(e.target.value)}
+            placeholder={"OOO교회에 오신 것을 환영합니다.\n하나님의 임재를 경험한 예배자들이\n예수님의 말씀으로 훈련된 제자가 되어\n성령님의 능력으로 지역과 세상을 섬기는 교회입니다."}
+            rows={5}
+            maxLength={300}
+            className="rounded-xl border-slate-200 bg-white text-sm font-medium resize-none mt-3 leading-relaxed"
+          />
+          <p className="text-[11px] text-slate-400 font-medium text-right mt-1">{churchIntro.length} / 300자</p>
+        </Card>
+
+        <Card className="p-5 rounded-[1.75rem] border-0 bg-white shadow-xl shadow-blue-500/5">
+          <div className="flex items-center justify-between gap-3 mb-1.5 flex-wrap">
+            <h2 className="text-xl font-bold flex items-center gap-3 text-slate-800">
               <div className="w-2.5 h-8 bg-indigo-500 rounded-full shrink-0" /> 표어 / 주제 성구
             </h2>
             <label
@@ -2080,7 +2603,9 @@ export function AdminEditor() {
               <h2 className="text-xl font-bold flex items-center gap-3 text-slate-800">
                 <div className="w-2.5 h-8 bg-blue-600 rounded-full shrink-0" /> 섬기시는분 안내 설정
               </h2>
-              <p className="text-xs text-slate-400 mt-1.5 font-medium leading-relaxed">교역자, 부서별 담당자, 찬양대 등 사역자의 직분과 이름, 사진을 함께 관리하세요.</p>
+              <p className="text-xs text-slate-400 mt-1.5 font-medium leading-relaxed">
+                성도 화면 우측 상단 <b>메뉴 &gt; 섬기시는 분</b> 화면에 표시돼요. 담임 목사는 맨 위에 크게, 부교역자는 그 아래 리스트로 나옵니다.
+              </p>
               <p className="text-[11px] text-blue-500 mt-1 font-bold leading-relaxed flex items-center gap-1">
                 <ImageIcon className="w-3 h-3 shrink-0" /> 사진은 정사각형(1:1)에 가까울수록 예쁘게 나와요 · 최소 600×600px 권장
               </p>
@@ -2115,11 +2640,104 @@ export function AdminEditor() {
               </label>
 
               <Button onClick={addMinister} variant="outline" className="rounded-full border-dashed border-2 px-6 border-blue-200 text-blue-600 hover:bg-blue-50 font-bold text-xs h-10 shrink-0">
-                <Plus className="w-4 h-4 mr-1.5" /> 섬기는 분 추가
+                <Plus className="w-4 h-4 mr-1.5" /> 부교역자 추가
               </Button>
             </div>
           </div>
 
+          {/* ── 담임 목사 (별도 자리) ── */}
+          <div className="mb-5 p-4 rounded-[1.5rem] border-2 border-blue-100 bg-blue-50/40">
+            <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
+              <span className="text-sm font-extrabold text-blue-800 flex items-center gap-1.5">
+                <UserCheck className="w-4 h-4" /> 담임 목사
+              </span>
+              <label htmlFor="senior-pastor-toggle" className="flex items-center gap-2 cursor-pointer select-none">
+                <span className={`text-[11px] font-bold whitespace-nowrap ${seniorPastorEnabled ? "text-blue-700" : "text-gray-400"}`}>
+                  {seniorPastorEnabled ? "표시" : "숨김"}
+                </span>
+                <Switch
+                  id="senior-pastor-toggle"
+                  checked={seniorPastorEnabled}
+                  onCheckedChange={setSeniorPastorEnabled}
+                  className="data-[state=checked]:bg-blue-600 data-[state=unchecked]:bg-gray-300"
+                />
+              </label>
+            </div>
+
+            {seniorPastorEnabled && (
+              <div className="space-y-2.5">
+                <div className="flex items-start gap-3">
+                  <input
+                    type="file"
+                    accept="image/png, image/jpeg, image/jpg, image/webp"
+                    ref={seniorPastorInputRef}
+                    onChange={handleSeniorPastorImageUpload}
+                    className="hidden"
+                  />
+                  <div
+                    onClick={() => seniorPastorInputRef.current?.click()}
+                    className="w-16 h-16 rounded-xl bg-white border-2 border-dashed border-blue-300 flex items-center justify-center text-blue-500 overflow-hidden shrink-0 cursor-pointer hover:border-blue-500 transition-colors"
+                    title="클릭하여 사진 선택"
+                  >
+                    {seniorPastor.photoUrl ? (
+                      <img src={seniorPastor.photoUrl} alt="담임 목사" className="w-full h-full object-cover" />
+                    ) : (
+                      <Upload className="w-5 h-5" />
+                    )}
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 flex-1 min-w-0">
+                    <Input
+                      value={seniorPastor.role}
+                      onChange={(e) => updateSeniorPastor("role", e.target.value)}
+                      placeholder="직분 (예: 담임 목사)"
+                      className="rounded-xl h-10 border-slate-200 bg-white text-sm font-bold"
+                    />
+                    <Input
+                      value={seniorPastor.name}
+                      onChange={(e) => updateSeniorPastor("name", e.target.value)}
+                      placeholder="이름"
+                      className="rounded-xl h-10 border-slate-200 bg-white text-sm font-bold text-blue-600"
+                    />
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Input
+                    value={seniorPastor.phone}
+                    onChange={(e) => {
+                      if (seniorPastor.phoneFreeFormat) { updateSeniorPastor("phone", e.target.value); return; }
+                      const raw = e.target.value.replace(/[^0-9]/g, "");
+                      let f = raw;
+                      if (raw.length > 3 && raw.length <= 7) f = `${raw.slice(0, 3)}-${raw.slice(3)}`;
+                      else if (raw.length > 7) f = `${raw.slice(0, 3)}-${raw.slice(3, 7)}-${raw.slice(7, 11)}`;
+                      updateSeniorPastor("phone", f);
+                    }}
+                    maxLength={seniorPastor.phoneFreeFormat ? 20 : 13}
+                    placeholder={seniorPastor.phoneFreeFormat ? "연락처 (자유 입력)" : "연락처 (선택)"}
+                    className="rounded-xl h-10 border-slate-200 bg-white text-sm font-bold flex-1"
+                  />
+                  <label htmlFor="senior-phone-free" className="flex items-center gap-1.5 cursor-pointer select-none shrink-0">
+                    <Checkbox
+                      id="senior-phone-free"
+                      checked={seniorPastor.phoneFreeFormat}
+                      onCheckedChange={() => updateSeniorPastor("phoneFreeFormat", !seniorPastor.phoneFreeFormat)}
+                    />
+                    <span className="text-[11px] font-bold text-slate-400 whitespace-nowrap">형식 자유</span>
+                  </label>
+                </div>
+                <Textarea
+                  value={seniorPastor.description}
+                  onChange={(e) => updateSeniorPastor("description", e.target.value)}
+                  placeholder="소개 문구 (선택)"
+                  rows={2}
+                  maxLength={120}
+                  className="rounded-xl border-slate-200 bg-white text-sm font-medium resize-none"
+                />
+              </div>
+            )}
+          </div>
+
+          {/* ── 부교역자 · 섬기는 분 리스트 ── */}
+          <p className="text-xs font-extrabold text-slate-500 mb-2">부교역자 · 섬기는 분</p>
           {ministersEnabled && (
           <div className="space-y-3">
             {ministers.map((minister, index) => (
@@ -2564,6 +3182,160 @@ export function AdminEditor() {
             </div>
           )}
         </Card>
+      </div>
+      )}
+
+      {activeTab === "design" && (
+      <div className="container mx-auto px-4 py-6 max-w-5xl">
+        <div className="flex flex-col lg:flex-row gap-5 lg:items-start">
+          {/* 왼쪽: 템플릿 선택 */}
+          <Card className="flex-1 min-w-0 p-5 rounded-[1.75rem] border-0 bg-white shadow-xl shadow-blue-500/5">
+            <div className="flex items-start justify-between gap-3 flex-wrap">
+              <h2 className="text-xl font-bold flex items-center gap-3 text-slate-800">
+                <div className="w-2.5 h-8 bg-purple-500 rounded-full shrink-0" /> 커스텀 디자인
+              </h2>
+              <a
+                href="https://bulletin.stayon-platform.com/pricing"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="shrink-0 inline-flex items-center gap-1.5 rounded-full border border-purple-200 bg-purple-50 hover:bg-purple-100 text-purple-700 text-xs font-bold px-3.5 py-2 transition-colors"
+              >
+                요금제 보기 <ExternalLink className="w-3.5 h-3.5" />
+              </a>
+            </div>
+            <p className="text-xs text-slate-400 mt-1.5 mb-4 font-medium leading-relaxed">
+              디자인을 고르면 성도들이 보는 주보 화면 전체 모습이 바뀌어요. 오른쪽 휴대폰 화면에서 예시 주보로 미리 볼 수 있어요.
+              (입력해두신 내용은 그대로, 겉모습만 바뀝니다.)
+            </p>
+
+            <p className="text-[11px] text-purple-600/90 font-medium mt-3 mb-3 leading-relaxed flex items-start gap-1.5">
+              <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+              {customDesignFreePeriod
+                ? '커스텀 디자인은 원래 프로 요금제 전용이지만, 지금은 오픈 기간이라 모든 디자인을 무료로 쓸 수 있어요. 유료화 이후 프로 요금제가 아니면 성도 화면은 자동으로 "기본" 디자인으로 표시돼요.'
+                : '"기본"은 언제나 무료예요. 그 외 디자인은 프로 요금제 전용이며, 프로 요금제 사용 시 적용할 수 있어요.'}
+            </p>
+
+            <div className="space-y-3">
+              {BULLETIN_TEMPLATES.map((tpl, i) => {
+                const isApplied = (bulletinTemplate || DEFAULT_BULLETIN_TEMPLATE_ID) === tpl.id;
+                const isPreviewing = (previewTemplateId || DEFAULT_BULLETIN_TEMPLATE_ID) === tpl.id;
+                const comingSoon = !!tpl.comingSoon;
+                const unlocked = !comingSoon && isTemplateUnlocked(tpl.id);
+                const showComingSoonHeader = comingSoon && !BULLETIN_TEMPLATES[i - 1]?.comingSoon;
+                return (
+                  <div key={tpl.id}>
+                    {showComingSoonHeader && (
+                      <div className="flex items-center gap-2 pt-3 pb-1">
+                        <span className="text-[11px] font-black tracking-wider text-slate-400 uppercase">Coming Soon</span>
+                        <span className="h-px flex-1 bg-slate-100" />
+                        <span className="text-[10px] font-bold text-slate-400">준비 중인 디자인</span>
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPreviewTemplateId(tpl.id); // 잠겨 있어도/준비 중이어도 오른쪽 미리보기 영역은 전환
+                        if (unlocked) setBulletinTemplate(tpl.id);
+                      }}
+                      className={`relative w-full text-left rounded-2xl border-2 p-4 transition-all cursor-pointer ${
+                        isApplied ? "border-blue-500 ring-2 ring-blue-200 bg-blue-50/40"
+                          : isPreviewing ? "border-purple-300 bg-purple-50/40"
+                          : comingSoon ? "border-slate-200 bg-slate-50/60 hover:border-slate-300"
+                          : "border-slate-200 bg-white hover:border-slate-300"
+                      }`}
+                    >
+                      <div className={`flex items-center gap-3 mb-2 ${comingSoon ? "opacity-70" : ""}`}>
+                        <div className="w-10 h-10 rounded-xl border border-slate-200 shrink-0 flex items-center justify-center" style={{ backgroundColor: tpl.swatch }}>
+                          {isApplied
+                            ? <Check className="w-4 h-4 stroke-[3px]" style={{ color: tpl.id === "default" ? "#fff" : tpl.accent }} />
+                            : comingSoon
+                            ? <Lock className="w-3.5 h-3.5" style={{ color: tpl.accent }} />
+                            : <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: tpl.accent }} />}
+                        </div>
+                        <span className={`font-bold text-sm ${isApplied ? "text-blue-700" : "text-slate-700"}`}>{tpl.label}</span>
+                        {isApplied
+                          ? <span className="ml-auto shrink-0 whitespace-nowrap text-[10px] font-bold text-blue-600 bg-blue-100 px-2 py-0.5 rounded-full">적용됨</span>
+                          : comingSoon
+                          ? <span className="ml-auto shrink-0 inline-flex items-center gap-1 whitespace-nowrap text-[10px] font-bold text-slate-500 bg-slate-200/80 px-2 py-0.5 rounded-full"><Lock className="w-2.5 h-2.5" /> 준비중</span>
+                          : isPreviewing && <span className="ml-auto shrink-0 whitespace-nowrap text-[10px] font-bold text-purple-600 bg-purple-100 px-2 py-0.5 rounded-full">미리보는 중</span>}
+                      </div>
+                      <p className={`text-xs text-slate-400 font-medium leading-relaxed ${comingSoon ? "opacity-70" : ""}`}>{tpl.description}</p>
+                      {!unlocked && !comingSoon && (
+                        <span className="mt-2 inline-flex items-center gap-1 rounded-full bg-slate-100 text-slate-500 text-[10px] font-bold px-2 py-1">
+                          <Lock className="w-3 h-3" /> 프로 요금제 전용 · 미리보기만 가능
+                        </span>
+                      )}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+
+            {!isTemplateUnlocked(bulletinTemplate) && (
+              <p className="text-[11px] text-amber-600 font-semibold mt-3 leading-relaxed flex items-start gap-1.5">
+                <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                지금 고른 디자인은 프로 요금제 전용이에요. 이대로 두면 성도 화면은 "기본" 디자인으로 표시됩니다.
+              </p>
+            )}
+          </Card>
+
+          {/* 오른쪽: 아이폰 미리보기 (데스크톱은 스크롤 따라오는 sticky, 모바일은 아래에 표시) */}
+          {(() => {
+            const previewTpl = BULLETIN_TEMPLATES.find((t) => t.id === previewTemplateId);
+            const previewUnlocked = isTemplateUnlocked(previewTemplateId);
+            const previewComingSoon = !!previewTpl?.comingSoon;
+            return (
+          <div className="w-full lg:w-[380px] shrink-0 lg:sticky lg:top-6">
+            <div className="rounded-[2rem] bg-gradient-to-b from-purple-50 to-white border border-purple-100 p-3 sm:p-5 overflow-hidden">
+              <p className="text-sm font-bold text-slate-800 text-center">
+                {(previewTpl?.label) || "기본"} 미리보기
+              </p>
+              <p className="text-[11px] text-slate-400 text-center mt-1 mb-3 font-medium leading-relaxed">
+                {previewComingSoon
+                  ? <>아직 준비 중인 디자인이에요.<br />버튼만 먼저 열어뒀어요.</>
+                  : <>실제 성도들이 보는 화면과 똑같은 예시 주보예요.<br />화면을 위아래로 넘겨서 구경해보세요.</>}
+              </p>
+              {/* 실제 휴대폰(390px 폭) 그대로 렌더한 뒤 zoom으로 축소 → 글자·간격 비율이 실제와 동일 */}
+              <div className="flex justify-center">
+                <div className="rounded-[2.25rem] bg-slate-900 p-2 shadow-2xl shrink-0">
+                  <div className="rounded-[1.9rem] overflow-hidden bg-white" style={{ width: 312, height: 620 }}>
+                    {previewComingSoon ? (
+                      <div className="w-full h-full flex flex-col items-center justify-center gap-4 px-6 text-center" style={{ background: `linear-gradient(160deg, ${previewTpl?.swatch || "#1f2937"} 0%, #0f172a 100%)` }}>
+                        <div className="w-16 h-16 rounded-full bg-white/10 border border-white/15 flex items-center justify-center">
+                          <Lock className="w-7 h-7 text-white/80" />
+                        </div>
+                        <div>
+                          <p className="text-white font-black text-base">준비중인 디자인입니다</p>
+                          <p className="text-white/55 text-xs font-medium mt-1.5 leading-relaxed">
+                            {previewTpl?.label}{previewTpl?.description ? ` · ${previewTpl.description}` : ""}<br />곧 만나보실 수 있어요
+                          </p>
+                        </div>
+                        <span className="text-[10px] font-black tracking-widest text-white/40 uppercase">Coming Soon</span>
+                      </div>
+                    ) : (
+                      <iframe
+                        key={previewTemplateId}
+                        src={`/view/new?mode=sample&template=${encodeURIComponent(previewTemplateId || "default")}`}
+                        title="디자인 미리보기"
+                        className="block border-0 bg-white"
+                        style={{ width: 390, height: 775, zoom: 0.8 }}
+                      />
+                    )}
+                  </div>
+                </div>
+              </div>
+              <p className="text-[11px] text-center mt-3 font-bold text-purple-500">
+                {previewComingSoon
+                  ? "준비되면 바로 쓸 수 있게 알려드릴게요"
+                  : previewUnlocked
+                  ? "이 디자인으로 주보를 만들 수 있어요 / (예시)"
+                  : "프로 요금제를 쓰면 이런 디자인의 주보를 쓸 수 있어요"}
+              </p>
+            </div>
+          </div>
+            );
+          })()}
+        </div>
       </div>
       )}
 

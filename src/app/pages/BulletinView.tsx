@@ -4,6 +4,12 @@ import { db } from "../../firebase";
 import { doc, getDoc, collection, query, where, orderBy, limit, getDocs, updateDoc, increment } from "firebase/firestore";
 import { Card } from "../components/ui/card";
 import { getPageBgGradientClass, isLightPageBgTheme } from "../../utils/pageBgThemes";
+import { isCustomBulletinTemplate } from "../../utils/bulletinTemplates";
+import { resolveEffectiveTemplateId, isCustomDesignFreePeriod, type CustomDesignConfig } from "../../utils/customDesignAccess";
+import { SAMPLE_BULLETIN } from "../../utils/sampleBulletin";
+import { churchLogoHeightClass } from "../../utils/churchLogo";
+import { BulletinMenu } from "./bulletin/BulletinMenu";
+import { WarmIvoryTemplate } from "./bulletinTemplates/WarmIvoryTemplate";
 import {
   Lock,
   Loader2,
@@ -23,12 +29,8 @@ import {
   MapPin,
   Sun,
   ChevronRight,
-  Users,
-  Phone,
   MessageSquare,
-  X,
   ListOrdered,
-  Navigation,
   ChevronDown,
   Quote,
   Instagram
@@ -45,28 +47,6 @@ import {
 
 const STAYON_DEFAULT_BG = "/stayon_kakao_pr.png";
 
-// 섬기는 분 상세 팝업에 "화면에 보여줄" 번호를 만들 때만 쓴다. 실제 전화/문자 연결(tel:/sms:)은
-// 항상 원본 번호를 그대로 쓰고, 이 함수는 오직 눈에 보이는 텍스트만 가운데 자리를 가려서
-// 개인정보 노출·스팸/보이스피싱 악용 위험을 줄인다.
-function maskPhoneNumber(phone: string): string {
-  if (!phone) return phone;
-  const trimmed = phone.trim();
-  const parts = trimmed.split("-");
-  if (parts.length === 3) {
-    // 010-1234-5678, 02-123-4567 같은 일반적인 하이픈 3구간 형식: 가운데 구간만 마스킹
-    return `${parts[0]}-${"*".repeat(parts[1].length)}-${parts[2]}`;
-  }
-  // 하이픈이 없거나 자유 입력(phoneFreeFormat)인 경우: 숫자만 세어서 앞 3자리 / 뒤 4자리만
-  // 남기고 그 사이 숫자만 *로 바꾼다(하이픈 등 다른 문자는 원래 위치 그대로 둠).
-  const digits = trimmed.replace(/\D/g, "");
-  if (digits.length <= 7) return trimmed;
-  let digitIndex = 0;
-  return trimmed.replace(/\d/g, (d) => {
-    digitIndex += 1;
-    if (digitIndex <= 3 || digitIndex > digits.length - 4) return d;
-    return "*";
-  });
-}
 
 export function BulletinView() {
   const { id } = useParams();
@@ -75,11 +55,16 @@ export function BulletinView() {
   const [loading, setLoading] = useState(true);
   const [bulletin, setBulletin] = useState<any>(null);
   const [copied, setCopied] = useState(false);
-  const [addressCopied, setAddressCopied] = useState(false);
   const [shortcutActiveIndex, setShortcutActiveIndex] = useState(0);
   const [isPreviewMode, setIsPreviewMode] = useState(false);
+  // "커스텀 디자인" 탭의 아이폰 미리보기(iframe)에서만 켜지는 모드. 고정 데모 데이터로
+  // 선택한 템플릿을 요금제·권한과 무관하게 그대로 보여준다.
+  const [isSampleMode, setIsSampleMode] = useState(false);
   const [selectedSection, setSelectedSection] = useState<any>(null);
-  const [selectedMinister, setSelectedMinister] = useState<any>(null);
+  // 커스텀 디자인(주보 템플릿) 사용 권한 판정용. 유료화 설정 + 작성 교회 계정 데이터.
+  // 유료화 시작일 전에는 계정 데이터를 읽지 않고(무료 기간) 저장된 템플릿을 그대로 쓴다.
+  const [customDesignConfig, setCustomDesignConfig] = useState<CustomDesignConfig | null>(null);
+  const [authorAccount, setAuthorAccount] = useState<any>(null);
   // "말씀 적용 질문" 각 항목은 아코디언처럼 접혀있다가, 눌렀을 때 펼쳐진다. 하나를 펼쳐도
   // 다른 항목이 접히지 않도록(동시에 여러 개 펼침 가능) id 목록으로 펼침 상태를 관리한다.
   const [expandedQuestionIds, setExpandedQuestionIds] = useState<Set<string>>(new Set());
@@ -96,6 +81,16 @@ export function BulletinView() {
       // 1. URL 쿼리 파라미터 확인 (미리보기 모드인지)
       const searchParams = new URLSearchParams(location.search);
       const isPreview = searchParams.get("mode") === "preview";
+
+      // 0. 커스텀 디자인 미리보기(고정 데모 데이터). Firestore/조회수 집계 없음.
+      if (searchParams.get("mode") === "sample") {
+        const tpl = searchParams.get("template") || "default";
+        const logoSize = searchParams.get("logosize");
+        setBulletin({ ...SAMPLE_BULLETIN, bulletinTemplate: tpl, ...(logoSize ? { churchLogoSize: logoSize } : {}) });
+        setIsSampleMode(true);
+        setLoading(false);
+        return;
+      }
 
       if (isPreview) {
         const savedTemp = localStorage.getItem("temp_bulletin");
@@ -159,6 +154,32 @@ export function BulletinView() {
     fetchBulletin();
   }, [id, location]);
 
+  // 커스텀 디자인 사용 권한 판정에 필요한 데이터 로드.
+  //  - settings/customDesign: 유료화 시작일 등 (항상 읽음, 아주 작은 문서)
+  //  - users/{authorId}: 유료화 이후 + 커스텀 템플릿일 때만 읽어서 요금제 확인
+  useEffect(() => {
+    if (!bulletin || isPreviewMode || isSampleMode) return;
+    let cancelled = false;
+    (async () => {
+      let config: CustomDesignConfig = {};
+      try {
+        const snap = await getDoc(doc(db, "settings", "customDesign"));
+        if (snap.exists()) config = snap.data() as CustomDesignConfig;
+      } catch { /* 설정 없으면 기본값(무료 기간)으로 취급 */ }
+      if (cancelled) return;
+      setCustomDesignConfig(config);
+
+      if (isCustomDesignFreePeriod(config)) return; // 무료 기간엔 요금제 확인 불필요
+      if (!isCustomBulletinTemplate(bulletin?.bulletinTemplate)) return;
+      if (!bulletin?.authorId) return;
+      try {
+        const uSnap = await getDoc(doc(db, "users", bulletin.authorId));
+        if (!cancelled && uSnap.exists()) setAuthorAccount(uSnap.data());
+      } catch { /* 계정 못 읽으면 권한 없음으로 처리 → 기본 디자인 */ }
+    })();
+    return () => { cancelled = true; };
+  }, [bulletin, isPreviewMode, isSampleMode]);
+
   const handleCopyAccount = (text: string) => {
     if (!text) return;
 
@@ -207,7 +228,6 @@ export function BulletinView() {
   const shortcutItems = [
     bulletin?.sections && bulletin.sections.length > 0 && { id: "section-worship", label: "주일 예배" },
     bulletin?.announcements && bulletin.announcements.length > 0 && { id: "section-news", label: "교회 소식" },
-    (bulletin?.addressEnabled !== false && bulletin?.churchAddress) && { id: "section-location", label: "오시는 길" },
   ].filter(Boolean) as { id: string; label: string }[];
   const SEGMENT_WIDTH = 78;
 
@@ -238,41 +258,6 @@ export function BulletinView() {
     return () => window.removeEventListener("scroll", handleScroll);
   }, [bulletin, shortcutItems.length]);
 
-  // "오시는 길" 주소 복사 전용 핸들러. 계좌번호 복사와 문구/상태가 달라서 별도로 둔다.
-  const handleCopyAddress = (text: string) => {
-    if (!text) return;
-
-    const onCopied = () => {
-      setAddressCopied(true);
-      toast.success("주소가 복사되었습니다.");
-      setTimeout(() => setAddressCopied(false), 2000);
-    };
-
-    const legacyCopy = () => {
-      const textArea = document.createElement("textarea");
-      textArea.value = text;
-      textArea.style.top = "0";
-      textArea.style.left = "0";
-      textArea.style.position = "fixed";
-      document.body.appendChild(textArea);
-      textArea.focus();
-      textArea.select();
-      try {
-        document.execCommand("copy");
-        onCopied();
-      } catch (err) {
-        toast.error("복사에 실패했습니다.");
-      }
-      document.body.removeChild(textArea);
-    };
-
-    if (navigator.clipboard && window.isSecureContext) {
-      navigator.clipboard.writeText(text).then(onCopied).catch(legacyCopy);
-    } else {
-      legacyCopy();
-    }
-  };
-
   if (loading) {
     return (
       <div className="min-h-screen bg-[#111827] flex items-center justify-center">
@@ -297,10 +282,32 @@ export function BulletinView() {
   // 흰 카드 바깥(섹션 제목/아이콘 등)은 기본적으로 흰 글씨인데, 밝은 배경(화이트 등)을
   // 고른 경우에는 어두운 색으로 자동 전환해서 대비를 유지한다.
   const isLightBg = isLightPageBgTheme(bulletin?.pageBgTheme);
+  // "기본"이 아닌 커스텀 디자인 템플릿을 고른 경우, 그 템플릿 고유의 배경을 쓰고
+  // 주보 화면 배경색(pageBgTheme) 선택은 무시한다.
+  // 단, 유료화(2027-01-01~) 이후 작성 교회가 프로 요금제가 아니면 저장된 커스텀 템플릿을
+  // 무시하고 "기본"으로 표시한다(미리보기 모드는 관리자 본인 편집이므로 저장값 그대로).
+  const effectiveTemplateId = (isPreviewMode || isSampleMode)
+    ? (bulletin?.bulletinTemplate || "default")
+    : resolveEffectiveTemplateId({
+        templateId: bulletin?.bulletinTemplate,
+        config: customDesignConfig,
+        userData: authorAccount,
+      });
+  const isCustomTemplate = isCustomBulletinTemplate(effectiveTemplateId);
+  const pageBgClass = isCustomTemplate ? "bg-[#FDFAF5]" : getPageBgGradientClass(bulletin?.pageBgTheme);
 
   return (
 
-    <div className={`min-h-screen ${getPageBgGradientClass(bulletin?.pageBgTheme)} flex flex-col items-center font-sans pb-20 overflow-x-hidden`}>
+    <div className={`min-h-screen ${pageBgClass} flex flex-col items-center font-sans pb-20 overflow-x-hidden animate-in fade-in duration-700`}>
+      {/* 우측 상단 메뉴 (실제 발행 주보에서만) */}
+      {id && !isPreviewMode && !isSampleMode && (
+        <BulletinMenu
+          bulletinId={id}
+          churchLogo={bulletin.churchLogo}
+          variant="over-hero"
+          accent={effectiveTemplateId === "warm-ivory" ? "#2F5C52" : "#2563eb"}
+        />
+      )}
       {/* 토스 스타일의 미리보기 알림 바 */}
       {isPreviewMode && (
         <div className="w-full bg-blue-600 text-white py-3 px-4 flex items-center justify-center gap-2 sticky top-0 z-[100] shadow-lg animate-in slide-in-from-top duration-500 font-medium text-sm">
@@ -317,6 +324,18 @@ export function BulletinView() {
           <button onClick={() => navigate("/login")} className="p-2 bg-white/10 rounded-full border border-white/10 hover:bg-white/20 transition-all"><Lock className="w-4 h-4" /></button>
         </div> */}
 
+        {isCustomTemplate && effectiveTemplateId === "warm-ivory" ? (
+          <WarmIvoryTemplate
+            bulletin={bulletin}
+            expandedQuestionIds={expandedQuestionIds}
+            toggleQuestion={toggleQuestion}
+            setExpandedQuestionIds={setExpandedQuestionIds}
+            setSelectedSection={setSelectedSection}
+            copied={copied}
+            handleCopyAccount={handleCopyAccount}
+          />
+        ) : (
+        <>
         <Card className="overflow-hidden rounded-[2.5rem] border-0 bg-white mt-3 ml-1.5 mr-1.5 gap-0">
           <div
             className="relative h-auto min-h-[300px] bg-cover bg-center flex flex-col items-center justify-center text-white px-6 py-6"
@@ -346,6 +365,13 @@ export function BulletinView() {
               <p className="text-xs font-medium leading-relaxed">{bulletin.scripture || "본문 준비 중"}</p>
             </div>
           </div>
+
+          {/* 교회 로고: 대표 사진 바로 아래, 모든 내용보다 먼저 흰색 띠로 표시 */}
+          {bulletin.churchLogoEnabled !== false && bulletin.churchLogo && (
+            <div className="bg-white border-b border-slate-100 py-5 px-6 flex items-center justify-center">
+              <img src={bulletin.churchLogo} alt="교회 로고" className={`${churchLogoHeightClass(bulletin.churchLogoSize)} w-auto max-w-full object-contain`} />
+            </div>
+          )}
 
           {/* 바로가기 세그먼트 컨트롤: 내용이 있는 섹션만 노출, 누르면 선택 배경이 스르륵 이동하며 해당 섹션으로 스크롤.
               Card 자체의 기본 gap(gap-6)을 gap-0으로 없앤 상태라, 위아래 간격은 여기 padding으로만 직접 결정된다. */}
@@ -523,10 +549,10 @@ export function BulletinView() {
                               setSelectedSection(section); // 내용이 있으면 모달 팝업 띄우기
                             }
                           }}
-                          className={`flex justify-between items-center py-3.5 border-b border-gray-50 last:border-0 px-2 rounded-2xl transition-colors ${hasContent ? 'cursor-pointer hover:bg-blue-50/60 group' : 'hover:bg-gray-50/50'
+                          className={`flex justify-between items-start gap-3 py-3.5 border-b border-gray-50 last:border-0 px-2 rounded-2xl transition-colors ${hasContent ? 'cursor-pointer hover:bg-blue-50/60 group' : 'hover:bg-gray-50/50'
                             }`}
                         >
-                        <div className="flex flex-col">
+                        <div className="flex flex-col min-w-0">
                           {/* <span className={`text-gray-800 font-black text-lg flex items-center gap-2 ${hasContent ? 'group-hover:text-blue-600 transition-colors' : ''}`}>
                             {section.label}
                             {hasContent && (
@@ -544,12 +570,49 @@ export function BulletinView() {
                               </span>
                             )}
                           </span>
+                          {section.preview && section.preview.trim() !== "" && (
+                            <p className="text-[13px] text-gray-500 leading-relaxed whitespace-pre-line line-clamp-3 mt-1 pr-2">
+                              {section.preview}
+                            </p>
+                          )}
                         </div>
-                        <span className="font-bold text-gray-500 text-sm text-right max-w-[140px]">{section.value || "-"}</span>
+                        <span className="font-bold text-gray-500 text-sm text-right max-w-[140px] shrink-0">{section.value || "-"}</span>
                       </div>
                     );
                   })}
                   </div>
+                </div>
+              </div>
+            )}
+
+            {bulletin.announcements && bulletin.announcements.length > 0 && (
+              <div id="section-news">
+                <div className="flex items-center gap-4 mb-4">
+                  <div className="h-[1px] flex-1 bg-gray-100"></div>
+                  <div className="flex items-center gap-2">
+                    <Megaphone className="w-3.5 h-3.5 text-orange-400" />
+                    <h3 className="font-bold text-gray-400 text-[10px] tracking-[0.2em] uppercase">Church News</h3>
+                  </div>
+                  <div className="h-[1px] flex-1 bg-gray-100"></div>
+                </div>
+
+                <div className="space-y-2.5">
+                  {bulletin.announcements.map((ann: any, index: number) => (
+                    <div key={index} className="bg-gray-50/80 rounded-[1.5rem] p-4 border border-white shadow-sm">
+                      <div className="flex items-center gap-2 mb-1.5">
+                        <div className="w-1.5 h-1.5 bg-orange-400 rounded-full shrink-0"></div>
+                        <h4 className="font-black text-gray-900 text-base tracking-tight leading-snug">
+                          {ann.title}
+                        </h4>
+                      </div>
+
+                      {ann.content && (
+                        <p className="text-gray-600 text-[13px] leading-relaxed whitespace-pre-wrap font-medium pl-3.5">
+                          {ann.content}
+                        </p>
+                      )}
+                    </div>
+                  ))}
                 </div>
               </div>
             )}
@@ -664,7 +727,7 @@ export function BulletinView() {
 
             {/* 예배 순서와 교회 소식 사이 - 주중 예배 안내 섹션 */}
             {bulletin.midweekServices && bulletin.midweekServices.enabled !== false && (
-              (bulletin.midweekServices.wednesday?.title || bulletin.midweekServices.wednesday?.dateTime || bulletin.midweekServices.friday?.title || bulletin.midweekServices.friday?.dateTime) && (
+              (bulletin.midweekServices.wednesday?.title || bulletin.midweekServices.wednesday?.dateTime || bulletin.midweekServices.friday?.title || bulletin.midweekServices.friday?.dateTime || bulletin.midweekServices.dawn?.title || bulletin.midweekServices.dawn?.dateTime) && (
                 <div className="animate-in fade-in duration-300">
                   <div className="flex items-center gap-4 mb-4">
                     <div className="h-[1px] flex-1 bg-slate-200/60"></div>
@@ -757,41 +820,50 @@ export function BulletinView() {
                         </div>
                       </div>
                     )}
+
+                    {/* 새벽 모임 카드 */}
+                    {bulletin.midweekServices.dawn && (bulletin.midweekServices.dawn.title || bulletin.midweekServices.dawn.dateTime) && (
+                      <div className="bg-slate-50/90 rounded-[1.8rem] p-4 border border-slate-100/80 shadow-sm">
+                        <div className="flex items-center justify-between mb-3 pb-2.5 border-b border-slate-200/40">
+                          <div className="flex items-center gap-2">
+                            <span className="w-6 h-6 rounded-lg bg-amber-500 text-white font-black text-[11px] flex items-center justify-center shadow-sm shadow-amber-500/20">새</span>
+                            <h4 className="font-extrabold text-slate-900 text-sm tracking-tight">
+                              {bulletin.midweekServices.dawn.name || "새벽기도회"}
+                            </h4>
+                          </div>
+                          {bulletin.midweekServices.dawn.preacher && (
+                            <span className="text-[11px] font-bold text-amber-600 bg-amber-50 px-2.5 py-0.5 rounded-full border border-amber-100/80">
+                              {bulletin.midweekServices.dawn.preacher}
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="space-y-1.5">
+                          {bulletin.midweekServices.dawn.dateTime && (
+                            <p className="text-[11px] text-slate-500 flex items-center gap-1.5 font-semibold">
+                              <Clock className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                              <span>{bulletin.midweekServices.dawn.dateTime}</span>
+                            </p>
+                          )}
+
+                          {bulletin.midweekServices.dawn.title && (
+                            <p className="text-sm font-black text-slate-800 leading-snug tracking-tight">
+                              {bulletin.midweekServices.dawn.title}
+                            </p>
+                          )}
+
+                          {bulletin.midweekServices.dawn.scripture && (
+                            <div className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-500 bg-slate-100/80 px-2 py-0.5 rounded-md">
+                              <BookOpen className="w-3 h-3 text-slate-400 shrink-0" />
+                              <span>{bulletin.midweekServices.dawn.scripture}</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               )
-            )}
-
-            {bulletin.announcements && bulletin.announcements.length > 0 && (
-              <div id="section-news">
-                <div className="flex items-center gap-4 mb-4">
-                  <div className="h-[1px] flex-1 bg-gray-100"></div>
-                  <div className="flex items-center gap-2">
-                    <Megaphone className="w-3.5 h-3.5 text-orange-400" />
-                    <h3 className="font-bold text-gray-400 text-[10px] tracking-[0.2em] uppercase">Church News</h3>
-                  </div>
-                  <div className="h-[1px] flex-1 bg-gray-100"></div>
-                </div>
-
-                <div className="space-y-2.5">
-                  {bulletin.announcements.map((ann: any, index: number) => (
-                    <div key={index} className="bg-gray-50/80 rounded-[1.5rem] p-4 border border-white shadow-sm">
-                      <div className="flex items-center gap-2 mb-1.5">
-                        <div className="w-1.5 h-1.5 bg-orange-400 rounded-full shrink-0"></div>
-                        <h4 className="font-black text-gray-900 text-base tracking-tight leading-snug">
-                          {ann.title}
-                        </h4>
-                      </div>
-
-                      {ann.content && (
-                        <p className="text-gray-600 text-[13px] leading-relaxed whitespace-pre-wrap font-medium pl-3.5">
-                          {ann.content}
-                        </p>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
             )}
 
             {(bulletin.offeringAccount || bulletin.accountNumber || bulletin.bankName) && (
@@ -951,200 +1023,13 @@ export function BulletinView() {
           </div>
         )}
 
-        {bulletin.ministersEnabled !== false && bulletin.ministers && bulletin.ministers.length > 0 && (
-          <div className="pt-4 mx-1.5">
-            <div className="flex items-center justify-between mb-3 px-1">
-              <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-blue-400 inline-block"></span>
-                <Users className={`w-4 h-4 ${isLightBg ? "text-slate-400" : "text-slate-300"}`} />
-                <h3 className={`font-extrabold text-base tracking-tight ${isLightBg ? "text-slate-800" : "text-white"}`}>섬기는 사람들</h3>
-              </div>
-            </div>
+        {/* "섬기는 사람들"은 우측 상단 메뉴 > 섬기시는 분(/view/:id/team)으로 이동 */}
 
-            {/* 흰 배경 위에 매거진 화보 느낌으로: 이름/직분 + 소개 문구 + 자세히보기, 사진은 우측에 자연스럽게.
-                어두운 배경의 사진(스튜디오 촬영본 등)도 흰 배경 위에서는 경계가 또렷하게 보인다. */}
-            {/* <div className="bg-white rounded-[1.8rem] p-4 border border-slate-100 shadow-sm divide-y divide-slate-100"> */}
-            <div className="bg-white rounded-[1.2rem] p-4 border border-slate-100 shadow-sm divide-y divide-slate-100">
-              {bulletin.ministers.map((minister: any, index: number) => {
-                // Firestore 저장 에러 방지 및 undefined 안전 추출
-                const ministerPhoto =
-                  (typeof minister?.photoUrl === 'string' && minister.photoUrl.trim() !== '' ? minister.photoUrl : null) ||
-                  (typeof minister?.photoURL === 'string' && minister.photoURL.trim() !== '' ? minister.photoURL : null) ||
-                  (typeof minister?.photoUrL === 'string' && minister.photoUrL.trim() !== '' ? minister.photoUrL : null);
-
-                return (
-                  <button
-                    key={minister?.id || index}
-                    type="button"
-                    onClick={() => setSelectedMinister(minister)}
-                    className="w-full text-left py-4 first:pt-0 last:pb-0 flex items-center justify-between gap-4 group"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <h4 className="font-extrabold text-slate-900 text-[15px] sm:text-base leading-snug break-keep">
-                        {minister?.name || "이름 없음"}
-                        {minister?.role && <span className="text-slate-400"> {minister.role}</span>}
-                      </h4>
-                      {minister?.description && (
-                        <p className="text-slate-500 text-xs mt-1.5 leading-relaxed line-clamp-2 whitespace-pre-line break-keep">
-                          {minister.description}
-                        </p>
-                      )}
-                      <span className="inline-flex items-center gap-0.5 text-blue-600 group-hover:text-blue-700 transition-colors text-xs font-bold mt-2">
-                        자세히보기 <ChevronRight className="w-3 h-3" />
-                      </span>
-                    </div>
-
-                    {ministerPhoto && (
-                      <img
-                        src={ministerPhoto}
-                        alt={minister?.name || "섬기는분"}
-                        className="w-20 h-24 sm:w-24 sm:h-28 rounded-xl object-cover shrink-0 border border-slate-100 shadow-sm"
-                      />
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+        {/* "오시는 길"은 우측 상단 메뉴 > 오시는 길(/view/:id/location)으로 이동 */}
+        </>
         )}
 
-        {bulletin.addressEnabled !== false && bulletin.churchAddress && (
-          <div className="pt-4 mx-1.5" id="section-location">
-            <div className="flex items-center justify-between mb-3 px-1">
-              <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-blue-400 inline-block"></span>
-                <MapPin className={`w-4 h-4 ${isLightBg ? "text-slate-400" : "text-slate-300"}`} />
-                <h3 className={`font-extrabold text-base tracking-tight ${isLightBg ? "text-slate-800" : "text-white"}`}>오시는 길</h3>
-              </div>
-            </div>
-
-            <div className="bg-white rounded-[1.8rem] p-4 border border-slate-100 shadow-sm">
-              {(() => {
-                const naverMapUrl = `https://map.naver.com/p/search/${encodeURIComponent(`${bulletin.churchAddress} ${bulletin.churchAddressDetail || ""}`.trim())}`;
-                return (
-                  <>
-                    {/* 교회가 직접 등록한 위치 안내 이미지 (네이버 지도 캡처본 등) - 없으면(구버전 주보 등) 생략. 이미지를 눌러도 길찾기 버튼과 동일하게 네이버 지도로 이동 */}
-                    {bulletin.locationImage && (
-                      <a
-                        href={naverMapUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className={`block w-full rounded-xl overflow-hidden border border-slate-100 mb-3 active:scale-[0.98] transition-transform ${bulletin.locationImageRatio === "1:1" ? "aspect-square" : "aspect-[4/3]"}`}
-                      >
-                        <img
-                          src={bulletin.locationImage}
-                          alt="오시는 길 안내 이미지"
-                          className="w-full h-full object-cover"
-                        />
-                      </a>
-                    )}
-                    <div className="flex items-start justify-between gap-2">
-                      <p className="text-sm font-bold text-slate-800 leading-relaxed break-keep flex-1 min-w-0">
-                        {bulletin.churchAddress}
-                        {bulletin.churchAddressDetail && (
-                          <span className="text-slate-500 font-medium"> {bulletin.churchAddressDetail}</span>
-                        )}
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => handleCopyAddress(`${bulletin.churchAddress} ${bulletin.churchAddressDetail || ""}`.trim())}
-                        className="shrink-0 flex items-center gap-1 text-[11px] font-bold text-slate-400 hover:text-blue-600 transition-colors mt-0.5"
-                      >
-                        {addressCopied ? <Check className="w-3 h-3 stroke-[2.5]" /> : <Copy className="w-3 h-3" />}
-                        {addressCopied ? "복사됨" : "주소 복사"}
-                      </button>
-                    </div>
-                    <a
-                      href={naverMapUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="mt-3 w-full flex items-center justify-center gap-2 h-11 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-[0.98] text-white text-sm font-bold transition-all"
-                    >
-                      <Navigation className="w-4 h-4" />
-                      길찾기
-                    </a>
-                  </>
-                );
-              })()}
-            </div>
-          </div>
-        )}
-
-        {selectedMinister && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fadeIn">
-            <div className="relative w-full max-w-sm bg-white rounded-[2.5rem] overflow-hidden shadow-2xl border border-slate-100 flex flex-col">
-
-              {/* 닫기 버튼 */}
-              <button
-                onClick={() => setSelectedMinister(null)}
-                className="absolute top-4 right-4 z-10 w-9 h-9 rounded-full bg-slate-100/80 hover:bg-slate-200 flex items-center justify-center text-slate-600 transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
-
-              {/* 상단 프로필 큰 이미지 영역 */}
-              <div className="w-full h-80 bg-slate-100 relative">
-                {(() => {
-                  const photo =
-                    selectedMinister?.photoUrl || selectedMinister?.photoURL || selectedMinister?.photoUrL;
-                  return photo ? (
-                    <img
-                      src={photo}
-                      alt={selectedMinister?.name}
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <div className="w-full h-full bg-gradient-to-tr from-slate-200 to-slate-300 text-slate-600 font-black text-4xl flex items-center justify-center">
-                      {selectedMinister?.name ? selectedMinister.name.slice(0, 1) : "섬"}
-                    </div>
-                  );
-                })()}
-              </div>
-
-              {/* 하단 정보 및 연락 버튼 영역 */}
-              <div className="p-6 text-center bg-white flex flex-col items-center">
-                {selectedMinister?.role && (
-                  <span className="text-xs font-bold text-amber-800/70 tracking-wide mb-1">
-                    {selectedMinister.role}
-                  </span>
-                )}
-                <h3 className="text-xl font-extrabold text-slate-900 tracking-tight mb-4">
-                  {selectedMinister?.name || "이름 없음"}
-                </h3>
-
-                {/* 전화번호가 등록되어 있는 경우 표시 */}
-                {selectedMinister?.phone && (
-                  <a
-                    href={`tel:${selectedMinister.phone}`}
-                    className="w-full py-3 px-4 bg-slate-50 hover:bg-slate-100 rounded-2xl border border-slate-200/60 text-slate-700 font-semibold text-sm flex items-center justify-center gap-2 mb-4 transition-colors"
-                  >
-                    <Phone className="w-4 h-4 text-slate-500" />
-                    {maskPhoneNumber(selectedMinister.phone)}
-                  </a>
-                )}
-
-                {/* 하단 액션 버튼 (전화하기 / 문자하기) */}
-                <div className="grid grid-cols-2 gap-3 w-full">
-                  <a
-                    href={`tel:${selectedMinister?.phone || ''}`}
-                    className="py-3 px-4 bg-[#8C7A6B] hover:bg-[#786759] text-white rounded-2xl font-bold text-sm flex items-center justify-center gap-2 transition-colors shadow-sm"
-                  >
-                    <Phone className="w-4 h-4" />
-                    전화하기
-                  </a>
-                  <a
-                    href={`sms:${selectedMinister?.phone || ''}`}
-                    className="py-3 px-4 bg-[#4A3B32] hover:bg-[#3B2F27] text-white rounded-2xl font-bold text-sm flex items-center justify-center gap-2 transition-colors shadow-sm"
-                  >
-                    <MessageSquare className="w-4 h-4" />
-                    문자하기
-                  </a>
-                </div>
-              </div>
-
-            </div>
-          </div>
-        )}
+        {/* 섬기는 분 상세는 /view/:id/team 화면(MinisterDetailModal)으로 이동 */}
 
         {/* 성도 화면 전용 하단 정보. 공통 Footer(로그인/랜딩 등에서 쓰는 사업자 정보 전체)
             대신, 주보 화면에서는 이 작은 버전만 보여준다 - RootLayout에서 이 라우트일 때
