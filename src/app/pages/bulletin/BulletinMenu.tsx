@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router";
-import { Menu, X, Home, Church, Users, Clock, Share2, MapPin, Network, Lock, ChevronRight, Landmark } from "lucide-react";
+import { Menu, X, Home, Church, Users, Clock, Share2, MapPin, Network, Lock, ChevronRight, Landmark, MessageCircleHeart, Newspaper } from "lucide-react";
 import { toast } from "sonner";
 
 // 성도 화면(및 그 하위 메뉴 화면) 우측 상단의 메뉴 버튼 + 우측 슬라이드 시트.
@@ -13,9 +13,10 @@ interface BulletinMenuProps {
   churchLogo?: string;
   variant?: MenuVariant; // over-hero: 어두운 히어로 위 반투명 버튼 / solid: 서브 화면 헤더용
   accent?: string; // 적용된 템플릿의 포인트색 (기본 파랑)
+  pastoralColumnsEnabled?: boolean; // false면 "목회 칼럼" 메뉴 항목 자체를 목록에서 뺀다
 }
 
-export function BulletinMenu({ bulletinId, churchLogo, variant = "over-hero", accent = "#2563eb" }: BulletinMenuProps) {
+export function BulletinMenu({ bulletinId, churchLogo, variant = "over-hero", accent = "#2563eb", pastoralColumnsEnabled = true }: BulletinMenuProps) {
   const [open, setOpen] = useState(false); // 사용자 의도(열림/닫힘)
   const [mounted, setMounted] = useState(false); // DOM 유지 여부 (닫는 애니메이션 동안 남겨둠)
   const [show, setShow] = useState(false); // transform 구동 (열림=제자리, 닫힘=우측 밖)
@@ -66,14 +67,16 @@ export function BulletinMenu({ bulletinId, churchLogo, variant = "over-hero", ac
     active?: boolean;
   }[] = [
     { key: "home", label: "홈", icon: Home, to: base, ready: true, active: pathname === base },
-    { key: "about", label: "소개", sub: "우리 교회 이야기", icon: Church, to: `${base}/about`, ready: true, active: pathname === `${base}/about` },
+    { key: "about", label: "교회 소개", sub: "우리 교회 이야기", icon: Church, to: `${base}/about`, ready: true, active: pathname === `${base}/about` },
+    { key: "pastor-greeting", label: "담임목사 인사말", sub: "인사말 · 연락처", icon: MessageCircleHeart, to: `${base}/pastor`, ready: true, active: pathname === `${base}/pastor` },
     { key: "team", label: "섬기시는 분", sub: "담임 목사 · 부교역자", icon: Users, to: `${base}/team`, ready: true, active: pathname === `${base}/team` },
     { key: "officers", label: "중직자", sub: "장로 · 권사 · 안수집사", icon: Landmark, to: `${base}/officers`, ready: true, active: pathname === `${base}/officers` },
+    { key: "column", label: "목회 칼럼", sub: "지난 칼럼 모아보기", icon: Newspaper, to: `${base}/column`, ready: true, active: pathname === `${base}/column` },
     { key: "location", label: "오시는 길", sub: "약도 · 주소 · 길찾기", icon: MapPin, to: `${base}/location`, ready: true, active: pathname === `${base}/location` },
     { key: "history", label: "교회 연혁", icon: Clock, ready: false },
     { key: "sns", label: "교회 SNS · 유튜브 · 네이버 카페", icon: Share2, ready: false },
     { key: "org", label: "부서 · 기관 조직도", icon: Network, ready: false },
-  ];
+  ].filter((item) => item.key !== "column" || pastoralColumnsEnabled);
 
   const go = (item: (typeof items)[number]) => {
     if (!item.ready) {

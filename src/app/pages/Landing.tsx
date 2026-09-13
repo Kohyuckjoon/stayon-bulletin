@@ -669,6 +669,17 @@ export function Landing() {
                 인쇄비용과 수고는 줄이고,<br /> 성도들과의 소통은 더 편리하게 만듭니다.
               </p>
 
+              <div className="flex justify-center mb-10">
+                <button
+                  onClick={() => window.open("https://bulletin.stayon-platform.com/view/8PmIDuDQXKfYp2zUj6sLX3uzMVt2", "_blank", "noopener,noreferrer")}
+                  className="group inline-flex items-center gap-2.5 bg-blue-600 hover:bg-blue-700 text-white font-black px-6 sm:px-7 py-3.5 sm:py-4 rounded-full shadow-[0_0_25px_rgba(37,99,235,0.4)] hover:shadow-[0_0_35px_rgba(37,99,235,0.55)] active:scale-95 transition-all text-sm sm:text-base"
+                >
+                  <Smartphone className="w-5 h-5 shrink-0 animate-bounce" />
+                  실제 주보 화면 지금 확인하기
+                  <ExternalLink className="w-4 h-4 shrink-0 opacity-90 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
+                </button>
+              </div>
+
               <div className="relative max-w-7xl mx-auto h-[300px] sm:h-[650px] flex items-center justify-center">
                 <div className="absolute inset-0 bg-blue-500/5 blur-[100px] rounded-full pointer-events-none"></div>
                 {previewScreens.map((screen, idx) => {

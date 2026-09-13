@@ -11,6 +11,7 @@ import { churchLogoHeightClass } from "../../utils/churchLogo";
 import { BulletinMenu } from "./bulletin/BulletinMenu";
 import { WarmIvoryTemplate } from "./bulletinTemplates/WarmIvoryTemplate";
 import { WarmIvoryOpenTemplate } from "./bulletinTemplates/WarmIvoryOpenTemplate";
+import { PastoralColumnSection } from "./bulletin/PastoralColumnSection";
 import {
   Lock,
   Loader2,
@@ -300,6 +301,13 @@ export function BulletinView() {
   return (
 
     <div className={`min-h-screen ${pageBgClass} flex flex-col items-center font-sans pb-20 overflow-x-hidden animate-in fade-in duration-700`}>
+      {/* /admin/editor 커스텀 디자인 탭의 아이폰 미리보기(iframe)에서만: 실제 성도 화면에선
+          운영체제/브라우저 기본 스크롤바가 보이든 말든 상관없지만, 작은 목업 안에 들어가면
+          그 스크롤바가 눈에 거슬리게 두드러져 보인다(특히 항상 두꺼운 스크롤바를 쓰는
+          환경에서). 이 모드에서만 스크롤 자체는 그대로 두고 스크롤바만 숨긴다. */}
+      {isSampleMode && (
+        <style>{`html, body { scrollbar-width: none; } html::-webkit-scrollbar, body::-webkit-scrollbar { width: 0; height: 0; display: none; }`}</style>
+      )}
       {/* 우측 상단 메뉴 (실제 발행 주보에서만) */}
       {id && !isPreviewMode && !isSampleMode && (
         <BulletinMenu
@@ -307,6 +315,7 @@ export function BulletinView() {
           churchLogo={bulletin.churchLogo}
           variant="over-hero"
           accent={isWarmIvoryFamily(effectiveTemplateId) ? "#2F5C52" : "#2563eb"}
+          pastoralColumnsEnabled={bulletin.pastoralColumnsEnabled !== false}
         />
       )}
       {/* 토스 스타일의 미리보기 알림 바 */}
@@ -328,6 +337,7 @@ export function BulletinView() {
         {isCustomTemplate && effectiveTemplateId === "warm-ivory" ? (
           <WarmIvoryTemplate
             bulletin={bulletin}
+            bulletinId={id}
             expandedQuestionIds={expandedQuestionIds}
             toggleQuestion={toggleQuestion}
             setExpandedQuestionIds={setExpandedQuestionIds}
@@ -338,6 +348,7 @@ export function BulletinView() {
         ) : isCustomTemplate && effectiveTemplateId === "warm-ivory-open" ? (
           <WarmIvoryOpenTemplate
             bulletin={bulletin}
+            bulletinId={id}
             expandedQuestionIds={expandedQuestionIds}
             toggleQuestion={toggleQuestion}
             setExpandedQuestionIds={setExpandedQuestionIds}
@@ -357,12 +368,17 @@ export function BulletinView() {
             <span className="text-[10px] mb-3 font-black tracking-[0.2em] bg-white/20 px-5 py-2 rounded-full border border-white/30 backdrop-blur-md uppercase">
               {bulletin.date}
             </span>
-            <h2 className={`font-black mb-2 text-center leading-tight drop-shadow-lg px-1 ${(bulletin.title || "").length > 15
-              ? 'text-2xl'
-              : (bulletin.title || "").length > 10
-                ? 'text-3xl'
-                : 'text-4xl'
-              }`}>
+            {/* 설교 제목 - titleFontSize가 있으면(관리자가 직접 조절, 18~32px) 그 값을 쓰고,
+                없는 예전 주보는 기존처럼 글자수에 따라 자동으로 크기를 줄인다. */}
+            <h2
+              className={`font-black mb-2 text-center leading-tight drop-shadow-lg whitespace-pre-line px-1 ${bulletin.titleFontSize ? '' : (bulletin.title || "").length > 15
+                ? 'text-2xl'
+                : (bulletin.title || "").length > 10
+                  ? 'text-3xl'
+                  : 'text-4xl'
+                }`}
+              style={bulletin.titleFontSize ? { fontSize: `${bulletin.titleFontSize}px` } : undefined}
+            >
               {bulletin.title || "주일 예배"}
             </h2>
             <p className="text-sm font-bold text-blue-300 mb-4 tracking-wide drop-shadow-md flex items-center gap-1">
@@ -373,7 +389,7 @@ export function BulletinView() {
               <p className="text-[11px] text-blue-200 font-bold mb-1 tracking-tighter uppercase flex items-center justify-center gap-1">
                 <BookOpen className="w-3 h-3" /> Today's Scripture
               </p>
-              <p className="text-xs font-medium leading-relaxed">{bulletin.scripture || "본문 준비 중"}</p>
+              <p className="text-xs font-medium leading-relaxed whitespace-pre-line">{bulletin.scripture || "본문 준비 중"}</p>
             </div>
           </div>
 
@@ -547,6 +563,15 @@ export function BulletinView() {
                     </div>
                     <div className="h-[1px] flex-1 bg-gray-100"></div>
                   </div>
+
+                  {/* 특별 주일(선택) - "어린이 주일", "어버이 주일" 등. 비워두면 렌더 안 됨.
+                      좌측엔 "예배 순서" 고정 라벨, 우측엔 입력한 특별 주일 내용. */}
+                  {bulletin.specialSunday && (
+                    <div className="flex items-center justify-between mb-3 px-1">
+                      <span className="font-extrabold text-slate-700 text-[16px]">예배 순서</span>
+                      <span className="font-bold text-blue-600 text-sm">{bulletin.specialSunday}</span>
+                    </div>
+                  )}
 
                   <div className="space-y-0.5">
                     {bulletin.sections.map((section: any, index: number) => {
@@ -1037,6 +1062,9 @@ export function BulletinView() {
         {/* "섬기는 사람들"은 우측 상단 메뉴 > 섬기시는 분(/view/:id/team)으로 이동 */}
 
         {/* "오시는 길"은 우측 상단 메뉴 > 오시는 길(/view/:id/location)으로 이동 */}
+
+        {/* 목회 칼럼: 주보 가장 하단. 프로 요금제 미만이거나 등록된 칼럼이 없으면 자동으로 숨김 */}
+        {id && <PastoralColumnSection bulletinId={id} authorId={bulletin.authorId} templateId={effectiveTemplateId} enabled={bulletin.pastoralColumnsEnabled !== false} />}
         </>
         )}
 

@@ -15,9 +15,11 @@ import {
   Youtube,
 } from "lucide-react";
 import { churchLogoHeightClass } from "../../../utils/churchLogo";
+import { PastoralColumnSection } from "../bulletin/PastoralColumnSection";
 
 interface WarmIvoryTemplateProps {
   bulletin: any;
+  bulletinId?: string;
   expandedQuestionIds: Set<string>;
   toggleQuestion: (id: string) => void;
   setExpandedQuestionIds: (ids: Set<string>) => void;
@@ -35,18 +37,23 @@ const SECTION_LINE = "#EEE6D4"; // 섹션 사이 두꺼운 구분선(2px) - R238
 const INK = "#1F241F"; // 본문 진한 글씨
 const MUTED = "#8a8272"; // 보조 글씨
 
-// 섹션 헤더 (작은 영문 라벨 + 굵은 한글 제목)
-function SectionHead({ label, title }: { label: string; title: string }) {
+// 섹션 헤더 (작은 영문 라벨 + 굵은 한글 제목). right가 있으면 제목 같은 줄 우측에 표시
+// (예배 순서 헤더에 "특별 주일" 내용을 얹을 때 씀).
+function SectionHead({ label, title, right }: { label: string; title: string; right?: string }) {
   return (
     <>
       <p className="text-[10px] font-black tracking-[0.25em] uppercase mb-1" style={{ color: ACCENT }}>{label}</p>
-      <h3 className="text-lg font-black mb-4" style={{ color: INK }}>{title}</h3>
+      <div className="flex items-center justify-between gap-3 mb-4">
+        <h3 className="text-lg font-black" style={{ color: INK }}>{title}</h3>
+        {right && <span className="text-[13px] font-bold shrink-0" style={{ color: ACCENT }}>{right}</span>}
+      </div>
     </>
   );
 }
 
 export function WarmIvoryTemplate({
   bulletin,
+  bulletinId,
   expandedQuestionIds,
   toggleQuestion,
   setExpandedQuestionIds,
@@ -192,13 +199,17 @@ export function WarmIvoryTemplate({
 
           {/* 2. 성구 구절 */}
           {bulletin.scripture && (
-            <p className="text-[13px] font-bold tracking-wide mb-2" style={{ color: "#E0B368" }}>
+            <p className="text-[13px] font-bold tracking-wide mb-2 whitespace-pre-line" style={{ color: "#E0B368" }}>
               {bulletin.scripture}
             </p>
           )}
 
-          {/* 3. 설교 제목 */}
-          <h1 className="text-white text-[26px] sm:text-[30px] font-black leading-snug break-keep mb-1">
+          {/* 3. 설교 제목 - 관리자가 글자 크기(18~32px)를 직접 조절할 수 있다(/admin/editor
+              "설교 제목 글자 크기"). 값이 없는 예전 주보는 기존 고정 크기(26/30px)를 그대로 씀. */}
+          <h1
+            className="text-white font-black leading-snug break-keep whitespace-pre-line mb-1 text-[26px] sm:text-[30px]"
+            style={bulletin.titleFontSize ? { fontSize: `${bulletin.titleFontSize}px` } : undefined}
+          >
             {bulletin.title || bulletin.subtitle || "주일 예배"}
           </h1>
 
@@ -312,7 +323,7 @@ export function WarmIvoryTemplate({
         {/* 예배 순서 - 이 템플릿의 시그니처 영역: 번호 매긴 리스트 */}
         {bulletin.sections && bulletin.sections.length > 0 && (
           <div className="px-6 py-7 border-b-2 last:border-b-0" style={{ borderColor: SECTION_LINE }}>
-            <SectionHead label="ORDER OF WORSHIP" title="예배 순서" />
+            <SectionHead label="ORDER OF WORSHIP" title="예배 순서" right={bulletin.specialSunday || undefined} />
             <div className="divide-y" style={{ borderColor: DIVIDER }}>
               {bulletin.sections.map((section: any, index: number) => {
                 const hasContent = section.content && section.content.trim() !== "";
@@ -480,6 +491,9 @@ export function WarmIvoryTemplate({
 
         {/* 오시는 길 → 우측 상단 메뉴 > 오시는 길(/view/:id/location) 화면으로 이동 */}
       </div>
+
+      {/* 목회 칼럼: 주보 가장 하단. 프로 요금제 미만이거나 등록된 칼럼이 없으면 자동으로 숨김 */}
+      {bulletinId && <PastoralColumnSection bulletinId={bulletinId} authorId={bulletin.authorId} templateId={bulletin.bulletinTemplate} enabled={bulletin.pastoralColumnsEnabled !== false} />}
     </div>
   );
 }

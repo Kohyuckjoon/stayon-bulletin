@@ -31,7 +31,9 @@ export function AboutPage() {
   const t = THEMES[bulletin?.bulletinTemplate as string] || THEMES.default;
   const intro: string = bulletin?.churchIntroEnabled !== false ? (bulletin?.churchIntro || "") : "";
   const churchImage: string = bulletin?.churchImage || "";
-  const show = intro.trim() !== "" || churchImage !== "";
+  const vision: string = bulletin?.churchVisionEnabled !== false ? (bulletin?.churchVision || "") : "";
+  const mission: string = bulletin?.churchMissionEnabled !== false ? (bulletin?.churchMission || "") : "";
+  const show = intro.trim() !== "" || churchImage !== "" || vision.trim() !== "" || mission.trim() !== "";
 
   return (
     <div className="min-h-screen flex flex-col items-center font-sans animate-in fade-in duration-700" style={{ backgroundColor: t.pageBg }}>
@@ -47,11 +49,11 @@ export function AboutPage() {
             >
               <ArrowLeft className="w-5 h-5" />
             </button>
-            <h1 className="font-extrabold text-[15px] flex-1 truncate" style={{ color: t.ink }}>소개</h1>
+            <h1 className="font-extrabold text-[15px] flex-1 truncate" style={{ color: t.ink }}>교회 소개</h1>
           </div>
         </div>
 
-        {id && <BulletinMenu bulletinId={id} churchLogo={bulletin?.churchLogo} variant="solid" accent={t.accent} />}
+        {id && <BulletinMenu bulletinId={id} churchLogo={bulletin?.churchLogo} variant="solid" accent={t.accent} pastoralColumnsEnabled={bulletin?.pastoralColumnsEnabled !== false} />}
 
         {loading ? (
           <div className="p-12 text-center font-bold text-sm" style={{ color: t.muted }}>불러오는 중…</div>
@@ -84,6 +86,24 @@ export function AboutPage() {
                   {intro}
                 </p>
               </>
+            )}
+            {/* 4. 교회 비전 */}
+            {vision.trim() !== "" && (
+              <div className={intro.trim() !== "" ? "mt-8 pt-6 border-t" : ""} style={{ borderColor: t.line }}>
+                <p className="text-[10px] font-black tracking-[0.22em] uppercase mb-2" style={{ color: t.label }}>Vision</p>
+                <p className="text-[15px] sm:text-base leading-[1.9] whitespace-pre-line break-keep" style={{ color: t.ink }}>
+                  {vision}
+                </p>
+              </div>
+            )}
+            {/* 5. 교회 사명 */}
+            {mission.trim() !== "" && (
+              <div className={intro.trim() !== "" || vision.trim() !== "" ? "mt-8 pt-6 border-t" : ""} style={{ borderColor: t.line }}>
+                <p className="text-[10px] font-black tracking-[0.22em] uppercase mb-2" style={{ color: t.label }}>Mission</p>
+                <p className="text-[15px] sm:text-base leading-[1.9] whitespace-pre-line break-keep" style={{ color: t.ink }}>
+                  {mission}
+                </p>
+              </div>
             )}
           </div>
         )}

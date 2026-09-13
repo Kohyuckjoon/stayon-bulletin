@@ -4,9 +4,12 @@ import { Landing } from "./pages/Landing";
 import { SignUp } from "./pages/SignUp";
 import { Login } from "./pages/Login";
 import { BulletinView } from "./pages/BulletinView";
-import { AboutPage } from "./pages/bulletin/AboutPage"; // 성도 화면 메뉴 > 소개
+import { AboutPage } from "./pages/bulletin/AboutPage"; // 성도 화면 메뉴 > 교회 소개
+import { PastorGreetingPage } from "./pages/bulletin/PastorGreetingPage"; // 성도 화면 메뉴 > 담임목사 인사말
 import { TeamPage } from "./pages/bulletin/TeamPage"; // 성도 화면 메뉴 > 섬기시는 분
 import { OfficersPage } from "./pages/bulletin/OfficersPage"; // 성도 화면 메뉴 > 섬기시는 분 > 중직자
+import { PastoralColumnListPage } from "./pages/bulletin/PastoralColumnListPage"; // 성도 화면 메뉴 > 목회 칼럼
+import { PastoralColumnDetailPage } from "./pages/bulletin/PastoralColumnDetailPage"; // 목회 칼럼 상세
 import { LocationPage } from "./pages/bulletin/LocationPage"; // 성도 화면 메뉴 > 오시는 길
 import { AdminDashboard } from "./pages/AdminDashboard";
 import { AdminEditor } from "./pages/AdminEditor";
@@ -188,9 +191,12 @@ export const router = createBrowserRouter([
       { path: "online-worship", Component: ChurchOnlineWorshipRoute }, // 교회 사이트 "온라인 예배" 하위 페이지
       { path: "bulletin", Component: BulletinView },
       { path: "view/:id", Component: BulletinView },
-      { path: "view/:id/about", Component: AboutPage }, // 성도 화면 메뉴 > 소개
+      { path: "view/:id/about", Component: AboutPage }, // 성도 화면 메뉴 > 교회 소개
+      { path: "view/:id/pastor", Component: PastorGreetingPage }, // 성도 화면 메뉴 > 담임목사 인사말
       { path: "view/:id/team", Component: TeamPage }, // 성도 화면 메뉴 > 섬기시는 분
       { path: "view/:id/officers", Component: OfficersPage }, // 성도 화면 메뉴 > 섬기시는 분 > 중직자
+      { path: "view/:id/column", Component: PastoralColumnListPage }, // 성도 화면 메뉴 > 목회 칼럼
+      { path: "view/:id/column/:columnId", Component: PastoralColumnDetailPage }, // 목회 칼럼 상세
       { path: "view/:id/location", Component: LocationPage }, // 성도 화면 메뉴 > 오시는 길
       { path: "pricing", Component: Pricing },
       { path: "success", Component: SuccessPage }, // 모바일/성공 페이지 대응

@@ -62,6 +62,23 @@ export const getPlanTierMeta = (status?: string | null): PlanTierMeta =>
 export const hasFullAccess = (status?: string | null): boolean =>
   status === "active" || status === "allinone" || !status;
 
+// 등급별 기능 게이팅(목회 칼럼=프로 이상, 담임목사 인사말=스탠다드 이상 등)을 위한 순위표.
+// "active"(무료체험)는 위 hasFullAccess와 동일한 정책으로 최고 등급(올인원)과 같은 순위를 준다 —
+// 체험 기간엔 모든 유료 기능을 다 써볼 수 있어야 하기 때문.
+const TIER_RANK: Record<PlanTier, number> = {
+  active: 4,
+  basic: 1,
+  standard: 2,
+  pro: 3,
+  allinone: 4,
+};
+
+// status가 minTier 이상의 등급인지. 결제 전/무료체험(status 없음)은 "active"와 동일하게 취급.
+export const hasTierOrAbove = (status: string | null | undefined, minTier: Exclude<PlanTier, "active">): boolean => {
+  const current = TIER_RANK[(status as PlanTier) in TIER_RANK ? (status as PlanTier) : "active"];
+  return current >= TIER_RANK[minTier];
+};
+
 // Firestore Timestamp | ISO 문자열 | Date 아무거나 받아서 Date로 안전하게 변환. 실패하면 null.
 export const toDateSafe = (value: unknown): Date | null => {
   if (!value) return null;
