@@ -53,17 +53,17 @@ const SEOManager = () => {
 
   useEffect(() => {
     const path = location.pathname;
-    let title = "스테이온 | 스마트 모바일 주보 서비스";
+    let title = "온라인 주보 제작 스테이온 | 모바일 주보 월 990원 스마트 교회 주보";
     // 기존 index.html 정적 태그와 동일한 기본값 — /website 외 다른 라우트는
     // 이 값 그대로라 실제로 바뀌는 페이지는 하나도 없음
     let description =
-      "월 990원 최저가로 시작하는 우리 교회 모바일 주보 스테이온(STAYON). 종이 없는 건강한 교회를 위한 가장 쉬운 스마트 주보 제작 플랫폼입니다.";
+      "온라인 주보, 모바일 주보를 월 990원 최저가로 시작하는 스테이온(STAYON). 종이 없는 건강한 교회를 위한 가장 쉬운 스마트 주보 제작 플랫폼입니다.";
     // og:title은 document.title(위 title)과 별개로, index.html 정적 기본값을 그대로 씀 —
     // /website 외에는 이 값을 안 건드려서 다른 라우트의 카카오톡 공유 미리보기 등은 전혀 안 바뀜
-    let ogTitle = "스테이온(STAYON) | 월 990원 우리 교회 온라인 주보";
+    let ogTitle = "온라인 주보 제작 스테이온(STAYON) | 월 990원 우리 교회 모바일 주보";
 
     if (path === "/") {
-      title = "온라인(모바일) 주보 제작 스테이온 | 월 990원 스마트 교회 주보";
+      title = "온라인 주보 제작 스테이온 | 모바일 주보 월 990원 스마트 교회 주보";
     } else if (path.includes("website")) {
       title = "교회 홈페이지 제작 | 월 9,900원 스테이온 교회 사이트 제작 플랫폼"; // SEO 타이틀 분기
       description =
@@ -102,6 +102,20 @@ const SEOManager = () => {
     setMetaContent('meta[name="description"]', description);
     setMetaContent('meta[property="og:title"]', ogTitle);
     setMetaContent('meta[property="og:description"]', description);
+
+    // canonical/og:url도 경로별로 갱신 — index.html 정적 기본값은 "/" 기준이라
+    // /pricing, /website 등 다른 라우트는 지금까지 canonical이 아예 없는 것과 같았음.
+    // window.location.origin을 써야 교회 서브도메인(교회이름.stayon-platform.com)에서도
+    // 그 교회 자신의 주소로 canonical이 잡히고, 메인 bulletin 도메인으로 잘못 몰리지 않음
+    const canonicalUrl = `${window.location.origin}${path}`;
+    let canonicalLink = document.querySelector('link[rel="canonical"]');
+    if (!canonicalLink) {
+      canonicalLink = document.createElement("link");
+      canonicalLink.setAttribute("rel", "canonical");
+      document.head.appendChild(canonicalLink);
+    }
+    canonicalLink.setAttribute("href", canonicalUrl);
+    setMetaContent('meta[property="og:url"]', canonicalUrl);
   }, [location]);
 
   return null;

@@ -492,6 +492,26 @@ export function Landing() {
     { question: "월 990원 외에 추가 비용이 있나요?", answer: "아니요. 모든 기능을 추가 비용 없이 월 990원이라는 파격적인 가격에 이용하실 수 있습니다." }
   ];
 
+  // [SEO] 화면에 이미 보이는 FAQ 섹션(faqs) 내용 그대로 구조화 데이터(FAQPage)로도
+  // 삽입 — 실제 화면 텍스트와 동일한 내용만 사용하므로 가짜 데이터 정책 위반 아님
+  useEffect(() => {
+    const script = document.createElement("script");
+    script.type = "application/ld+json";
+    script.innerHTML = JSON.stringify({
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      "mainEntity": faqs.map((faq) => ({
+        "@type": "Question",
+        "name": faq.question,
+        "acceptedAnswer": { "@type": "Answer", "text": faq.answer },
+      })),
+    });
+    document.head.appendChild(script);
+    return () => {
+      document.head.removeChild(script);
+    };
+  }, []);
+
   const nextStep = () => setActiveStep((prev) => (prev + 1) % tutorialSteps.length);
   const prevStep = () => setActiveStep((prev) => (prev - 1 + tutorialSteps.length) % tutorialSteps.length);
 
