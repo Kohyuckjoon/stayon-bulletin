@@ -51,7 +51,7 @@ export function PastoralColumnListPage() {
   }, [id]);
 
   const t = THEMES[bulletin?.bulletinTemplate as string] || THEMES.default;
-  const show = bulletin?.pastoralColumnsEnabled !== false && entitled && columns.length > 0;
+  const show = bulletin?.pastoralColumnsEnabled === true && entitled && columns.length > 0;
 
   return (
     <div className="min-h-screen flex flex-col items-center font-sans animate-in fade-in duration-700" style={{ backgroundColor: t.pageBg }}>
@@ -71,7 +71,7 @@ export function PastoralColumnListPage() {
           </div>
         </div>
 
-        {id && <BulletinMenu bulletinId={id} churchLogo={bulletin?.churchLogo} variant="solid" accent={t.accent} pastoralColumnsEnabled={bulletin?.pastoralColumnsEnabled !== false} />}
+        {id && <BulletinMenu bulletinId={id} churchLogo={bulletin?.churchLogo} variant="solid" accent={t.accent} pastoralColumnsEnabled={bulletin?.pastoralColumnsEnabled === true} officersEnabled={bulletin?.officersEnabled !== false} />}
 
         {loading ? (
           <div className="p-12 text-center font-bold text-sm" style={{ color: t.muted }}>불러오는 중…</div>

@@ -315,7 +315,8 @@ export function BulletinView() {
           churchLogo={bulletin.churchLogo}
           variant="over-hero"
           accent={isWarmIvoryFamily(effectiveTemplateId) ? "#2F5C52" : "#2563eb"}
-          pastoralColumnsEnabled={bulletin.pastoralColumnsEnabled !== false}
+          pastoralColumnsEnabled={bulletin.pastoralColumnsEnabled === true}
+          officersEnabled={bulletin.officersEnabled !== false}
         />
       )}
       {/* 토스 스타일의 미리보기 알림 바 */}
@@ -1064,7 +1065,7 @@ export function BulletinView() {
         {/* "오시는 길"은 우측 상단 메뉴 > 오시는 길(/view/:id/location)으로 이동 */}
 
         {/* 목회 칼럼: 주보 가장 하단. 프로 요금제 미만이거나 등록된 칼럼이 없으면 자동으로 숨김 */}
-        {id && <PastoralColumnSection bulletinId={id} authorId={bulletin.authorId} templateId={effectiveTemplateId} enabled={bulletin.pastoralColumnsEnabled !== false} />}
+        {id && <PastoralColumnSection bulletinId={id} authorId={bulletin.authorId} templateId={effectiveTemplateId} enabled={bulletin.pastoralColumnsEnabled === true} />}
         </>
         )}
 

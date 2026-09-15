@@ -487,7 +487,7 @@ export function WarmIvoryOpenTemplate({
       </div>
 
       {/* 목회 칼럼: 주보 가장 하단. 프로 요금제 미만이거나 등록된 칼럼이 없으면 자동으로 숨김 */}
-      {bulletinId && <PastoralColumnSection bulletinId={bulletinId} authorId={bulletin.authorId} templateId={bulletin.bulletinTemplate} enabled={bulletin.pastoralColumnsEnabled !== false} />}
+      {bulletinId && <PastoralColumnSection bulletinId={bulletinId} authorId={bulletin.authorId} templateId={bulletin.bulletinTemplate} enabled={bulletin.pastoralColumnsEnabled === true} />}
     </div>
   );
 }

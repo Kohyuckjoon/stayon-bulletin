@@ -328,6 +328,31 @@ export function Landing() {
     }
   ];
 
+  // "1. 종이에서 스마트폰으로" 캐러셀 섹션 바로 위에 놓는 3카드 요약 섹션 (ajd.co.kr 참고)
+  const quickHighlights = [
+    {
+      title: "종이에서\n스마트폰으로",
+      desc: "매주 출력하던 번거로운 종이 주보,\n이제 스마트폰으로 간편하게 바꿔보세요.",
+      icon: <Monitor className="w-7 h-7 text-blue-600" />,
+      iconBg: "bg-blue-50",
+      image: "/c1.png"
+    },
+    {
+      title: "앱 설치가\n필요 없습니다",
+      desc: "QR 코드 또는 링크 하나로\n언제 어디서나 성도들이 즉시 확인합니다.",
+      icon: <QrCode className="w-7 h-7 text-orange-600" />,
+      iconBg: "bg-orange-50",
+      image: "/c2.png"
+    },
+    {
+      title: "실제 비용을\n비교해 보세요",
+      desc: "1년 사용 기준, 인쇄비용과\n행정 수고를 모두 극적으로 절감합니다.",
+      icon: <CreditCard className="w-7 h-7 text-indigo-600" />,
+      iconBg: "bg-indigo-50",
+      image: "/c3.png"
+    }
+  ];
+
   // [EXTENSION] "다른 서비스도 이용해보세요" PC 카드: 실제 이용 가능한(오픈된) 서비스가 여러 개면
   // 중앙 자리에서 5초마다 서로 교차(크로스페이드)되어 표시된다. 준비 중인 서비스는 좌우에 고정된다.
   const openExtraServices = extraServices.filter((s) => s.isReady);
@@ -431,7 +456,7 @@ export function Landing() {
 
     const timer = setInterval(() => {
       setPreviewIdx((prev) => (prev + 1) % previewScreens.length);
-    }, 6000);
+    }, 4500);
 
     return () => {
       clearInterval(timer);
@@ -472,142 +497,137 @@ export function Landing() {
 
   return (
     <div className={`min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 selection:bg-blue-100 font-sans overflow-x-hidden relative transition-opacity duration-900 ${isFadingOut ? 'opacity-0' : 'opacity-100'}`}>
-      <div className="container mx-auto px-4 sm:px-6 py-6 md:py-8">
-        {/* 상단 네비게이션 */}
-        <nav className="flex justify-between items-center bg-white/50 backdrop-blur-md sticky top-0 z-50 py-3 px-4 rounded-2xl mb-6 shadow-sm">
+      {/* 상단 헤더 - place.stayon-platform.com 참고: 떠있는 pill 바가 아니라 화면 끝까지 꽉 찬
+          납작한 흰색 바 + 텍스트 위주 메뉴 스타일. 아래 container(px-4)의 바깥, 페이지 최상위
+          div의 직계 자식으로 둬서 자연스럽게 풀폭으로 나온다 (transform breakout 불필요). */}
+      <header className="w-full bg-white/95 backdrop-blur-md sticky top-0 z-50 border-b border-slate-100">
+        <nav className="max-w-7xl mx-auto flex justify-between items-center py-4 sm:py-5 px-4 sm:px-6">
           <div className="flex items-center gap-2.5">
-            <div className="w-10 h-10 bg-slate-900 rounded-xl flex items-center justify-center shadow-lg shadow-slate-900/20 cursor-pointer" onClick={() => navigate("/")}>
-              <Smartphone className="w-5 h-5 text-white" />
+              <div className="w-10 h-10 bg-slate-900 rounded-lg flex items-center justify-center cursor-pointer" onClick={() => navigate("/")}>
+                <Smartphone className="w-5 h-5 text-white" />
+              </div>
+              <div className="flex flex-col cursor-pointer" onClick={() => navigate("/")}>
+                <span className="text-base sm:text-lg font-black text-slate-900 tracking-tight leading-[1.1]">
+                  STAYON
+                </span>
+                <span className="text-[10px] font-bold text-blue-500 tracking-widest uppercase -mt-0.5">
+                  JUBO
+                </span>
+              </div>
             </div>
-            <div className="flex flex-col cursor-pointer" onClick={() => navigate("/")}>
-              {/* <span className="text-lg md:text-xl font-black text-slate-900 tracking-tight leading-[1.1] md:leading-none"> */}
-              <span className="text-base sm:text-lg md:text-xl font-black text-slate-900 tracking-tight leading-[1.1] md:leading-none">
-                STAYON
-              </span>
-              <span className="text-[10px] font-bold text-blue-500 tracking-widest uppercase mt-0.5">
-                JUBO
-              </span>
-            </div>
-          </div>
-          <div className="flex items-center gap-1 md:gap-2">
-            {/* 데스크톱 전용 메뉴 (기존 유지) */}
-            <Button variant="ghost" onClick={scrollToNotice} className="text-gray-700 font-bold hover:bg-gray-100/50 rounded-full px-5 hidden md:flex">공지사항</Button>
-            <Button variant="ghost" onClick={() => navigate("/pricing")} className="text-gray-700 font-bold hover:bg-gray-100/50 rounded-full px-5 hidden md:flex">990원 요금 안내</Button>
+            <div className="flex items-center gap-0.5 md:gap-1">
+              {/* 데스크톱 전용 메뉴 - 납작한 텍스트 스타일 */}
+              <Button variant="ghost" onClick={scrollToNotice} className="text-slate-600 font-bold hover:text-slate-900 hover:bg-transparent rounded-md px-3 hidden md:flex">공지사항</Button>
+              <Button variant="ghost" onClick={() => navigate("/pricing")} className="text-slate-600 font-bold hover:text-slate-900 hover:bg-transparent rounded-md px-3 hidden md:flex">990원 요금 안내</Button>
 
-            {jobBoardEnabled ? (
+              {jobBoardEnabled ? (
+                <Button
+                  variant="ghost"
+                  onClick={() => navigate("/jobs")}
+                  className="text-blue-600 font-bold hover:text-blue-700 hover:bg-transparent rounded-md px-3 hidden md:flex items-center gap-1.5 relative"
+                >
+                  <Briefcase className="w-4 h-4 text-blue-600" />
+                  사역자 청빙
+                  <span className="absolute -top-0.5 right-0 w-2 h-2 bg-red-500 rounded-full animate-pulse"></span>
+                </Button>
+              ) : (
+                <Button
+                  variant="ghost"
+                  disabled
+                  className="text-slate-400 font-bold rounded-md px-3 hidden md:flex items-center gap-1.5 cursor-not-allowed hover:bg-transparent"
+                >
+                  <Lock className="w-4 h-4 text-slate-400" />
+                  사역자 청빙
+                </Button>
+              )}
+
               <Button
                 variant="ghost"
-                onClick={() => navigate("/jobs")}
-                className="text-blue-600 font-black hover:bg-blue-50 rounded-full px-4 md:px-5 hidden md:flex items-center gap-1.5 relative"
+                onClick={() => window.open("https://place.stayon-platform.com/teams", "_blank")}
+                className="text-indigo-600 font-bold hover:text-indigo-700 hover:bg-transparent rounded-md px-3 hidden md:flex items-center gap-1.5"
               >
-                <Briefcase className="w-4 h-4 text-blue-600" />
-                사역자 청빙
-                <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse"></span>
+                <Users className="w-4 h-4 text-indigo-600" />
+                외부사역팀 섭외
               </Button>
-            ) : (
+
               <Button
                 variant="ghost"
                 disabled
-                className="text-gray-400 font-black rounded-full px-4 md:px-5 hidden md:flex items-center gap-1.5 cursor-not-allowed"
+                className="text-slate-400 font-bold rounded-md px-3 hidden md:flex items-center gap-1.5 relative cursor-not-allowed hover:bg-transparent"
               >
-                <Lock className="w-4 h-4 text-gray-400" />
-                사역자 청빙
+                <Lock className="w-4 h-4 text-slate-400" />
+                교회 홈페이지 제작
               </Button>
-            )}
 
-            <Button
-              variant="ghost"
-              onClick={() => window.open("https://place.stayon-platform.com/teams", "_blank")}
-              className="text-indigo-600 font-black hover:bg-indigo-50 rounded-full px-4 md:px-5 hidden md:flex items-center gap-1.5"
-            >
-              <Users className="w-4 h-4 text-indigo-600" />
-              외부사역팀 섭외
-            </Button>
+              <span className="hidden md:block w-px h-5 bg-slate-200 mx-1.5" />
 
-            {/* <Button
-              variant="ghost"
-              onClick={() => navigate("/website")}
-              className="text-blue-600 font-black hover:bg-blue-50 rounded-full px-4 md:px-5 hidden md:flex items-center gap-1.5 relative"
-            >
-              <Sparkles className="w-4 h-4 text-blue-600" />
-              교회 홈페이지 제작
-              <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse"></span>
-            </Button> */}
+              <Button
+                onClick={() => {
+                  setIsFadingOut(true);
+                  setTimeout(() => {
+                    navigate("/admin");
+                  }, 900);
+                }}
+                variant={currentUser ? undefined : "outline"}
+                className={`font-bold rounded-full px-3 md:px-5 items-center gap-1.5 transition-all duration-200 text-xs md:text-sm flex ${currentUser
+                  ? "bg-gray-900 text-white hover:bg-black border-transparent"
+                  : "border-slate-300 text-slate-700 hover:bg-slate-50"
+                  }`}
+              >
+                <ExternalLink className="w-3.5 h-3.5 opacity-90" />
+                <span className="hidden sm:inline">주보 관리자</span>
+                <span className="sm:hidden">관리자</span>
+              </Button>
 
-            <Button
-              variant="ghost"
-              disabled
-              className="text-gray-400 font-black rounded-full px-4 md:px-5 hidden md:flex items-center gap-1.5 relative cursor-not-allowed"
-            >
-              <Lock className="w-4 h-4 text-gray-400" />
-              교회 홈페이지 제작
-            </Button>
+              {currentUser ? (
+                <div className="flex items-center gap-2 bg-blue-50 border border-blue-100 px-3 py-1.5 rounded-full mr-1">
+                  <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                  <span className="text-xs font-bold text-blue-900 hidden sm:inline">
+                    {currentUser.churchName ? `${currentUser.churchName} 접속중` : `${currentUser.email} 접속중`}
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={async () => {
+                      await signOut(auth);
+                    }}
+                    className="text-xs text-red-600 hover:bg-red-50 font-bold h-7 px-2 rounded-md"
+                  >
+                    로그아웃
+                  </Button>
+                </div>
+              ) : (
+                <Button variant="ghost" onClick={() => navigate("/login")} className="text-slate-600 font-bold hover:text-slate-900 hover:bg-transparent rounded-md px-3 sm:px-4 text-xs sm:text-sm">로그인</Button>
+              )}
 
-            {/* <Button
-              onClick={() => {
-                setIsFadingOut(true);
-                setTimeout(() => {
-                  navigate("/admin");
-                }, 900);
-              }}
-              className={`font-bold rounded-full px-5 hidden md:flex items-center gap-1.5 transition-all duration-200 relative shadow-md ${currentUser
-                ? "bg-gray-900 text-white hover:bg-black hover:-translate-y-0.5 hover:shadow-lg"
-                : "bg-transparent text-gray-700 hover:bg-gray-100/50 shadow-none"
-                }`}
-            >
-              <ExternalLink className={`w-3.5 h-3.5 transition-all ${currentUser ? "opacity-90" : "opacity-40 group-hover:opacity-100 group-hover:translate-x-0.5 group-hover:-translate-y-0.5"}`} />
-              주보 관리자
-              <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse"></span>
-            </Button> */}
+              {!currentUser && (
+                <Button onClick={() => navigate("/signup")} className="rounded-full bg-gray-900 hover:bg-black text-white font-bold px-4 sm:px-6 text-xs sm:text-sm shadow-md transition-all active:scale-95 whitespace-nowrap">무료 시작</Button>
+              )}
+            </div>
+          </nav>
+      </header>
 
-            <Button
-              onClick={() => {
-                setIsFadingOut(true);
-                setTimeout(() => {
-                  navigate("/admin");
-                }, 900);
-              }}
-              className={`font-bold rounded-full px-3 md:px-5 items-center gap-1.5 transition-all duration-200 relative shadow-md text-xs md:text-sm ${currentUser
-                ? "flex bg-gray-900 text-white hover:bg-black hover:-translate-y-0.5 hover:shadow-lg" // 로그인 완료 시 모바일/PC 모두 표시
-                : "hidden md:flex bg-transparent text-gray-700 hover:bg-gray-100/50 shadow-none" // 로그인 전에는 PC에서만 표시
-                }`}
-            >
-              <ExternalLink className="w-3.5 h-3.5 opacity-90" />
-              <span className="hidden sm:inline">주보 관리자</span>
-              <span className="sm:hidden">관리자</span>
-              <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse"></span>
-            </Button>
-
-            {currentUser ? (
-              <div className="flex items-center gap-2 bg-blue-50 border border-blue-100 px-3 py-1.5 rounded-full mr-1">
-                <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
-                <span className="text-xs font-bold text-blue-900 hidden sm:inline">
-                  {/* {currentUser.email} 접속중 */}
-                  {currentUser.churchName ? `${currentUser.churchName} 접속중` : `${currentUser.email} 접속중`}
-                </span>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={async () => {
-                    await signOut(auth);
-                  }}
-                  className="text-xs text-red-600 hover:bg-red-50 font-bold h-7 px-2 rounded-md"
-                >
-                  로그아웃
-                </Button>
-              </div>
-            ) : (
-              <Button variant="ghost" onClick={() => navigate("/login")} className="text-gray-600 font-bold hover:bg-gray-100/50 rounded-full px-3 sm:px-6 text-xs sm:text-sm">로그인</Button>
-            )}
-
-            {!currentUser && (
-              <Button onClick={() => navigate("/signup")} className="rounded-full bg-gray-900 hover:bg-black text-white font-bold px-4 sm:px-8 text-xs sm:text-sm shadow-md transition-all active:scale-95 whitespace-nowrap">무료 시작</Button>
-            )}
-          </div>
-        </nav>
-
+      <div className="container mx-auto px-4 sm:px-6 pb-6 md:pb-8">
         {/* 모바일 퀵 네비게이션 (토스 스타일 칩 메뉴) - 모바일 전용 */}
-        <div className="flex md:hidden gap-2 overflow-x-auto pb-4 mb-6 no-scrollbar -mx-4 px-4 sticky top-[72px] z-40">
+        <div className="flex md:hidden gap-2 overflow-x-auto pt-4 pb-4 mb-6 no-scrollbar -mx-4 px-4 sticky top-[65px] z-40">
+          <button
+            onClick={scrollToNotice}
+            className="flex items-center gap-1.5 shrink-0 bg-white border border-gray-100 px-4 py-2.5 rounded-full shadow-sm active:scale-95 transition-all text-sm font-black text-gray-700"
+          >
+            <Megaphone className="w-4 h-4 text-blue-600" /> 공지사항
+          </button>
+          <button
+            onClick={() => navigate("/pricing")}
+            className="flex items-center gap-1.5 shrink-0 bg-white border border-gray-100 px-4 py-2.5 rounded-full shadow-sm active:scale-95 transition-all text-sm font-black text-gray-700"
+          >
+            <CreditCard className="w-4 h-4 text-purple-600" /> 990원 요금 안내
+          </button>
+          <button
+            onClick={() => window.open("https://place.stayon-platform.com/teams", "_blank")}
+            className="flex items-center gap-1.5 shrink-0 bg-white border border-gray-100 px-4 py-2.5 rounded-full shadow-sm active:scale-95 transition-all text-sm font-black text-indigo-600"
+          >
+            <Users className="w-4 h-4 text-indigo-600" /> 외부사역팀 섭외
+          </button>
           {jobBoardEnabled ? (
             <button
               onClick={() => navigate("/jobs")}
@@ -625,24 +645,6 @@ export function Landing() {
             </button>
           )}
           <button
-            onClick={() => window.open("https://place.stayon-platform.com/teams", "_blank")}
-            className="flex items-center gap-1.5 shrink-0 bg-white border border-gray-100 px-4 py-2.5 rounded-full shadow-sm active:scale-95 transition-all text-sm font-black text-indigo-600"
-          >
-            <Users className="w-4 h-4 text-indigo-600" /> 외부사역팀 섭외
-          </button>
-          <button
-            onClick={scrollToNotice}
-            className="flex items-center gap-1.5 shrink-0 bg-white border border-gray-100 px-4 py-2.5 rounded-full shadow-sm active:scale-95 transition-all text-sm font-black text-gray-700"
-          >
-            <Megaphone className="w-4 h-4 text-blue-600" /> 공지사항
-          </button>
-          <button
-            onClick={() => navigate("/pricing")}
-            className="flex items-center gap-1.5 shrink-0 bg-white border border-gray-100 px-4 py-2.5 rounded-full shadow-sm active:scale-95 transition-all text-sm font-black text-gray-700"
-          >
-            <CreditCard className="w-4 h-4 text-purple-600" /> 990원 요금 안내
-          </button>
-          <button
             onClick={() => { /* 도움말 등 추가 기능 연결 가능 */ }}
             className="flex items-center gap-1.5 shrink-0 bg-white border border-gray-100 px-4 py-2.5 rounded-full shadow-sm active:scale-95 transition-all text-sm font-black text-gray-700 opacity-50"
           >
@@ -650,102 +652,212 @@ export function Landing() {
           </button>
         </div>
 
-        {/* Hero Section */}
-        <div className="text-center mb-16 max-w-4xl mx-auto">
-          <div className="container mx-auto px-4 sm:px-6 pt-2 pb-6 max-w-7xl">
-            <div className="text-center max-w-4xl mx-auto pt-2">
-              <div className="inline-flex items-center gap-2 bg-blue-50 text-blue-700 px-4 py-1.5 rounded-full text-xs font-black mb-3 border border-blue-100 shadow-[0_0_15px_rgba(37,99,235,0.25)] animate-pulse">
-                <Rocket className="w-3.5 h-3.5 text-blue-600 animate-bounce" /> 모바일 주보 제작 베타 기간 한정 혜택
-              </div>
+        {/* Hero Section - 배경 이미지는 히어로 안에만 */}
+        <div className="mb-16">
+          <section className="relative w-screen left-1/2 -translate-x-1/2 overflow-hidden min-h-[360px] sm:min-h-[420px] lg:min-h-[480px] flex items-center bg-white">
+            {/* 이미지를 늘리지 않고, 양옆 가장자리를 배경색으로 서서히 페이드시켜서(mask) 화면이
+                꽉 찬 것처럼 자연스럽게 보이게 함 - 화질 저하/왜곡 없이 화면 크기와 무관하게 일관됨.
+                실제 <img> 요소를 써서 mask가 이미지의 진짜 경계에 걸리도록 함(배경 이미지 방식은
+                bg-contain이 실제로 차지하는 폭을 CSS만으로 알 수 없어 mask 위치가 안 맞았음) */}
+            <div className="absolute inset-0 flex items-center justify-center">
+              <img
+                src="/background_cover.png"
+                alt=""
+                className="h-full w-auto max-w-none object-contain"
+                style={{
+                  maskImage: "linear-gradient(to right, transparent, black 12%, black 88%, transparent)",
+                  WebkitMaskImage: "linear-gradient(to right, transparent, black 12%, black 88%, transparent)",
+                }}
+              />
+            </div>
+            <div className="absolute inset-x-0 bottom-0 h-32 sm:h-44 lg:h-56 bg-gradient-to-t from-white to-transparent" />
 
-              <h1 className="text-2xl sm:text-5xl font-black mb-6 text-slate-900 tracking-tight leading-tight">
-                매주 만드는 종이 주보,
-                {/* <br className="hidden sm:block" /> */}
-                <br />
-                이제 <span className="relative inline-block px-2 py-0.5 text-blue-600 z-10"><span className="absolute inset-x-0 bottom-1.5 h-3.5 bg-blue-100/80 -rotate-1 rounded-sm -z-10"></span>스마트 주보</span>로 끝내세요!
-              </h1>
+            <div className="relative container mx-auto max-w-7xl px-4 sm:px-6 lg:px-10 py-8 sm:py-10 w-full">
+              <div className="max-w-xl mx-auto lg:mx-0 lg:ml-10 lg:-mt-16 text-center lg:text-left">
+                <div className="inline-flex items-center gap-2 bg-blue-50 text-blue-700 px-4 py-1.5 rounded-full text-xs font-black mb-2 border border-blue-100 shadow-[0_0_15px_rgba(37,99,235,0.25)] animate-pulse">
+                  <Rocket className="w-3.5 h-3.5 text-blue-600 animate-bounce" /> 모바일 주보 제작 베타 기간 한정 혜택
+                </div>
 
-              <p className="text-base sm:text-lg text-slate-600 font-medium max-w-2xl mx-auto mb-6 leading-relaxed">
-                인쇄비용과 수고는 줄이고,<br /> 성도들과의 소통은 더 편리하게 만듭니다.
-              </p>
+                <h1 className="text-2xl sm:text-4xl font-black mb-3 text-slate-900 tracking-tight leading-tight [text-shadow:0_2px_18px_rgba(255,255,255,0.95),0_1px_4px_rgba(255,255,255,0.9)] sm:[text-shadow:none]">
+                  매주 만드는 종이 주보,
+                  <br />
+                  이제 <span className="relative inline-block px-2 py-0.5 text-blue-600 z-10"><span className="absolute inset-x-0 bottom-1.5 h-3.5 bg-blue-100/80 -rotate-1 rounded-sm -z-10"></span>온라인 주보</span>로 끝내세요!
+                </h1>
 
-              <div className="flex justify-center mb-10">
-                <button
-                  onClick={() => window.open("https://bulletin.stayon-platform.com/view/8PmIDuDQXKfYp2zUj6sLX3uzMVt2", "_blank", "noopener,noreferrer")}
-                  className="group inline-flex items-center gap-2.5 bg-blue-600 hover:bg-blue-700 text-white font-black px-6 sm:px-7 py-3.5 sm:py-4 rounded-full shadow-[0_0_25px_rgba(37,99,235,0.4)] hover:shadow-[0_0_35px_rgba(37,99,235,0.55)] active:scale-95 transition-all text-sm sm:text-base"
-                >
-                  <Smartphone className="w-5 h-5 shrink-0 animate-bounce" />
-                  실제 주보 화면 지금 확인하기
-                  <ExternalLink className="w-4 h-4 shrink-0 opacity-90 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
-                </button>
-              </div>
+                <p className="text-sm sm:text-base text-slate-800 sm:text-slate-600 font-semibold sm:font-medium mb-4 leading-relaxed [text-shadow:0_2px_18px_rgba(255,255,255,0.95),0_1px_4px_rgba(255,255,255,0.9)] sm:[text-shadow:none]">
+                  인쇄비용과 수고는 줄이고,<br /> 성도들과의 소통은 더 편리하게 만듭니다.
+                </p>
 
-              <div className="relative max-w-7xl mx-auto h-[300px] sm:h-[650px] flex items-center justify-center">
-                <div className="absolute inset-0 bg-blue-500/5 blur-[100px] rounded-full pointer-events-none"></div>
-                {previewScreens.map((screen, idx) => {
-                  const isActive = previewIdx === idx;
-                  return (
-                    <div
-                      key={idx}
-                      className={`absolute transition-all duration-500 ease-out transform flex flex-col items-center w-full max-w-[960px] px-2 sm:px-6 ${isActive
-                        ? "opacity-150 translate-x-0 scale-100 z-30 pointer-events-auto"
-                        : "opacity-0 translate-x-10 scale-95 z-10 pointer-events-none absolute"
-                        }`}
-                    >
-                      <Card className={`w-full aspect-[16/10] rounded-3xl shadow-xl shadow-slate-200/70 border border-slate-200/80 overflow-hidden flex items-center justify-center ${idx === 0 ? "bg-[#f8fafc] p-5" : "bg-white p-3"
-                        }`}>
-                        <img
-                          src={screen.imgSrc}
-                          alt={screen.title}
-                          className={`w-full h-full rounded-2xl ${idx === 0 ? "object-cover scale-[1.02]" : "object-contain bg-slate-50"
-                            }`}
-                        />
-                      </Card>
-
-                      <div className={`mt-6 text-center transition-all duration-300 ${isActive ? "opacity-100 translate-y-0" : "opacity-0 translate-y-3"}`}>
-                        <div className="inline-flex items-center gap-2 mb-2 bg-white px-4 py-1.5 rounded-full shadow-sm border border-slate-100">
-                          {screen.icon}
-                          <h4 className="text-base sm:text-xl font-black text-slate-900 tracking-tight">{screen.title}</h4>
-                        </div>
-                        <p className="text-slate-500 font-medium text-xs sm:text-sm max-w-[420px] mx-auto">{screen.desc}</p>
-                      </div>
-                    </div>
-                  );
-                })}
-
-                <div className="absolute -bottom-16 flex items-center gap-3 z-40 bg-white/90 backdrop-blur-md px-5 py-2.5 rounded-full shadow-md border border-slate-200">
+                <div className="flex flex-col sm:flex-row items-center lg:items-start justify-center lg:justify-start gap-3">
                   <button
-                    onClick={() => setPreviewIdx((prev) => (prev - 1 + previewScreens.length) % previewScreens.length)}
-                    className="p-1 rounded-full hover:bg-slate-100 text-slate-700 transition-all active:scale-90 flex items-center justify-center"
-                    aria-label="이전 프리뷰"
+                    onClick={() => window.open("https://bulletin.stayon-platform.com/view/8PmIDuDQXKfYp2zUj6sLX3uzMVt2", "_blank", "noopener,noreferrer")}
+                    className="group inline-flex items-center justify-center gap-2.5 bg-blue-600 hover:bg-blue-700 text-white font-black px-6 sm:px-7 py-2.5 sm:py-3 rounded-full shadow-[0_0_25px_rgba(37,99,235,0.4)] hover:shadow-[0_0_35px_rgba(37,99,235,0.55)] active:scale-95 transition-all text-sm sm:text-base w-full sm:w-auto"
                   >
-                    <ChevronLeft className="w-4 h-4 text-slate-700" />
+                    <Smartphone className="w-5 h-5 shrink-0 animate-bounce" />
+                    실제 주보 화면 지금 확인하기
+                    <ExternalLink className="w-4 h-4 shrink-0 opacity-90 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
                   </button>
-
-                  <div className="flex gap-2 items-center">
-                    {previewScreens.map((_, idx) => (
-                      <button
-                        key={idx}
-                        onClick={() => setPreviewIdx(idx)}
-                        className={`h-2 rounded-full transition-all duration-300 ${previewIdx === idx ? "w-6 bg-blue-600" : "w-2 bg-slate-300 hover:bg-slate-400"}`}
-                        aria-label={`${idx + 1}번 화면으로 이동`}
-                      ></button>
-                    ))}
-                  </div>
-
                   <button
-                    onClick={() => setPreviewIdx((prev) => (prev + 1) % previewScreens.length)}
-                    className="p-1 rounded-full hover:bg-slate-100 text-slate-700 transition-all active:scale-90 flex items-center justify-center"
-                    aria-label="다음 프리뷰"
+                    onClick={() => navigate("/signup")}
+                    className="inline-flex items-center justify-center gap-1.5 bg-white hover:bg-slate-50 text-slate-800 font-black px-6 sm:px-7 py-2.5 sm:py-3 rounded-full shadow-md border border-slate-200 active:scale-95 transition-all text-sm sm:text-base w-full sm:w-auto"
                   >
-                    <ChevronRight className="w-4 h-4 text-slate-700" />
+                    무료로 시작하기
                   </button>
                 </div>
               </div>
             </div>
+          </section>
+
+          {/* 서비스 바로가기 아이콘 5개 - 히어로와 분리된 독립 섹션, 옅은 배경 띠 */}
+          <section className="relative w-screen left-1/2 -translate-x-1/2 bg-slate-50/40 py-4 sm:py-6 mt-4 sm:-mt-24">
+            <div className="container mx-auto px-4 sm:px-6 max-w-7xl">
+              <p className="text-center text-[10px] sm:text-xs font-black text-slate-400 tracking-widest uppercase mb-2 sm:mb-3">
+                바로가기
+              </p>
+              <div className="grid grid-cols-5 lg:grid-cols-7 justify-items-center gap-1.5 sm:gap-3">
+                {[
+                  {
+                    label: currentUser ? "주보 관리자" : "온라인 주보", img: "/b1-Photoroom.png", onClick: () => {
+                      if (currentUser) {
+                        setIsFadingOut(true);
+                        setTimeout(() => navigate("/admin"), 900);
+                      } else {
+                        navigate("/login");
+                      }
+                    }
+                  },
+                  { label: "이용료 안내", img: "/b5-Photoroom.png", onClick: () => navigate("/pricing") },
+                  { label: "수련회 장소 찾기", img: "/b2-Photoroom.png", onClick: () => window.open("https://place.stayon-platform.com/", "_blank") },
+                  { label: "외부사역팀 섭외", img: "/b3-Photoroom.png", onClick: () => window.open("https://place.stayon-platform.com/teams", "_blank") },
+                  { label: "이용중인 교회", img: "/b4-Photoroom.png", onClick: () => document.getElementById("preview-screens")?.scrollIntoView({ behavior: "smooth" }) },
+                  { label: "준비중", img: "/b0-Photoroom.png", onClick: () => alert("서비스 준비중입니다"), desktopOnly: true },
+                  { label: "준비중", img: "/b0-Photoroom.png", onClick: () => alert("서비스 준비중입니다"), desktopOnly: true },
+                ].map((btn, idx) => (
+                  <button key={idx} onClick={btn.onClick} className={`${btn.desktopOnly ? "hidden lg:flex" : "flex"} flex-col items-center gap-1 sm:gap-2 w-16 sm:w-24 lg:w-28 bg-white rounded-2xl shadow-md hover:shadow-lg px-2 py-2.5 sm:px-3 sm:py-3 transition-all active:scale-95 group`}>
+                    <img src={btn.img} alt={btn.label} className="w-9 h-9 sm:w-12 sm:h-12 lg:w-14 lg:h-14 object-contain group-hover:-translate-y-1 transition-transform" />
+                    <span className="text-[9px] sm:text-xs font-bold text-slate-700 text-center break-keep leading-tight">{btn.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </section>
+        </div>
+
+        {/* 3카드 요약 섹션 (ajd.co.kr 참고) - 바로 아래 캐러셀의 핵심 3가지를 카드로 미리 보여줌 */}
+          {/* <div className="container mx-auto px-4 sm:px-6 max-w-7xl pt-8"> */}
+          <div className="container mx-auto px-4 sm:px-6 max-w-7xl pt-8 sm:pt-18">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-5">
+              {quickHighlights.map((item, idx) => (
+                <div key={idx} className="bg-white border border-slate-100 shadow-[0_2px_16px_rgba(15,23,42,0.05)] rounded-3xl p-7 sm:p-8">
+                  <h4 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight leading-snug whitespace-pre-line mb-2">
+                    {item.title}
+                  </h4>
+                  <p className="text-slate-500 font-medium text-sm whitespace-pre-line leading-relaxed mb-6">
+                    {item.desc}
+                  </p>
+                  {item.image ? (
+                    <img src={item.image} alt={item.title.replace(/\n/g, " ")} className="w-full rounded-2xl" />
+                  ) : (
+                    <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${item.iconBg}`}>
+                      {item.icon}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
           </div>
 
-          <p className="text-lg md:text-xl text-gray-500 mb-12 break-keep px-4 font-medium leading-relaxed mt-16 sm:mt-32">종이 인쇄 값보다 저렴한 가격으로 시작하는 스마트 교회 목회 환경.</p>
+          {/* 훅 문구 섹션 - 3카드 요약 바로 다음, ajd.co.kr의 "이 모든 고민을 해결할 '아정당'" 구조 참고 */}
+          <div className="container mx-auto px-4 sm:px-6 max-w-4xl text-center pt-25 sm:pt-45">
+            <h3 className="text-2xl sm:text-4xl font-black text-slate-900 tracking-tight leading-snug break-keep mb-8">
+              이 모든 불편을 한번에 해결할<br className="hidden sm:block" />
+              온라인 주보 <span className="text-blue-600">STAYON</span>을 만나보세요!
+            </h3>
+            <button
+              onClick={() => navigate("/signup")}
+              className="inline-flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-black px-8 py-4 rounded-full shadow-[0_0_25px_rgba(37,99,235,0.4)] hover:shadow-[0_0_35px_rgba(37,99,235,0.55)] active:scale-95 transition-all text-sm sm:text-base"
+            >
+              무료로 시작하기
+            </button>
+          </div>
+
+          {/* stayon_jubo_02.png - 미리보기 캐러셀(인디케이터) 섹션 바로 위에 새로 추가하는
+              풀블리드 이미지 배너. 히어로처럼 흰색 반투명 오버레이를 씌워서 화면에 너무
+              꽉 차 보이지 않고 옅게 페이드된 느낌으로 자연스럽게 깔리게 함. */}
+          {/* <section className="relative w-screen left-1/2 -translate-x-1/2 overflow-hidden pt-16 sm:pt-10"> */}
+          {/* <section className="relative w-screen left-1/2 -translate-x-1/2 overflow-hidden h-[240px] sm:h-[380px] lg:h-[460px]">
+          <img
+              src="/stayon_jubo_02.png"
+              alt="STAYON 온라인 주보 미리보기"
+              className="h-full w-auto max-w-none object-contain"
+            />
+            <div className="absolute inset-0" />
+          </section> */}
+
+          {/* 실제 화면 미리보기 캐러셀 - 원래 히어로 안에 있던 걸 그대로 별도 섹션으로 분리 */}
+          <div className="container mx-auto px-4 sm:px-6 max-w-7xl pt-16 sm:pt-24">
+            <div className="relative max-w-7xl mx-auto h-[300px] sm:h-[650px] flex items-center justify-center">
+              <div className="absolute inset-0 bg-blue-500/5 blur-[100px] rounded-full pointer-events-none"></div>
+              {previewScreens.map((screen, idx) => {
+                const isActive = previewIdx === idx;
+                return (
+                  <div
+                    key={idx}
+                    className={`absolute transition-opacity ease-in-out flex flex-col items-center w-full max-w-[960px] px-2 sm:px-6 ${isActive
+                      ? "duration-1000 opacity-100 z-30 pointer-events-auto"
+                      : "duration-1000 opacity-0 z-10 pointer-events-none"
+                      }`}
+                  >
+                    <img
+                      src={screen.imgSrc}
+                      alt={screen.title}
+                      className="w-full max-h-[220px] sm:max-h-[520px] object-contain drop-shadow-2xl"
+                    />
+
+                    <div className={`mt-12 text-center transition-opacity duration-1000 ${isActive ? "opacity-100" : "opacity-0"}`}>
+                      <div className="inline-flex items-center gap-2 mb-2 bg-white px-4 py-1.5 rounded-full shadow-sm border border-slate-100">
+                        {screen.icon}
+                        <h4 className="text-base sm:text-xl font-black text-slate-900 tracking-tight">{screen.title}</h4>
+                      </div>
+                      <p className="text-slate-500 font-medium text-xs sm:text-sm max-w-[420px] mx-auto">{screen.desc}</p>
+                    </div>
+                  </div>
+                );
+              })}
+
+              <div className="absolute -bottom-16 flex items-center gap-3 z-40 bg-white/90 backdrop-blur-md px-5 py-2.5 rounded-full shadow-md border border-slate-200">
+                <button
+                  onClick={() => setPreviewIdx((prev) => (prev - 1 + previewScreens.length) % previewScreens.length)}
+                  className="p-1 rounded-full hover:bg-slate-100 text-slate-700 transition-all active:scale-90 flex items-center justify-center"
+                  aria-label="이전 프리뷰"
+                >
+                  <ChevronLeft className="w-4 h-4 text-slate-700" />
+                </button>
+
+                <div className="flex gap-2 items-center">
+                  {previewScreens.map((_, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => setPreviewIdx(idx)}
+                      className={`h-2 rounded-full transition-all duration-300 ${previewIdx === idx ? "w-6 bg-blue-600" : "w-2 bg-slate-300 hover:bg-slate-400"}`}
+                      aria-label={`${idx + 1}번 화면으로 이동`}
+                    ></button>
+                  ))}
+                </div>
+
+                <button
+                  onClick={() => setPreviewIdx((prev) => (prev + 1) % previewScreens.length)}
+                  className="p-1 rounded-full hover:bg-slate-100 text-slate-700 transition-all active:scale-90 flex items-center justify-center"
+                  aria-label="다음 프리뷰"
+                >
+                  <ChevronRight className="w-4 h-4 text-slate-700" />
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <p className="text-lg md:text-xl text-gray-500 mb-12 break-keep px-4 font-medium leading-relaxed mt-16 sm:mt-32 text-center">종이 인쇄 값보다 저렴한 가격으로 시작하는 스마트 교회 목회 환경.</p>
+
 
           <div className="max-w-5xl mx-auto px-4 mt-8 mb-16">
             <div className="text-center mb-8">
@@ -848,7 +960,6 @@ export function Landing() {
               </DialogContent>
             </Dialog>
           </div>
-        </div>
 
         {/* Pricing 요약 카드 */}
         {/* <div className="max-w-5xl mx-auto mb-20 sm:mb-28 px-4">

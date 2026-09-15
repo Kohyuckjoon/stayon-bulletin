@@ -10,10 +10,14 @@ import { TeamPage } from "./pages/bulletin/TeamPage"; // 성도 화면 메뉴 > 
 import { OfficersPage } from "./pages/bulletin/OfficersPage"; // 성도 화면 메뉴 > 섬기시는 분 > 중직자
 import { PastoralColumnListPage } from "./pages/bulletin/PastoralColumnListPage"; // 성도 화면 메뉴 > 목회 칼럼
 import { PastoralColumnDetailPage } from "./pages/bulletin/PastoralColumnDetailPage"; // 목회 칼럼 상세
+import { ChurchNewsListPage } from "./pages/bulletin/ChurchNewsListPage"; // 성도 화면 메뉴 > 지난 교회 소식
+import { ChurchNewsDetailPage } from "./pages/bulletin/ChurchNewsDetailPage"; // 지난 교회 소식 상세
 import { LocationPage } from "./pages/bulletin/LocationPage"; // 성도 화면 메뉴 > 오시는 길
 import { AdminDashboard } from "./pages/AdminDashboard";
 import { AdminEditor } from "./pages/AdminEditor";
 import { History } from "./pages/History";
+import { ChurchNewsHistory } from "./pages/ChurchNewsHistory"; // 주보들에 흩어진 교회 소식을 날짜순으로 모아보는 페이지
+import { ChurchNewsDetail } from "./pages/ChurchNewsDetail"; // 교회 소식 모아보기 > 특정 주보의 교회 소식 상세
 import { Pricing } from "./pages/Pricing";
 import { SuccessPage } from "./pages/Success";
 import { Footer } from "./components/layout/footer";
@@ -197,6 +201,8 @@ export const router = createBrowserRouter([
       { path: "view/:id/officers", Component: OfficersPage }, // 성도 화면 메뉴 > 섬기시는 분 > 중직자
       { path: "view/:id/column", Component: PastoralColumnListPage }, // 성도 화면 메뉴 > 목회 칼럼
       { path: "view/:id/column/:columnId", Component: PastoralColumnDetailPage }, // 목회 칼럼 상세
+      { path: "view/:id/church-news", Component: ChurchNewsListPage }, // 성도 화면 메뉴 > 지난 교회 소식
+      { path: "view/:id/church-news/:newsId", Component: ChurchNewsDetailPage }, // 지난 교회 소식 상세
       { path: "view/:id/location", Component: LocationPage }, // 성도 화면 메뉴 > 오시는 길
       { path: "pricing", Component: Pricing },
       { path: "success", Component: SuccessPage }, // 모바일/성공 페이지 대응
@@ -224,6 +230,8 @@ export const router = createBrowserRouter([
     children: [
       { index: true, Component: AdminDashboard },
       { path: "history", Component: History },
+      { path: "church-news", Component: ChurchNewsHistory },
+      { path: "church-news/:id", Component: ChurchNewsDetail },
       { path: "pricing", Component: Pricing },
       { path: "notify", Component: NoticeBoard }, // 관리자용 공지사항 읽기 라우터 추가
     ],

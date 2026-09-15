@@ -852,7 +852,7 @@ export function AdminEditor() {
             setChurchMissionEnabled(data.churchMissionEnabled !== false);
             setChurchMission(data.churchMission);
           }
-          setPastoralColumnsEnabled(data.pastoralColumnsEnabled !== false);
+          setPastoralColumnsEnabled(data.pastoralColumnsEnabled === true);
           if (data.bulletinTemplate) {
             setBulletinTemplate(data.bulletinTemplate);
           }
@@ -1019,7 +1019,7 @@ export function AdminEditor() {
   // 목회 칼럼 섹션을 이번 주보 성도 화면에 표시할지 여부. 칼럼 목록 자체(columns)는 계정
   // 단위로 누적되는 별도 컬렉션이라 여기서 안 지워지지만, 다른 섹션들(ministersEnabled 등)과
   // 동일하게 "이번 주보에서만 숨기기"가 가능해야 해서 bulletins 문서에 함께 저장한다.
-  const [pastoralColumnsEnabled, setPastoralColumnsEnabled] = useState(true);
+  const [pastoralColumnsEnabled, setPastoralColumnsEnabled] = useState(false);
 
   // 목회 칼럼(프로 요금제 이상) - 주보와 무관하게 계정(authorId)별로 누적되는 별도 컬렉션.
   // 주보 저장(saveToFirestore)과 완전히 분리되어, 추가/수정/삭제가 즉시 Firestore에 반영된다.
@@ -1304,7 +1304,7 @@ export function AdminEditor() {
             setChurchVision(data.churchVision || "");
             setChurchMissionEnabled(data.churchMissionEnabled !== false);
             setChurchMission(data.churchMission || "");
-            setPastoralColumnsEnabled(data.pastoralColumnsEnabled !== false);
+            setPastoralColumnsEnabled(data.pastoralColumnsEnabled === true);
             setBulletinTemplate(data.bulletinTemplate || DEFAULT_BULLETIN_TEMPLATE_ID);
 
             if (data.sundayServices && Array.isArray(data.sundayServices)) {

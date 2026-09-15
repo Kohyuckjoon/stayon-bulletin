@@ -77,7 +77,7 @@ export function PastorGreetingPage() {
           </div>
         </div>
 
-        {id && <BulletinMenu bulletinId={id} churchLogo={bulletin?.churchLogo} variant="solid" accent={t.accent} pastoralColumnsEnabled={bulletin?.pastoralColumnsEnabled !== false} />}
+        {id && <BulletinMenu bulletinId={id} churchLogo={bulletin?.churchLogo} variant="solid" accent={t.accent} pastoralColumnsEnabled={bulletin?.pastoralColumnsEnabled === true} officersEnabled={bulletin?.officersEnabled !== false} />}
 
         {loading ? (
           <div className="p-12 text-center font-bold text-sm" style={{ color: t.muted }}>불러오는 중…</div>

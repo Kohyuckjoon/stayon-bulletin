@@ -866,7 +866,7 @@ export function AdminDashboard() {
         </div>
 
         <div className="mb-10 relative">
-          <div className="grid md:grid-cols-2 gap-4 mb-6">
+          <div className="grid md:grid-cols-3 gap-4 mb-6">
             <Card onClick={() => !isExpired && navigate("/admin/editor")} className={`p-5 sm:p-6 rounded-3xl border-0 bg-gradient-to-br from-blue-600 to-indigo-700 text-white transition-all group shadow-lg ${isExpired ? 'locked-feature' : 'cursor-pointer hover:shadow-2xl hover:-translate-y-1'}`}>
               <div className="flex items-center gap-4 sm:gap-5">
                 <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-2xl bg-white/20 backdrop-blur flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
@@ -886,6 +886,17 @@ export function AdminDashboard() {
                 <div className="min-w-0">
                   <h3 className="text-base sm:text-xl font-bold mb-1 text-gray-900">주보 히스토리</h3>
                   <p className="text-gray-500 text-xs sm:text-sm font-medium">과거 주보 보기 및 간편 재사용</p>
+                </div>
+              </div>
+            </Card>
+            <Card onClick={() => !isExpired && navigate("/admin/church-news")} className={`p-5 sm:p-6 rounded-3xl border-0 bg-white transition-all group shadow-sm border border-gray-50 ${isExpired ? 'locked-feature' : 'cursor-pointer hover:shadow-xl'}`}>
+              <div className="flex items-center gap-4 sm:gap-5">
+                <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-2xl bg-gradient-to-br from-orange-500 to-amber-600 flex items-center justify-center text-white group-hover:scale-110 transition-transform shadow-lg shrink-0">
+                  {isExpired ? <Lock className="w-6 h-6 sm:w-8 sm:h-8" /> : <Megaphone className="w-6 h-6 sm:w-8 sm:h-8" />}
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-base sm:text-xl font-bold mb-1 text-gray-900">교회 소식 모아보기</h3>
+                  <p className="text-gray-500 text-xs sm:text-sm font-medium">지난 주보들의 교회 소식을 날짜순으로</p>
                 </div>
               </div>
             </Card>
