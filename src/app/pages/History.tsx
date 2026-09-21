@@ -146,6 +146,13 @@ export function History() {
     return matchesSearch && matchesMonth;
   });
 
+  // published(현재 라이브) / archived(새 발행으로 내려간 지난 주보) / 그 외(draft 등)를 구분
+  const getStatusBadge = (status?: string) => {
+    if (status === "published" || status === "발행됨") return { label: "게시됨", className: "bg-blue-100 text-blue-700", card: "border-blue-200 bg-blue-50/60" };
+    if (status === "archived") return { label: "지난 주보", className: "bg-slate-100 text-slate-500", card: "border-slate-200 bg-white" };
+    return { label: "작성중", className: "bg-amber-100 text-amber-700", card: "border-amber-200 bg-white" };
+  };
+
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
@@ -155,31 +162,32 @@ export function History() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50">
+    <div className="min-h-screen bg-slate-100">
       {/* Header */}
       <div className="bg-white border-b">
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex justify-between items-center">
-            <div className="flex items-center gap-3">
+        <div className="container mx-auto px-3 py-2.5 sm:px-4 sm:py-4">
+          <div className="flex justify-between items-center gap-2 sm:gap-0">
+            <div className="flex items-center gap-1 sm:gap-3 min-w-0">
               <Button
                 variant="ghost"
                 onClick={() => navigate("/admin")}
-                className="rounded-full"
+                aria-label="대시보드로 돌아가기"
+                className="rounded-full shrink-0"
               >
-                <ArrowLeft className="w-4 h-4 mr-2" />
-                대시보드
+                <ArrowLeft className="w-4 h-4 sm:mr-2" />
+                <span className="hidden sm:inline">대시보드</span>
               </Button>
-              <h1 className="text-xl font-bold">주보 히스토리</h1>
+              <h1 className="text-base sm:text-xl font-bold truncate">주보 히스토리</h1>
             </div>
-            
+
             {/* 전체 다운로드 버튼: 서비스 준비중 UI 적용 */}
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <div className="cursor-not-allowed">
+                  <div className="cursor-not-allowed shrink-0">
                     <Button
                       variant="outline"
-                      className="rounded-full bg-gray-50/50 text-gray-400 border-gray-200 pointer-events-none opacity-60 flex items-center gap-2"
+                      className="rounded-full bg-gray-50/50 text-gray-400 border-gray-200 pointer-events-none opacity-60 flex items-center gap-2 h-8 px-3 text-xs sm:h-9 sm:text-sm"
                       disabled
                     >
                       <Lock className="w-3.5 h-3.5" />
@@ -196,38 +204,38 @@ export function History() {
         </div>
       </div>
 
-      <div className="container mx-auto px-4 py-8">
-        {/* Stats */}
-        <div className="grid md:grid-cols-4 gap-4 mb-8">
-          <Card className="p-6 rounded-2xl border-0 bg-white shadow-sm">
-            <p className="text-gray-600 text-sm mb-1">총 발행 주보</p>
-            <p className="text-3xl font-bold">{bulletins.length}개</p>
+      <div className="container mx-auto px-3 py-3 sm:px-4 sm:py-8">
+        {/* Stats: 모바일은 2×2 작은 카드, sm 이상은 기존 레이아웃 그대로 */}
+        <div className="grid grid-cols-2 gap-2 mb-3 sm:grid-cols-1 sm:gap-4 sm:mb-8 md:grid-cols-4">
+          <Card className="p-3 gap-0.5 rounded-xl sm:p-6 sm:gap-6 sm:rounded-2xl border border-slate-200 bg-white shadow-sm">
+            <p className="text-gray-600 text-xs sm:text-sm sm:mb-1">총 발행 주보</p>
+            <p className="text-xl sm:text-3xl font-bold">{bulletins.length}개</p>
           </Card>
-          <Card className="p-6 rounded-2xl border-0 bg-white shadow-sm">
-            <p className="text-gray-600 text-sm mb-1">총 조회수</p>
-            <p className="text-3xl font-bold">
+          <Card className="p-3 gap-0.5 rounded-xl sm:p-6 sm:gap-6 sm:rounded-2xl border border-slate-200 bg-white shadow-sm">
+            <p className="text-gray-600 text-xs sm:text-sm sm:mb-1">총 조회수</p>
+            <p className="text-xl sm:text-3xl font-bold">
               {bulletins.reduce((sum, b) => sum + (b.views || 0), 0)}
             </p>
           </Card>
-          <Card className="p-6 rounded-2xl border-0 bg-white shadow-sm">
-            <p className="text-gray-600 text-sm mb-1">평균 조회수</p>
-            <p className="text-3xl font-bold">
-              {bulletins.length > 0 
-                ? Math.round(bulletins.reduce((sum, b) => sum + (b.views || 0), 0) / bulletins.length) 
+          <Card className="p-3 gap-0.5 rounded-xl sm:p-6 sm:gap-6 sm:rounded-2xl border border-slate-200 bg-white shadow-sm">
+            <p className="text-gray-600 text-xs sm:text-sm sm:mb-1">평균 조회수</p>
+            <p className="text-xl sm:text-3xl font-bold">
+              {bulletins.length > 0
+                ? Math.round(bulletins.reduce((sum, b) => sum + (b.views || 0), 0) / bulletins.length)
                 : 0}
             </p>
           </Card>
-          <Card className="p-6 rounded-2xl border-0 bg-white shadow-sm">
-            <p className="text-gray-600 text-sm mb-1">최근 주보</p>
-            <p className="text-3xl font-bold text-blue-600">
+          <Card className="p-3 gap-0.5 rounded-xl sm:p-6 sm:gap-6 sm:rounded-2xl border border-slate-200 bg-white shadow-sm">
+            <p className="text-gray-600 text-xs sm:text-sm sm:mb-1">최근 주보</p>
+            <p className="text-xl sm:text-3xl font-bold text-blue-600">
               {bulletins[0]?.date?.split('-')[1] || "0"}월
             </p>
           </Card>
         </div>
 
         {/* Filters */}
-        <Card className="p-6 mb-6 rounded-2xl border-0 bg-white shadow-sm">
-          <div className="flex gap-4">
+        <Card className="p-3 mb-3 rounded-xl sm:p-6 sm:mb-6 sm:rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="flex gap-2 sm:gap-4">
             <div className="flex-1 relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
               <Input
@@ -238,7 +246,7 @@ export function History() {
               />
             </div>
             <Select value={filterMonth} onValueChange={setFilterMonth}>
-              <SelectTrigger className="w-48 rounded-xl">
+              <SelectTrigger className="w-28 sm:w-48 rounded-xl">
                 <SelectValue placeholder="기간 선택" />
               </SelectTrigger>
               <SelectContent>
@@ -332,48 +340,46 @@ export function History() {
           ))}
         </div> */}
 
-        <div className="space-y-4">
-          {filteredBulletins.map((bulletin) => (
-            <Card key={bulletin.id} className="p-6 rounded-3xl border-0 bg-white shadow-[0_2px_12px_rgba(0,0,0,0.03)] hover:shadow-[0_8px_24px_rgba(0,0,0,0.06)] transition-all group">
+        <div className="space-y-2.5 sm:space-y-4">
+          {filteredBulletins.map((bulletin) => {
+            const badge = getStatusBadge(bulletin.status);
+            return (
+            <Card key={bulletin.id} className={`p-4 rounded-2xl sm:p-6 sm:rounded-3xl border shadow-[0_2px_12px_rgba(0,0,0,0.03)] hover:shadow-[0_8px_24px_rgba(0,0,0,0.06)] transition-all group ${badge.card}`}>
               <div className="flex items-start gap-5">
-                <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-blue-600 flex-shrink-0 bg-blue-50 font-bold">
+                <div className="hidden sm:flex w-12 h-12 rounded-2xl items-center justify-center text-blue-600 flex-shrink-0 bg-blue-50 font-bold">
                   <FileText className="w-6 h-6" />
                 </div>
-                
+
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-start justify-between gap-4 mb-2">
-                    <div>
-                      <h3 className="font-bold text-lg text-gray-900 tracking-tight mb-1">{bulletin.title || "제목 없음"}</h3>
-                      <p className="text-gray-500 text-sm font-medium mb-3">{bulletin.subtitle}</p>
-                      <div className="flex flex-wrap items-center gap-2.5 text-xs text-gray-400 font-bold">
-                        <span className="flex items-center gap-1 bg-gray-50 px-2.5 py-1 rounded-lg">
+                  <div className="flex items-start justify-between gap-2 sm:gap-4 mb-1 sm:mb-2">
+                    <div className="min-w-0">
+                      <h3 className="font-bold text-base sm:text-lg text-gray-900 tracking-tight mb-0.5 sm:mb-1 line-clamp-2 sm:line-clamp-none">{bulletin.title || "제목 없음"}</h3>
+                      <p className="text-gray-500 text-[13px] sm:text-sm font-medium mb-2 sm:mb-3 line-clamp-1 sm:line-clamp-none">{bulletin.subtitle}</p>
+                      <div className="flex flex-wrap items-center gap-1.5 sm:gap-2.5 text-xs text-gray-400 font-bold">
+                        <span className="flex items-center gap-1 bg-slate-100 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg">
                           <Calendar className="w-3.5 h-3.5 text-gray-400" />
                           {bulletin.date}
                         </span>
                         {bulletin.scripture && (
-                          <span className="bg-gray-50 px-2.5 py-1 rounded-lg text-gray-500">{bulletin.scripture}</span>
+                          <span className="bg-slate-100 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg text-gray-500">{bulletin.scripture}</span>
                         )}
-                        <span className="flex items-center gap-1 bg-gray-50 px-2.5 py-1 rounded-lg">
+                        <span className="flex items-center gap-1 bg-slate-100 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg">
                           <Eye className="w-3.5 h-3.5 text-gray-400" />
                           {bulletin.views || 0}회
                         </span>
                       </div>
                     </div>
-                    <span className={`px-3 py-1 rounded-full text-[11px] font-bold tracking-tight uppercase ${
-                      bulletin.status === 'published' || bulletin.status === '발행됨'
-                      ? "bg-blue-50 text-blue-600" 
-                      : "bg-gray-100 text-gray-500"
-                    }`}>
-                      {bulletin.status === 'published' || bulletin.status === '발행됨' ? "게시됨" : "작성중"}
+                    <span className={`shrink-0 whitespace-nowrap px-2.5 sm:px-3 py-1 rounded-full text-[11px] font-bold tracking-tight uppercase ${badge.className}`}>
+                      {badge.label}
                     </span>
                   </div>
 
-                  <div className="flex gap-2 pt-2 border-t border-gray-50 mt-4">
+                  <div className="grid grid-cols-4 gap-1 pt-2 border-t border-slate-200/70 mt-3 sm:flex sm:gap-2 sm:mt-4">
                     <Button
                       variant="ghost"
                       size="sm"
                       onClick={() => window.open(`/view/${bulletin.id}`, "_blank")}
-                      className="rounded-xl font-bold text-xs text-gray-600 hover:bg-gray-100 hover:text-gray-900 px-3.5 py-2"
+                      className="rounded-xl font-bold text-xs text-gray-600 hover:bg-gray-100 hover:text-gray-900 border border-slate-200 bg-white px-3.5 py-2 h-9 w-full sm:h-8 sm:w-auto"
                     >
                       <Eye className="w-3.5 h-3.5 mr-1.5" />
                       보기
@@ -382,7 +388,7 @@ export function History() {
                       variant="ghost"
                       size="sm"
                       onClick={() => navigate(`/admin/editor/${bulletin.id}`)}
-                      className="rounded-xl font-bold text-xs text-gray-600 hover:bg-gray-100 hover:text-gray-900 px-3.5 py-2"
+                      className="rounded-xl font-bold text-xs text-gray-600 hover:bg-gray-100 hover:text-gray-900 border border-slate-200 bg-white px-3.5 py-2 h-9 w-full sm:h-8 sm:w-auto"
                     >
                       <Edit className="w-3.5 h-3.5 mr-1.5" />
                       수정
@@ -391,7 +397,7 @@ export function History() {
                       variant="ghost"
                       size="sm"
                       onClick={() => handleCopy(bulletin)}
-                      className="rounded-xl font-bold text-xs text-blue-600 hover:bg-blue-50 px-3.5 py-2"
+                      className="rounded-xl font-bold text-xs text-blue-600 hover:bg-blue-50 border border-blue-200 bg-white px-3.5 py-2 h-9 w-full sm:h-8 sm:w-auto"
                     >
                       <Copy className="w-3.5 h-3.5 mr-1.5" />
                       복사
@@ -400,7 +406,7 @@ export function History() {
                       variant="ghost"
                       size="sm"
                       onClick={() => handleDelete(bulletin)}
-                      className="rounded-xl font-bold text-xs text-red-500 hover:bg-red-50 px-3.5 py-2 ml-auto"
+                      className="rounded-xl font-bold text-xs text-red-500 hover:bg-red-50 border border-red-200 bg-white px-3.5 py-2 h-9 w-full sm:h-8 sm:w-auto ml-0 sm:ml-auto"
                     >
                       <Trash2 className="w-3.5 h-3.5 mr-1.5" />
                       삭제
@@ -409,13 +415,14 @@ export function History() {
                 </div>
               </div>
             </Card>
-          ))}
+            );
+          })}
         </div>
 
         {filteredBulletins.length === 0 && (
-          <Card className="p-20 rounded-2xl border-2 border-dashed border-gray-100 bg-white/50 text-center">
-            <FileText className="w-16 h-16 mx-auto mb-4 text-gray-200" />
-            <p className="text-gray-500 text-lg font-bold mb-1">표시할 주보가 없습니다</p>
+          <Card className="p-8 sm:p-20 rounded-2xl border-2 border-dashed border-slate-300 bg-white/60 text-center">
+            <FileText className="w-12 h-12 sm:w-16 sm:h-16 mx-auto mb-3 sm:mb-4 text-gray-200" />
+            <p className="text-gray-500 text-base sm:text-lg font-bold mb-1">표시할 주보가 없습니다</p>
             <p className="text-gray-400 text-sm">새로운 주보를 작성하거나 검색 조건을 변경해보세요.</p>
           </Card>
         )}

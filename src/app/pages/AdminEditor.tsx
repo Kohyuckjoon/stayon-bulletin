@@ -706,8 +706,8 @@ export function AdminEditor() {
     }).open();
   };
 
-  // 위치 안내 이미지 업로드 핸들러. 사역자 사진 업로드와 동일한 방식(Base64 압축)으로 처리하되,
-  // 대표 이미지 하나이므로 조금 더 큰 해상도(최대 720px)로 저장한다.
+  // 위치 안내 이미지 업로드 핸들러. base64로 문서에 직접 저장하던 방식은 Firestore 문서
+  // 용량 제한(1MB)을 넘길 수 있어(교회 로고/이미지와 동일한 사고 유형), Storage 업로드로 변경.
   const handleLocationImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -716,6 +716,11 @@ export function AdminEditor() {
       toast.error("이미지 파일(png, jpeg 등)만 업로드 가능합니다.");
       return;
     }
+    if (!auth.currentUser) {
+      toast.error("로그인이 필요합니다");
+      return;
+    }
+    const uid = auth.currentUser.uid;
 
     const reader = new FileReader();
     reader.onload = (event) => {
@@ -744,9 +749,22 @@ export function AdminEditor() {
         const ctx = canvas.getContext("2d");
         ctx?.drawImage(img, 0, 0, width, height);
 
-        const compressedBase64 = canvas.toDataURL("image/jpeg", 0.75);
-        setLocationImage(compressedBase64);
-        toast.success("위치 안내 이미지가 등록되었습니다.");
+        canvas.toBlob(async (blob) => {
+          if (!blob) {
+            toast.error("이미지 처리에 실패했습니다.");
+            return;
+          }
+          try {
+            const fileRef = storageRef(storage, `locationImages/${uid}.jpg`);
+            await uploadBytes(fileRef, blob, { contentType: "image/jpeg" });
+            const url = await getDownloadURL(fileRef);
+            setLocationImage(url);
+            toast.success("위치 안내 이미지가 등록되었습니다.");
+          } catch (error) {
+            console.error("위치 안내 이미지 업로드 실패:", error);
+            toast.error("업로드 중 오류가 발생했습니다.");
+          }
+        }, "image/jpeg", 0.75);
       };
     };
     reader.onerror = () => {
@@ -756,6 +774,9 @@ export function AdminEditor() {
   };
 
   // 교회 로고 업로드. 로고는 투명 배경 PNG가 많으므로 JPEG로 바꾸지 않고 PNG로 유지한다.
+  // base64로 만들어 주보 문서 안에 직접 저장했었는데, 사진처럼 복잡한 이미지를 PNG로
+  // 올리면 Firestore 문서 용량 제한(1MB)을 넘겨 발행 자체가 실패하는 사고가 있었음
+  // (베다니교회 사례) — Storage에 파일로 올리고 문서엔 짧은 URL만 저장하도록 변경.
   const handleChurchLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -763,6 +784,11 @@ export function AdminEditor() {
       toast.error("이미지 파일(png, jpeg 등)만 업로드 가능합니다.");
       return;
     }
+    if (!auth.currentUser) {
+      toast.error("로그인이 필요합니다");
+      return;
+    }
+    const uid = auth.currentUser.uid;
     const reader = new FileReader();
     reader.onload = (event) => {
       const img = new Image();
@@ -780,8 +806,22 @@ export function AdminEditor() {
         canvas.width = width;
         canvas.height = height;
         canvas.getContext("2d")?.drawImage(img, 0, 0, width, height);
-        setChurchLogo(canvas.toDataURL("image/png"));
-        toast.success("교회 로고가 등록되었습니다.");
+        canvas.toBlob(async (blob) => {
+          if (!blob) {
+            toast.error("이미지 처리에 실패했습니다.");
+            return;
+          }
+          try {
+            const fileRef = storageRef(storage, `churchLogos/${uid}.png`);
+            await uploadBytes(fileRef, blob, { contentType: "image/png" });
+            const url = await getDownloadURL(fileRef);
+            setChurchLogo(url);
+            toast.success("교회 로고가 등록되었습니다.");
+          } catch (error) {
+            console.error("교회 로고 업로드 실패:", error);
+            toast.error("업로드 중 오류가 발생했습니다.");
+          }
+        }, "image/png");
       };
     };
     reader.onerror = () => toast.error("이미지를 읽는 중 오류가 발생했습니다.");
@@ -789,12 +829,18 @@ export function AdminEditor() {
   };
 
   // 교회 이미지(소개 화면용). 모바일 세로 화면에서 크게 보이므로 해상도를 넉넉히(1400px) 유지.
+  // 로고와 동일한 이유로 base64 직접 저장 대신 Storage 업로드 + URL 저장 방식으로 변경.
   const handleChurchImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !file.type.startsWith("image/")) {
       if (file) toast.error("이미지 파일(png, jpeg 등)만 업로드 가능합니다.");
       return;
     }
+    if (!auth.currentUser) {
+      toast.error("로그인이 필요합니다");
+      return;
+    }
+    const uid = auth.currentUser.uid;
     const reader = new FileReader();
     reader.onload = (event) => {
       const img = new Image();
@@ -807,8 +853,22 @@ export function AdminEditor() {
         else { if (h > MAX) { w *= MAX / h; h = MAX; } }
         canvas.width = w; canvas.height = h;
         canvas.getContext("2d")?.drawImage(img, 0, 0, w, h);
-        setChurchImage(canvas.toDataURL("image/jpeg", 0.8));
-        toast.success("교회 이미지가 등록되었습니다.");
+        canvas.toBlob(async (blob) => {
+          if (!blob) {
+            toast.error("이미지 처리에 실패했습니다.");
+            return;
+          }
+          try {
+            const fileRef = storageRef(storage, `churchImages/${uid}.jpg`);
+            await uploadBytes(fileRef, blob, { contentType: "image/jpeg" });
+            const url = await getDownloadURL(fileRef);
+            setChurchImage(url);
+            toast.success("교회 이미지가 등록되었습니다.");
+          } catch (error) {
+            console.error("교회 이미지 업로드 실패:", error);
+            toast.error("업로드 중 오류가 발생했습니다.");
+          }
+        }, "image/jpeg", 0.8);
       };
     };
     reader.onerror = () => toast.error("이미지를 읽는 중 오류가 발생했습니다.");
@@ -920,7 +980,9 @@ export function AdminEditor() {
     setMinisters(ministers.map((m: any) => (m.id === ministerId ? { ...m, phoneFreeFormat: !m.phoneFreeFormat } : m)));
   };
 
-  // 이미지 파일 선택 시 Base64로 변환하여 실시간 미리보기 및 데이터 저장 처리 핸들러
+  // 이미지 파일 선택 시 압축 후 Storage에 업로드하고, 문서엔 URL만 저장하는 핸들러.
+  // base64로 문서에 직접 저장하면 사역자가 여러 명일 때 Firestore 문서 용량 제한(1MB)을
+  // 넘기기 쉬워(교회 로고/이미지와 동일한 사고 유형), Storage 업로드로 변경.
   const handleImageUpload = (ministerId: string, e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -929,6 +991,11 @@ export function AdminEditor() {
       toast.error("이미지 파일(png, jpeg 등)만 업로드 가능합니다.");
       return;
     }
+    if (!auth.currentUser) {
+      toast.error("로그인이 필요합니다");
+      return;
+    }
+    const uid = auth.currentUser.uid;
 
     const reader = new FileReader();
     reader.onload = (event) => {
@@ -960,11 +1027,22 @@ export function AdminEditor() {
         const ctx = canvas.getContext("2d");
         ctx?.drawImage(img, 0, 0, width, height);
 
-        // JPEG 포맷으로 압축 품질을 낮춰서(0.75) Base64 생성
-        const compressedBase64 = canvas.toDataURL("image/jpeg", 0.75);
-
-        updateMinister(ministerId, 'photoUrl', compressedBase64);
-        toast.success("사역자 사진이 압축되어 성공적으로 등록되었습니다.");
+        canvas.toBlob(async (blob) => {
+          if (!blob) {
+            toast.error("이미지 처리에 실패했습니다.");
+            return;
+          }
+          try {
+            const fileRef = storageRef(storage, `ministerPhotos/${uid}/${ministerId}.jpg`);
+            await uploadBytes(fileRef, blob, { contentType: "image/jpeg" });
+            const url = await getDownloadURL(fileRef);
+            updateMinister(ministerId, 'photoUrl', url);
+            toast.success("사역자 사진이 압축되어 성공적으로 등록되었습니다.");
+          } catch (error) {
+            console.error("사역자 사진 업로드 실패:", error);
+            toast.error("업로드 중 오류가 발생했습니다.");
+          }
+        }, "image/jpeg", 0.75);
       };
     };
     reader.onerror = () => {
@@ -988,7 +1066,8 @@ export function AdminEditor() {
     setOfficers(officers.map((o) => (o.id === officerId ? { ...o, [field]: val } : o)));
   };
 
-  // 중직자 사진 업로드 - handleImageUpload와 동일한 압축 규칙(600px, JPEG 0.75), 저장 위치만 officers로.
+  // 중직자 사진 업로드 - handleImageUpload와 동일한 압축 규칙(600px, JPEG 0.75) +
+  // 동일한 이유로 base64 직접 저장 대신 Storage 업로드로 변경, 저장 위치만 officers로.
   const handleOfficerImageUpload = (officerId: string, e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -996,6 +1075,11 @@ export function AdminEditor() {
       toast.error("이미지 파일(png, jpeg 등)만 업로드 가능합니다.");
       return;
     }
+    if (!auth.currentUser) {
+      toast.error("로그인이 필요합니다");
+      return;
+    }
+    const uid = auth.currentUser.uid;
     const reader = new FileReader();
     reader.onload = (event) => {
       const img = new Image();
@@ -1008,8 +1092,22 @@ export function AdminEditor() {
         else { if (h > MAX) { w *= MAX / h; h = MAX; } }
         canvas.width = w; canvas.height = h;
         canvas.getContext("2d")?.drawImage(img, 0, 0, w, h);
-        updateOfficer(officerId, 'photoUrl', canvas.toDataURL("image/jpeg", 0.75));
-        toast.success("중직자 사진이 압축되어 성공적으로 등록되었습니다.");
+        canvas.toBlob(async (blob) => {
+          if (!blob) {
+            toast.error("이미지 처리에 실패했습니다.");
+            return;
+          }
+          try {
+            const fileRef = storageRef(storage, `officerPhotos/${uid}/${officerId}.jpg`);
+            await uploadBytes(fileRef, blob, { contentType: "image/jpeg" });
+            const url = await getDownloadURL(fileRef);
+            updateOfficer(officerId, 'photoUrl', url);
+            toast.success("중직자 사진이 압축되어 성공적으로 등록되었습니다.");
+          } catch (error) {
+            console.error("중직자 사진 업로드 실패:", error);
+            toast.error("업로드 중 오류가 발생했습니다.");
+          }
+        }, "image/jpeg", 0.75);
       };
     };
     reader.onerror = () => toast.error("이미지를 읽는 중 오류가 발생했습니다.");
@@ -1055,13 +1153,20 @@ export function AdminEditor() {
     setColumnDraft({ date: col.date || "", title: col.title || "", content: col.content || "", author: col.author || "", imageUrl: col.imageUrl || "" });
   };
 
-  // 목회 칼럼 이미지는 올인원 요금제 전용. 압축 규칙은 다른 이미지 업로드와 동일.
+  // 목회 칼럼 이미지는 올인원 요금제 전용. 압축 규칙은 다른 이미지 업로드와 동일하되,
+  // base64 직접 저장 대신 Storage 업로드로 변경(다른 사진 필드들과 동일한 이유).
   const handleColumnImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !file.type.startsWith("image/")) {
       if (file) toast.error("이미지 파일(png, jpeg 등)만 업로드 가능합니다.");
       return;
     }
+    if (!auth.currentUser) {
+      toast.error("로그인이 필요합니다");
+      return;
+    }
+    const uid = auth.currentUser.uid;
+    const colId = editingColumnId || `new-${Date.now()}`;
     const reader = new FileReader();
     reader.onload = (event) => {
       const img = new Image();
@@ -1074,8 +1179,22 @@ export function AdminEditor() {
         else { if (h > MAX) { w *= MAX / h; h = MAX; } }
         canvas.width = w; canvas.height = h;
         canvas.getContext("2d")?.drawImage(img, 0, 0, w, h);
-        setColumnDraft((d) => ({ ...d, imageUrl: canvas.toDataURL("image/jpeg", 0.8) }));
-        toast.success("이미지가 등록되었습니다.");
+        canvas.toBlob(async (blob) => {
+          if (!blob) {
+            toast.error("이미지 처리에 실패했습니다.");
+            return;
+          }
+          try {
+            const fileRef = storageRef(storage, `columnImages/${uid}/${colId}.jpg`);
+            await uploadBytes(fileRef, blob, { contentType: "image/jpeg" });
+            const url = await getDownloadURL(fileRef);
+            setColumnDraft((d) => ({ ...d, imageUrl: url }));
+            toast.success("이미지가 등록되었습니다.");
+          } catch (error) {
+            console.error("목회 칼럼 이미지 업로드 실패:", error);
+            toast.error("업로드 중 오류가 발생했습니다.");
+          }
+        }, "image/jpeg", 0.8);
       };
     };
     reader.onerror = () => toast.error("이미지를 읽는 중 오류가 발생했습니다.");
@@ -1128,13 +1247,19 @@ export function AdminEditor() {
     }
   };
 
-  // 담임 목사 사진 - handleImageUpload와 같은 리사이즈 규칙, 저장 위치만 seniorPastor 로.
+  // 담임 목사 사진 - handleImageUpload와 같은 리사이즈 규칙 + 동일한 이유로 base64 직접 저장
+  // 대신 Storage 업로드로 변경, 저장 위치만 seniorPastor 로.
   const handleSeniorPastorImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !file.type.startsWith("image/")) {
       if (file) toast.error("이미지 파일(png, jpeg 등)만 업로드 가능합니다.");
       return;
     }
+    if (!auth.currentUser) {
+      toast.error("로그인이 필요합니다");
+      return;
+    }
+    const uid = auth.currentUser.uid;
     const reader = new FileReader();
     reader.onload = (event) => {
       const img = new Image();
@@ -1147,8 +1272,22 @@ export function AdminEditor() {
         else { if (h > MAX) { w *= MAX / h; h = MAX; } }
         canvas.width = w; canvas.height = h;
         canvas.getContext("2d")?.drawImage(img, 0, 0, w, h);
-        updateSeniorPastor("photoUrl", canvas.toDataURL("image/jpeg", 0.75));
-        toast.success("담임 목사 사진이 등록되었습니다.");
+        canvas.toBlob(async (blob) => {
+          if (!blob) {
+            toast.error("이미지 처리에 실패했습니다.");
+            return;
+          }
+          try {
+            const fileRef = storageRef(storage, `seniorPastorPhotos/${uid}.jpg`);
+            await uploadBytes(fileRef, blob, { contentType: "image/jpeg" });
+            const url = await getDownloadURL(fileRef);
+            updateSeniorPastor("photoUrl", url);
+            toast.success("담임 목사 사진이 등록되었습니다.");
+          } catch (error) {
+            console.error("담임 목사 사진 업로드 실패:", error);
+            toast.error("업로드 중 오류가 발생했습니다.");
+          }
+        }, "image/jpeg", 0.75);
       };
     };
     reader.readAsDataURL(file);
