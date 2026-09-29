@@ -32,6 +32,9 @@ export interface ChurchSite {
   youtubeVideoId?: string;
   // false로 명시하면 youtubeVideoId가 있어도 "교회 소개 영상" 섹션 전체를 숨김. 미설정(기존 사이트)은 true로 취급
   introVideoEnabled?: boolean;
+  // "text"면 "교회 소개 영상" 자리에 영상 대신 sermonExcerpt 텍스트를 보여줌. 미설정(기존 사이트)은 "video"로 취급
+  sermonDisplayMode?: "video" | "text";
+  sermonExcerpt?: string; // sermonDisplayMode가 "text"일 때 보여줄 짧은 설교 요약/발췌문(2~5줄 권장)
   latestSermonTitle?: string;
   latestSermonSpeaker?: string; // "교회 소개 영상" 캡션에 함께 표시되는 설교자 이름
   // 홈 화면 "온라인 예배" 섹션에 카드 목록으로 표시되는 지난 설교들. 비워두면 섹션 자체가 안 보임

@@ -1,45 +1,40 @@
 import { useEffect, useState } from "react";
-import { Link, useLocation, useSearchParams } from "react-router";
 import { getChurchSite, ChurchSite, MENU_ITEMS } from "../../../utils/churchSite";
-import { sectionPath } from "./sections/shared";
 import { HomeSection } from "./sections/HomeSection";
-import { WorshipSection } from "./sections/WorshipSection";
 import { CommunitySection } from "./sections/CommunitySection";
 import { NewsSection } from "./sections/NewsSection";
 import { LocationSection } from "./sections/LocationSection";
-import { OnlineWorshipSection } from "./sections/OnlineWorshipSection";
 
 interface Props {
-    slug?: string;        // 배포된 실제 페이지에서 씀 (Firestore 조회)
-    site?: ChurchSite;     // 에디터 라이브 미리보기에서 씀 (즉시 렌더링)
-    // 지정하면 해당 섹션 하나만 별도 페이지로 렌더링(실제 배포된 사이트의 하위 페이지 이동용).
-    // 지정하지 않으면 모든 섹션을 한 페이지에 이어서 렌더링(BuilderPage.tsx 미리보기 패널 전용)
+    slug?: string;        // 배포된 실제 페이지 / /website-preview에서 씀 (Firestore 조회)
+    site?: ChurchSite;     // BuilderPage.tsx 라이브 미리보기에서 씀 (지금 입력 중인 값으로 즉시 렌더링)
+    // 실제 배포된 서브도메인(/worship 등)으로 들어왔을 때만 넘어옴 — 어느 섹션까지 스크롤해서
+    // 보여줄지 결정하는 용도. 그 외(홈, 미리보기)는 항상 맨 위부터 시작
     section?: "home" | "worship" | "community" | "news" | "location" | "online-worship";
 }
 
-// 이 파일은 상단 네비게이션 + 화면 전환 로직 + 푸터만 담당하는 얇은 껍데기(shell)임.
-// 화면별 실제 내용은 ./sections/*.tsx 각 파일에 따로 있고, 여기서는 그중 어느 화면을 보여줄지만 결정함.
-// section prop이 있으면(실제 배포 사이트) 메뉴 클릭 시 진짜 하위 페이지(/worship, /community 등)로
-// 이동하고, 없으면(BuilderPage 미리보기 / /website-preview) ?view= 쿼리로 화면을 전환함.
+// 이 파일은 상단 네비게이션 + 푸터만 담당하는 얇은 껍데기(shell)임. 화면별 실제 내용은
+// ./sections/*.tsx 각 파일에 따로 있음. 실제 배포 사이트, /website-preview, BuilderPage
+// 라이브 미리보기 전부 이 컴포넌트 하나를 그대로 씀 — 항상 모든 섹션을 한 페이지에 이어 붙여서
+// 보여주고, 메뉴를 누르면 페이지 이동 없이 그 위치로 스크롤됨(원페이지 사이트).
+// /worship, /community 같은 개별 주소는 아직 검색엔진에 걸려있거나 공유된 링크가 있을 수 있어
+// 계속 살려두되, 이제는 "전체 페이지를 열고 그 위치까지 스크롤해서 보여주는" 진입점 역할만 함.
 export function WebsiteRenderer({ slug, site: liveSite, section }: Props) {
     const [fetchedSite, setFetchedSite] = useState<ChurchSite | null>(null);
-    const isRouted = section !== undefined;
-    const location = useLocation();
-    // isRouted가 아닐 때(BuilderPage 미리보기, /website-preview)는 진짜 라우트(/worship 등)가 없어서
-    // 대신 ?view= 쿼리 파라미터로 "지금 보고 있는 화면"을 저장함 — URL이 실제로 바뀌니까 주소 복사,
-    // 새로고침, 브라우저 뒤로가기/앞으로가기가 전부 정상 동작함 (내부 state로만 처리하지 않음)
-    const [searchParams, setSearchParams] = useSearchParams();
-    const activeLocalSection = (searchParams.get("view") as "home" | "worship" | "community" | "news" | "location" | "online-worship") || "home";
 
     useEffect(() => {
         if (slug && !liveSite) getChurchSite(slug).then(setFetchedSite);
     }, [slug, liveSite]);
 
-    useEffect(() => {
-        if (isRouted) window.scrollTo(0, 0);
-    }, [isRouted, section]);
-
     const site = liveSite ?? fetchedSite;
+
+    // section prop으로 들어온 실제 배포 서브도메인 진입만 해당 위치로 스크롤. 데이터 로딩이
+    // 끝나 해당 id를 가진 DOM이 실제로 생긴 뒤에 점프해야 하므로 site가 준비된 뒤에 실행
+    useEffect(() => {
+        if (!section || section === "home" || !site) return;
+        const el = document.getElementById(section);
+        if (el) el.scrollIntoView({ behavior: "auto" });
+    }, [section, site]);
 
     // 브라우저 탭 제목을 이 교회 이름으로 덮어씀. routes.tsx의 SEOManager는 경로만 보고 판단하는데
     // 교회 사이트 홈도 주보 플랫폼 랜딩과 똑같이 "/"라서 구분을 못 함 — SEOManager는 그대로 두고,
@@ -52,7 +47,6 @@ export function WebsiteRenderer({ slug, site: liveSite, section }: Props) {
 
     const primaryColor = site.primaryColor || "#1B3A6B";
     const activeMenus = site.activeMenus?.length ? site.activeMenus : ["home", "worship", "community", "news", "online-worship", "location"];
-    const showSection = (id: string) => (isRouted ? section === id : activeLocalSection === id);
 
     // 구버전 단일 worshipTime 문자열만 저장된 사이트도 예배 안내 1건으로 자연스럽게 표시
     const worshipServices = site.worshipServices?.length
@@ -80,8 +74,6 @@ export function WebsiteRenderer({ slug, site: liveSite, section }: Props) {
     const onlineWorshipEnabled = site.onlineWorshipEnabled !== false;
     const sermonsWithVideo = (site.sermons || []).filter((s) => s.youtubeVideoId?.trim());
     const displaySermons = onlineWorshipEnabled ? sermonsWithVideo.slice(0, 3) : [];
-    // "온라인 예배" 전용 화면(OnlineWorshipSection)에는 3개로 안 자르고 전부 전달
-    const allSermons = onlineWorshipEnabled ? sermonsWithVideo : [];
     // 새 소식은 배열 끝에 추가되므로(오래된 게 앞, 최신이 뒤), 화면에는 최신이 먼저 보이도록 뒤집음
     const newsItems = [...(site.newsItems || [])].reverse();
     // "소식" 전체 화면(NewsSection)에 실제 등록된 소식만 전달 — 게시판처럼 최신 글이 가장 큰 번호,
@@ -93,18 +85,32 @@ export function WebsiteRenderer({ slug, site: liveSite, section }: Props) {
         date: n.date,
     }));
 
-    // isRouted가 아닐 때(미리보기) 메뉴를 누르면 스크롤 대신 ?view= 쿼리를 바꿔서 실제 URL이 바뀌는
-    // "화면 이동"처럼 동작함 — 실제 배포 사이트(isRouted)는 이미 <Link>로 진짜 페이지 이동을 하므로
-    // 이 함수를 안 씀. push(기본값)라서 브라우저 뒤로가기로 이전 화면으로 돌아갈 수 있음
-    const scrollToSection = (id: string) => (e: React.MouseEvent) => {
+    // CommunitySection/LocationSection은 실제 데이터가 없으면 "판교채플" 같은 예시(가짜) 정보를
+    // 그대로 보여주는 컴포넌트라, 진짜 데이터가 있을 때만 그 섹션을 만들고 메뉴에도 노출한다
+    // (BuilderPage 라이브 미리보기도 마찬가지 — 아직 안 채운 탭은 가짜 정보 대신 그냥 안 보이는
+    // 게 "저장하면 실제로 이렇게 보인다"는 미리보기 취지에 더 맞음). 예배 안내는 별도 전용
+    // 컴포넌트가 없어 HomeSection 안의 실제 요약(worshipServices)을 그대로 앵커로 씀
+    const hasWorship = worshipServices.length > 0;
+    const hasCommunity = (site.staffMembers?.length ?? 0) > 0;
+    const hasLocationData = !!site.address;
+    const hasNews = newsItems.length > 0;
+    // "온라인 예배"는 사이트 안에 별도 전체 목록 섹션을 또 두지 않고(홈 화면 미리보기와
+    // 내용이 겹쳐 혼란스러웠음), 교회 유튜브 채널로 바로 연결하는 메뉴로만 둠
+    const sectionDataMap: Record<string, boolean> = {
+        home: true,
+        worship: hasWorship,
+        community: hasCommunity,
+        news: false, // 공지사항 섹션 임시 비활성화(요청에 따라 숨김) — 원래는 hasNews
+        location: hasLocationData,
+        "online-worship": !!site.youtubeLink,
+    };
+
+    // scrollIntoView는 window뿐 아니라 스크롤 가능한 조상(예: BuilderPage 미리보기 패널의
+    // overflow-y:auto 박스)도 알아서 같이 스크롤해줘서, 실제 배포 사이트/미리보기 어디서든
+    // 그대로 재사용 가능함
+    const scrollToId = (id: string) => (e: React.MouseEvent) => {
         e.preventDefault();
-        setSearchParams((prev) => {
-            const next = new URLSearchParams(prev);
-            if (id === "home") next.delete("view");
-            else next.set("view", id);
-            return next;
-        });
-        window.scrollTo({ top: 0, behavior: "auto" });
+        document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
     };
 
     return (
@@ -112,44 +118,39 @@ export function WebsiteRenderer({ slug, site: liveSite, section }: Props) {
             {/* 상단 네비게이션 - 배경은 화면 전체 폭, 내부 콘텐츠만 넓은 컨테이너로 정렬 */}
             <div className="sticky top-0 z-40 w-full shadow-sm" style={{ background: primaryColor }}>
                 <div className="max-w-6xl mx-auto flex items-center justify-between gap-3 px-4 sm:px-8 py-3 sm:py-4">
-                    {isRouted ? (
-                        <Link to="/" className="flex items-center gap-2 shrink-0">
-                            {site.logoUrl ? (
-                                <img src={site.logoUrl} alt={site.churchName} className="h-7 sm:h-9 object-contain" />
-                            ) : (
-                                <span className="text-white font-bold text-sm sm:text-lg truncate max-w-[45vw]">{site.churchName}</span>
-                            )}
-                        </Link>
-                    ) : (
-                        <a href="#home" onClick={scrollToSection("home")} className="flex items-center gap-2 shrink-0">
-                            {site.logoUrl ? (
-                                <img src={site.logoUrl} alt={site.churchName} className="h-7 sm:h-9 object-contain" />
-                            ) : (
-                                <span className="text-white font-bold text-sm sm:text-lg truncate max-w-[45vw]">{site.churchName}</span>
-                            )}
-                        </a>
-                    )}
+                    <a href="#home" onClick={scrollToId("home")} className="flex items-center gap-2 shrink-0">
+                        {site.logoUrl ? (
+                            <img src={site.logoUrl} alt={site.churchName} className="h-7 sm:h-9 object-contain" />
+                        ) : (
+                            <span className="text-white font-bold text-sm sm:text-lg truncate max-w-[45vw]">{site.churchName}</span>
+                        )}
+                    </a>
                     <nav className="flex items-center gap-4 sm:gap-7 overflow-x-auto">
                         {activeMenus.map((m) => {
                             const item = MENU_ITEMS.find((i) => i.id === m);
                             if (!item) return null;
-                            if (isRouted) {
-                                const isActive = location.pathname === sectionPath(m);
+                            // 실제 데이터가 없는 섹션은 메뉴에 노출하지 않음 — 눌러도 없는 곳으로
+                            // 가는 죽은 링크를 막기 위함
+                            if (!sectionDataMap[m]) return null;
+                            // "온라인 예배"는 사이트 안의 앵커가 아니라 교회 유튜브 채널로 바로 연결
+                            if (m === "online-worship") {
                                 return (
-                                    <Link
+                                    <a
                                         key={m}
-                                        to={sectionPath(m)}
-                                        className={`text-xs sm:text-sm whitespace-nowrap transition-colors ${isActive ? "text-white font-bold" : "text-white/85 hover:text-white font-medium"}`}
+                                        href={site.youtubeLink}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-white/85 hover:text-white text-xs sm:text-sm font-medium whitespace-nowrap transition-colors"
                                     >
                                         {item.label}
-                                    </Link>
+                                    </a>
                                 );
                             }
                             return (
                                 <a
                                     key={m}
                                     href={`#${m}`}
-                                    onClick={scrollToSection(m)}
+                                    onClick={scrollToId(m)}
                                     className="text-white/85 hover:text-white text-xs sm:text-sm font-medium whitespace-nowrap transition-colors"
                                 >
                                     {item.label}
@@ -160,53 +161,62 @@ export function WebsiteRenderer({ slug, site: liveSite, section }: Props) {
                 </div>
             </div>
 
-            {showSection("home") && (
-                <HomeSection
-                    site={site}
-                    primaryColor={primaryColor}
-                    activeMenus={activeMenus}
-                    isRouted={isRouted}
-                    worshipServices={worshipServices}
-                    worshipGroups={worshipGroups}
-                    worshipNotes={worshipNotes}
-                    displaySermons={displaySermons}
-                    newsItems={newsItems}
-                    onNavigate={scrollToSection}
-                />
+            <HomeSection
+                site={site}
+                primaryColor={primaryColor}
+                activeMenus={activeMenus}
+                isRouted={false}
+                worshipServices={worshipServices}
+                worshipGroups={worshipGroups}
+                worshipNotes={worshipNotes}
+                displaySermons={displaySermons}
+                newsItems={newsItems}
+                onNavigate={scrollToId}
+            />
+            {hasCommunity && (
+                <div id="community" className="scroll-mt-16">
+                    <CommunitySection
+                        churchName={site.churchName}
+                        primaryColor={primaryColor}
+                        staffMembers={site.staffMembers}
+                    />
+                </div>
             )}
-            {showSection("worship") && <WorshipSection />}
-            {showSection("community") && <CommunitySection />}
-            {showSection("news") && <NewsSection items={newsSectionItems} primaryColor={primaryColor} />}
-            {showSection("location") && <LocationSection />}
-            {showSection("online-worship") && <OnlineWorshipSection sermons={allSermons} primaryColor={primaryColor} />}
+            {/* 공지사항 섹션 임시 비활성화 (요청에 따라 숨김)
+            {hasNews && (
+                <div id="news" className="scroll-mt-16">
+                    <NewsSection items={newsSectionItems} primaryColor={primaryColor} />
+                </div>
+            )}
+            */}
+            {hasLocationData && (
+                <div id="location" className="scroll-mt-16">
+                    <LocationSection
+                        churchName={site.churchName}
+                        address={site.address}
+                        phone={site.phone}
+                        primaryColor={primaryColor}
+                    />
+                </div>
+            )}
 
-            {showSection("home") && activeMenus.includes("location") && (
+            {/* {hasLocationData && (
                 <section className="w-full px-4 sm:px-8 py-12">
                     <div className="max-w-4xl mx-auto text-center bg-white border border-gray-100 rounded-2xl sm:rounded-3xl shadow-sm p-8 sm:p-12">
                         <p className="text-gray-900 text-lg sm:text-xl font-bold mb-5 break-keep">
                             처음이신가요? 언제든 편하게 찾아오세요.
                         </p>
-                        {isRouted ? (
-                            <Link
-                                to={sectionPath("location")}
-                                className="inline-block rounded-full px-7 py-3 text-sm font-bold text-white transition-opacity hover:opacity-90 shadow-md"
-                                style={{ background: primaryColor }}
-                            >
-                                새가족 안내 보기 →
-                            </Link>
-                        ) : (
-                            <a
-                                href="#location"
-                                onClick={scrollToSection("location")}
-                                className="inline-block rounded-full px-7 py-3 text-sm font-bold text-white transition-opacity hover:opacity-90 shadow-md"
-                                style={{ background: primaryColor }}
-                            >
-                                새가족 안내 보기 →
-                            </a>
-                        )}
+                        <a
+                            href="#location"
+                            onClick={scrollToId("location")}
+                            className="inline-block rounded-full px-7 py-3 text-sm font-bold text-white transition-opacity hover:opacity-90 shadow-md"
+                            style={{ background: primaryColor }}
+                        >
+                            새가족 안내 보기 →
+                        </a>
                     </div>
                 </section>
-            )}
+            )} */}
 
             {/* 푸터 - 화면 전체 폭 배경 */}
             <footer className="w-full px-4 sm:px-8 py-10 sm:py-14" style={{ background: primaryColor }}>

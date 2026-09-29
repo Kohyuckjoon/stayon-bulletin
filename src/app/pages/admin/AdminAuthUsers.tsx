@@ -1,13 +1,32 @@
 import { useEffect, useState } from "react";
-import { collection, getDocs, query, orderBy } from "firebase/firestore";
+import { collection, getDocs, query, orderBy, doc, setDoc } from "firebase/firestore";
 import { auth, db } from "../../../firebase";
 import { onAuthStateChanged } from "firebase/auth";
-import { Mail, Calendar, Shield, UserCheck } from "lucide-react";
+import { Mail, Calendar, Shield, UserCheck, Search } from "lucide-react";
+import { Switch } from "../../components/ui/switch";
 
 export const AdminAuthUsers = () => {
   const [users, setUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [savingId, setSavingId] = useState<string | null>(null);
   const ADMIN_EMAILS = ["akhj123akhjk@gmail.com", "stayon.platform@gmail.com"];
+
+  // 교회 관리자 화면(AdminEditor.tsx "검색엔진 노출" 토글)과 같은 필드(users/{uid}.bulletinSearchable)를
+  // 운영자가 여기서 직접 켜고 끌 수 있게 함. 기본값은 꺼짐(opt-in) — 주보엔 심방·애경사 같은
+  // 외부 공개를 원치 않는 내용이 들어갈 수 있어서, 운영자가 임의로 켤 땐 신중해야 함.
+  const handleToggleSearchable = async (userId: string, checked: boolean) => {
+    setSavingId(userId);
+    setUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, bulletinSearchable: checked } : u)));
+    try {
+      await setDoc(doc(db, "users", userId), { bulletinSearchable: checked }, { merge: true });
+    } catch (error) {
+      console.error("검색엔진 노출 설정 변경 오류:", error);
+      setUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, bulletinSearchable: !checked } : u)));
+      alert("설정 저장에 실패했습니다.");
+    } finally {
+      setSavingId(null);
+    }
+  };
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
@@ -47,7 +66,8 @@ export const AdminAuthUsers = () => {
           <div>
             <h1 className="text-xl sm:text-3xl font-extrabold text-gray-900 tracking-tight">전체 가입자 현황</h1>
             <p className="text-gray-500 mt-1.5 md:mt-2 text-xs sm:text-base font-medium">
-              가입한 전체 사용자 계정 목록입니다. (총 <span className="text-blue-600 font-bold">{users.length}</span>명)
+              가입한 전체 사용자 계정 목록입니다. (총 <span className="text-blue-600 font-bold">{users.length}</span>명 ·
+              검색엔진 노출 <span className="text-emerald-600 font-bold">{users.filter((u) => u.bulletinSearchable === true).length}</span>개 교회)
             </p>
           </div>
         </div>
@@ -77,6 +97,16 @@ export const AdminAuthUsers = () => {
                       <span>가입일 {user.createdAt ? new Date(user.createdAt.toDate ? user.createdAt.toDate() : user.createdAt).toLocaleDateString() : "기록 없음"}</span>
                       <span className="truncate">UID {user.uid || user.id}</span>
                     </div>
+                    <div className="flex items-center justify-between pt-1.5 mt-1.5 border-t border-gray-100">
+                      <span className="text-[11px] font-bold text-gray-500 flex items-center gap-1.5">
+                        <Search className="w-3 h-3 text-gray-400" /> 검색엔진 노출
+                      </span>
+                      <Switch
+                        checked={user.bulletinSearchable === true}
+                        onCheckedChange={(checked) => handleToggleSearchable(user.id, checked)}
+                        disabled={savingId === user.id}
+                      />
+                    </div>
                   </div>
                 ))}
               </div>
@@ -91,6 +121,7 @@ export const AdminAuthUsers = () => {
                       <th className="p-6 text-xs font-bold text-gray-400 uppercase tracking-widest">제공업체 / 상태</th>
                       <th className="p-6 text-xs font-bold text-gray-400 uppercase tracking-widest">가입일 (생성 날짜)</th>
                       <th className="p-6 text-xs font-bold text-gray-400 uppercase tracking-widest">사용자 UID</th>
+                      <th className="p-6 text-xs font-bold text-gray-400 uppercase tracking-widest whitespace-nowrap">검색엔진 노출</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
@@ -111,8 +142,20 @@ export const AdminAuthUsers = () => {
                         <td className="p-6 text-gray-500 font-mono text-sm">
                           {user.createdAt ? new Date(user.createdAt.toDate ? user.createdAt.toDate() : user.createdAt).toLocaleDateString() : "기록 없음"}
                         </td>
-                        <td className="p-6 text-gray-400 font-mono text-xs tracking-tight">
+                        <td className="p-6 text-gray-400 font-mono text-xs tracking-tight max-w-[140px] truncate" title={user.uid || user.id}>
                           {user.uid || user.id}
+                        </td>
+                        <td className="p-6 whitespace-nowrap">
+                          <div className="flex items-center gap-2.5">
+                            <Switch
+                              checked={user.bulletinSearchable === true}
+                              onCheckedChange={(checked) => handleToggleSearchable(user.id, checked)}
+                              disabled={savingId === user.id}
+                            />
+                            <span className={`text-xs font-bold whitespace-nowrap ${user.bulletinSearchable === true ? "text-emerald-600" : "text-gray-400"}`}>
+                              {user.bulletinSearchable === true ? "노출중" : "꺼짐"}
+                            </span>
+                          </div>
                         </td>
                       </tr>
                     ))}

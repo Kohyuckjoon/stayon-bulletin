@@ -540,6 +540,7 @@ export function Landing() {
               <Button variant="ghost" onClick={scrollToNotice} className="text-slate-600 font-bold hover:text-slate-900 hover:bg-transparent rounded-md px-3 hidden md:flex">공지사항</Button>
               <Button variant="ghost" onClick={() => navigate("/pricing")} className="text-slate-600 font-bold hover:text-slate-900 hover:bg-transparent rounded-md px-3 hidden md:flex">990원 요금 안내</Button>
 
+              {/* 사역자 청빙 메뉴 임시 비활성화 (요청에 따라 숨김)
               {jobBoardEnabled ? (
                 <Button
                   variant="ghost"
@@ -560,6 +561,7 @@ export function Landing() {
                   사역자 청빙
                 </Button>
               )}
+              */}
 
               <Button
                 variant="ghost"
@@ -648,6 +650,7 @@ export function Landing() {
           >
             <Users className="w-4 h-4 text-indigo-600" /> 외부사역팀 섭외
           </button>
+          {/* 사역자 청빙 메뉴 임시 비활성화 (요청에 따라 숨김)
           {jobBoardEnabled ? (
             <button
               onClick={() => navigate("/jobs")}
@@ -664,6 +667,7 @@ export function Landing() {
               <Lock className="w-4 h-4 text-gray-400" /> 사역자 청빙
             </button>
           )}
+          */}
           <button
             onClick={() => { /* 도움말 등 추가 기능 연결 가능 */ }}
             className="flex items-center gap-1.5 shrink-0 bg-white border border-gray-100 px-4 py-2.5 rounded-full shadow-sm active:scale-95 transition-all text-sm font-black text-gray-700 opacity-50"

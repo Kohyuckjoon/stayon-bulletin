@@ -28,6 +28,30 @@ export function WebsiteMain() {
         setOpenFaq(openFaq === index ? null : index);
     };
 
+    // 상단 네비게이션의 #process 같은 앵커 링크가 원래 브라우저 기본 동작(순간이동)이라
+    // 화면이 뚝 끊겨 보였음 — 부드럽게 스크롤되도록 직접 계산해서 이동. sticky 헤더 높이만큼
+    // 보정하지 않으면 섹션 상단이 헤더 뒤에 가려서 시작됨
+    const scrollToSection = (id: string) => (e: React.MouseEvent) => {
+        e.preventDefault();
+        const el = document.getElementById(id);
+        if (!el) return;
+        // 모바일은 헤더 아래에 칩 메뉴가 하나 더 sticky로 붙어 있어서, PC보다 더 많이 보정해야
+        // 섹션 제목이 그 밑에 가려지지 않음
+        const isMobile = window.innerWidth < 768;
+        const headerOffset = isMobile ? 132 : 88;
+        const top = el.getBoundingClientRect().top + window.scrollY - headerOffset;
+        window.scrollTo({ top, behavior: 'smooth' });
+    };
+
+    const navItems = [
+        { id: 'process', label: '만드는 방법' },
+        { id: 'features', label: '서비스 특징' },
+        { id: 'why', label: '왜 필요한가?' },
+        { id: 'comparison', label: '기존 방식 비교' },
+        { id: 'pricing', label: '요금 안내' },
+        { id: 'faq', label: 'FAQ' },
+    ];
+
     useEffect(() => {
         const handleScroll = () => setIsScrolled(window.scrollY > 20);
         window.addEventListener('scroll', handleScroll);
@@ -105,31 +129,31 @@ export function WebsiteMain() {
                 ? 'bg-white/80 backdrop-blur-2xl border-b border-[#F2F4F6] shadow-[0_4px_20px_rgba(0,0,0,0.03)]'
                 : 'bg-white border-b border-transparent'
                 }`}>
-                <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
-                    <div className="flex items-center gap-3 cursor-pointer group" onClick={() => navigate('/')}>
-                        <div className="w-10 h-10 bg-[#191F28] rounded-[14px] flex items-center justify-center font-black text-lg text-white shadow-lg shadow-gray-200 transition-all duration-300 group-hover:scale-105 group-hover:rotate-[-5deg]">
+                <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 sm:py-4 flex items-center justify-between">
+                    <div className="flex items-center gap-2 sm:gap-3 cursor-pointer group" onClick={() => navigate('/')}>
+                        <div className="w-8 h-8 sm:w-10 sm:h-10 bg-[#191F28] rounded-xl sm:rounded-[14px] flex items-center justify-center font-black text-base sm:text-lg text-white shadow-lg shadow-gray-200 transition-all duration-300 group-hover:scale-105 group-hover:rotate-[-5deg]">
                             S
                         </div>
                         <div className="flex flex-col leading-tight">
-                            <span className="font-black text-[18px] tracking-tight text-[#191F28]">STAYON</span>
-                            <span className="text-[10px] font-black text-[#3182F6] tracking-widest uppercase">교회 홈 빌더</span>
+                            <span className="font-black text-[15px] sm:text-[18px] tracking-tight text-[#191F28]">STAYON</span>
+                            <span className="hidden sm:block text-[10px] font-black text-[#3182F6] tracking-widest uppercase">교회 홈 빌더</span>
                         </div>
                     </div>
 
                     <nav className="hidden md:flex items-center gap-1">
-                        <a href="#process" className="px-3.5 py-2.5 text-[14px] font-bold rounded-2xl text-[#4E5968] hover:bg-[#F9FAFB] hover:text-[#3182F6] transition-all">만드는 방법</a>
-                        <a href="#features" className="px-3.5 py-2.5 text-[14px] font-bold rounded-2xl text-[#4E5968] hover:bg-[#F9FAFB] hover:text-[#3182F6] transition-all">서비스 특징</a>
-                        <a href="#why" className="px-3.5 py-2.5 text-[14px] font-bold rounded-2xl text-[#4E5968] hover:bg-[#F9FAFB] hover:text-[#3182F6] transition-all">왜 필요한가?</a>
-                        <a href="#comparison" className="px-3.5 py-2.5 text-[14px] font-bold rounded-2xl text-[#4E5968] hover:bg-[#F9FAFB] hover:text-[#3182F6] transition-all">기존 방식 비교</a>
-                        <a href="#pricing" className="px-3.5 py-2.5 text-[14px] font-bold rounded-2xl text-[#4E5968] hover:bg-[#F9FAFB] hover:text-[#3182F6] transition-all">요금 안내</a>
-                        <a href="#faq" className="px-3.5 py-2.5 text-[14px] font-bold rounded-2xl text-[#4E5968] hover:bg-[#F9FAFB] hover:text-[#3182F6] transition-all">FAQ</a>
+                        <a href="#process" onClick={scrollToSection('process')} className="px-3.5 py-2.5 text-[14px] font-bold rounded-2xl text-[#4E5968] hover:bg-[#F9FAFB] hover:text-[#3182F6] transition-all">만드는 방법</a>
+                        <a href="#features" onClick={scrollToSection('features')} className="px-3.5 py-2.5 text-[14px] font-bold rounded-2xl text-[#4E5968] hover:bg-[#F9FAFB] hover:text-[#3182F6] transition-all">서비스 특징</a>
+                        <a href="#why" onClick={scrollToSection('why')} className="px-3.5 py-2.5 text-[14px] font-bold rounded-2xl text-[#4E5968] hover:bg-[#F9FAFB] hover:text-[#3182F6] transition-all">왜 필요한가?</a>
+                        <a href="#comparison" onClick={scrollToSection('comparison')} className="px-3.5 py-2.5 text-[14px] font-bold rounded-2xl text-[#4E5968] hover:bg-[#F9FAFB] hover:text-[#3182F6] transition-all">기존 방식 비교</a>
+                        <a href="#pricing" onClick={scrollToSection('pricing')} className="px-3.5 py-2.5 text-[14px] font-bold rounded-2xl text-[#4E5968] hover:bg-[#F9FAFB] hover:text-[#3182F6] transition-all">요금 안내</a>
+                        <a href="#faq" onClick={scrollToSection('faq')} className="px-3.5 py-2.5 text-[14px] font-bold rounded-2xl text-[#4E5968] hover:bg-[#F9FAFB] hover:text-[#3182F6] transition-all">FAQ</a>
                     </nav>
 
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-1 sm:gap-3">
                         {currentUser ? (
                             <button
                                 onClick={() => navigate('/admin')}
-                                className="flex items-center gap-2 text-[14px] font-bold text-[#4E5968] hover:text-[#191F28] px-3 py-2 rounded-2xl hover:bg-[#F9FAFB] transition-all"
+                                className="flex items-center gap-2 text-[14px] font-bold text-[#4E5968] hover:text-[#191F28] px-2 sm:px-3 py-2 rounded-2xl hover:bg-[#F9FAFB] transition-all"
                             >
                                 <span className="w-6 h-6 rounded-full bg-blue-50 text-[#3182F6] flex items-center justify-center text-[11px] font-black flex-shrink-0">
                                     {currentUser.churchName.slice(0, 1)}
@@ -139,35 +163,61 @@ export function WebsiteMain() {
                         ) : (
                             <button
                                 onClick={() => { setLoginReturnTo('/website'); navigate('/login'); }}
-                                className="text-[14px] font-bold text-[#4E5968] hover:text-[#191F28] px-4 py-2.5 transition-colors"
+                                className="text-[13px] sm:text-[14px] font-bold text-[#4E5968] hover:text-[#191F28] px-2 sm:px-4 py-2.5 transition-colors"
                             >
                                 로그인
                             </button>
                         )}
                         <div className="hidden sm:block w-[1px] h-4 bg-[#E5E8EB]" />
-                        <button
-                            onClick={() => navigate('/website-builder')}
-                            className="bg-[#3182F6] hover:bg-[#1B64DA] text-white text-[14px] font-bold px-5 py-3 rounded-full shadow-[0_8px_16px_rgba(49,130,246,0.2)] transition-all active:scale-95 flex items-center gap-1.5"
-                        >
-                            무료로 시작하기 <ArrowRight className="w-4 h-4" />
-                        </button>
+                        {currentUser ? (
+                            <button
+                                onClick={() => navigate('/website-builder')}
+                                className="bg-[#191F28] hover:bg-black text-white text-[13px] sm:text-[14px] font-bold px-3 sm:px-5 py-2 sm:py-3 rounded-full shadow-[0_8px_16px_rgba(0,0,0,0.15)] transition-all active:scale-95 flex items-center gap-1 sm:gap-1.5 whitespace-nowrap"
+                            >
+                                사이트 관리자 <ArrowRight className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                            </button>
+                        ) : (
+                            <button
+                                onClick={() => navigate('/website-builder')}
+                                className="bg-[#3182F6] hover:bg-[#1B64DA] text-white text-[13px] sm:text-[14px] font-bold px-3 sm:px-5 py-2 sm:py-3 rounded-full shadow-[0_8px_16px_rgba(49,130,246,0.2)] transition-all active:scale-95 flex items-center gap-1 sm:gap-1.5 whitespace-nowrap"
+                            >
+                                무료로 시작하기 <ArrowRight className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                            </button>
+                        )}
                     </div>
                 </div>
             </header>
 
+            {/* 모바일 전용 퀵 네비게이션 — PC 메뉴(nav, hidden md:flex)가 모바일에선 아예 안 보여서
+                섹션 이동 수단이 없었음. 같은 앵커 목록을 가로 스크롤 칩으로 노출 */}
+            <nav className="md:hidden sticky top-14 z-40 bg-white/95 backdrop-blur-xl border-b border-gray-100 overflow-x-auto no-scrollbar">
+                <div className="flex gap-2 px-4 py-2.5 w-max">
+                    {navItems.map((item) => (
+                        <a
+                            key={item.id}
+                            href={`#${item.id}`}
+                            onClick={scrollToSection(item.id)}
+                            className="shrink-0 px-3.5 py-2 rounded-full text-[13px] font-bold text-[#4E5968] bg-[#F9FAFB] border border-gray-100 whitespace-nowrap active:scale-95 active:bg-blue-50 active:text-[#3182F6] transition-all"
+                        >
+                            {item.label}
+                        </a>
+                    ))}
+                </div>
+            </nav>
+
             {/* 히어로 섹션 - 스테이온 플랫폼 통일감 적용 (상단 알림 배너 + 카드형 레이아웃) */}
-            <section className="px-4 sm:px-6 pt-8 pb-16 md:pt-14 md:pb-24">
+            <section className="px-4 sm:px-6 pt-6 sm:pt-8 pb-10 sm:pb-16 md:pt-14 md:pb-24">
                 <div className="max-w-6xl mx-auto">
 
                     {/* 상단 프로모션 인포 배너 (스마트 주보/수련회 플랫폼 레이아웃 계승) */}
-                    <div className="bg-white rounded-3xl p-4 md:p-5 border border-gray-100 shadow-sm mb-8 flex flex-col sm:flex-row items-center justify-between gap-4">
+                    <div className="bg-white rounded-2xl sm:rounded-3xl p-4 md:p-5 border border-gray-100 shadow-sm mb-6 sm:mb-8 flex flex-col sm:flex-row items-center justify-between gap-4">
                         <div className="flex items-center gap-3.5">
                             <div className="w-10 h-10 rounded-2xl bg-blue-50 text-[#3182F6] flex items-center justify-center font-bold flex-shrink-0">
                                 <Sparkles className="w-5 h-5" />
                             </div>
                             <div>
                                 <div className="text-xs font-bold text-[#3182F6] mb-0.5">STAYON CHURCH WEB PLATFORM</div>
-                                <div className="text-sm md:text-base font-extrabold text-gray-900">견적서 비교 없이, 빈칸 3개만 채우면 완성되는 우리 교회 공식 홈페이지</div>
+                                <div className="text-sm md:text-base font-extrabold text-gray-900 break-keep">견적서 비교 없이, 빈칸 3개만 채우면 완성되는 우리 교회 공식 홈페이지</div>
                             </div>
                         </div>
                         <button
@@ -179,34 +229,34 @@ export function WebsiteMain() {
                         </button>
                     </div>
 
-                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
+                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 sm:gap-12 items-center">
 
-                        <div className="lg:col-span-7 space-y-8">
-                            <div className="space-y-4">
-                                <div className="inline-flex items-center gap-1.5 bg-blue-50 text-[#3182F6] text-xs font-extrabold px-3.5 py-1.5 rounded-full">
+                        <div className="lg:col-span-7 space-y-6 sm:space-y-8">
+                            <div className="space-y-3 sm:space-y-4">
+                                <div className="inline-flex items-center gap-1.5 bg-blue-50 text-[#3182F6] text-xs font-extrabold px-3.5 py-1.5 rounded-full break-keep">
                                     주보·수련회에 이은 세 번째 스테이온 서비스
                                 </div>
-                                <h1 className="text-3xl sm:text-5xl md:text-[52px] font-black tracking-tight text-[#191F28] leading-[1.2] break-keep">
+                                <h1 className="text-[26px] sm:text-5xl md:text-[52px] font-black tracking-tight text-[#191F28] leading-[1.25] sm:leading-[1.2] break-keep">
                                     수백만 원짜리 교회 홈페이지,<br />
                                     <span className="text-[#3182F6]">이제 커피값이면 됩니다</span>
                                 </h1>
-                                <p className="text-lg md:text-xl text-gray-500 font-medium leading-relaxed break-keep">
+                                <p className="text-sm sm:text-lg md:text-xl text-gray-500 font-medium leading-relaxed break-keep">
                                     복잡한 외주 미팅과 유지보수 스트레스 없이, 빈칸만 채우면 우리 교회만의 품격 있는 사이트가 화면에 바로 나타납니다.
                                 </p>
                             </div>
 
-                            <div className="grid grid-cols-3 gap-3 pt-2">
-                                <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-2xs">
-                                    <div className="text-xs text-gray-400 font-bold mb-1">초기 비용</div>
-                                    <div className="text-base font-black text-[#17325C]">0원</div>
+                            <div className="grid grid-cols-3 gap-2 sm:gap-3 pt-2">
+                                <div className="bg-white p-3 sm:p-4 rounded-xl sm:rounded-2xl border border-gray-100 shadow-2xs">
+                                    <div className="text-[10px] sm:text-xs text-gray-400 font-bold mb-1">초기 비용</div>
+                                    <div className="text-sm sm:text-base font-black text-[#17325C]">0원</div>
                                 </div>
-                                <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-2xs">
-                                    <div className="text-xs text-gray-400 font-bold mb-1">제작 소요시간</div>
-                                    <div className="text-base font-black text-[#17325C]">단 5분</div>
+                                <div className="bg-white p-3 sm:p-4 rounded-xl sm:rounded-2xl border border-gray-100 shadow-2xs">
+                                    <div className="text-[10px] sm:text-xs text-gray-400 font-bold mb-1">제작 소요시간</div>
+                                    <div className="text-sm sm:text-base font-black text-[#17325C]">단 5분</div>
                                 </div>
-                                <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-2xs">
-                                    <div className="text-xs text-gray-400 font-bold mb-1">월 이용요금</div>
-                                    <div className="text-base font-black text-[#3182F6]">9,900원</div>
+                                <div className="bg-white p-3 sm:p-4 rounded-xl sm:rounded-2xl border border-gray-100 shadow-2xs">
+                                    <div className="text-[10px] sm:text-xs text-gray-400 font-bold mb-1">월 이용요금</div>
+                                    <div className="text-sm sm:text-base font-black text-[#3182F6]">9,900원</div>
                                 </div>
                             </div>
 
@@ -284,19 +334,19 @@ export function WebsiteMain() {
             </section>
 
             {/* 만드는 방법 (HOW IT WORKS) - 실제 순서가 있는 프로세스이므로 번호 사용 */}
-            <section id="process" className="py-20 bg-white border-y border-gray-100 px-6">
+            <section id="process" className="py-12 sm:py-20 bg-white border-y border-gray-100 px-4 sm:px-6">
                 <div className="max-w-6xl mx-auto">
-                    <div className="text-center max-w-2xl mx-auto mb-16">
+                    <div className="text-center max-w-2xl mx-auto mb-8 sm:mb-16">
                         <span className="text-xs font-extrabold text-[#3182F6] bg-blue-50 px-3.5 py-1.5 rounded-full inline-block mb-3">HOW IT WORKS</span>
-                        <h2 className="text-2xl md:text-4xl font-black text-[#191F28] tracking-tight">
+                        <h2 className="text-xl sm:text-2xl md:text-4xl font-black text-[#191F28] tracking-tight break-keep">
                             디자인 몰라도 괜찮아요,<br />3단계면 우리 교회 홈페이지 완성
                         </h2>
-                        <p className="text-gray-500 mt-3 text-sm md:text-base">코딩도, 디자인 툴도 필요 없습니다. 순서대로 따라오시면 됩니다.</p>
+                        <p className="text-gray-500 mt-3 text-sm md:text-base break-keep">코딩도, 디자인 툴도 필요 없습니다. 순서대로 따라오시면 됩니다.</p>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 relative">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6 relative">
                         {processSteps.map((proc) => (
-                            <div key={proc.num} className="bg-[#F8F9FA] p-8 rounded-[2rem] border border-gray-100 relative">
+                            <div key={proc.num} className="bg-[#F8F9FA] p-6 sm:p-8 rounded-[1.5rem] sm:rounded-[2rem] border border-gray-100 relative">
                                 <div className="flex items-center justify-between mb-6">
                                     <div className="w-12 h-12 rounded-2xl bg-white text-[#3182F6] flex items-center justify-center shadow-2xs border border-gray-100">
                                         <proc.icon className="w-5 h-5" />
@@ -315,22 +365,22 @@ export function WebsiteMain() {
                 검색엔진이 이 페이지를 크롤링할 때 그 교회 사이트들을 같이 발견할 수 있게 함.
                 배포된 사이트가 아직 하나도 없으면 섹션 자체를 숨김 */}
             {partnerSites.length > 0 && (
-                <section className="py-20 bg-white border-y border-gray-100 px-6">
+                <section className="py-12 sm:py-20 bg-white border-y border-gray-100 px-4 sm:px-6">
                     <div className="max-w-6xl mx-auto">
-                        <div className="text-center mb-12">
+                        <div className="text-center mb-8 sm:mb-12">
                             <p className="text-xs font-bold tracking-[0.25em] text-[#3182F6] mb-3">PARTNER CHURCHES</p>
-                            <h2 className="text-2xl md:text-4xl font-black text-gray-900 break-keep">
+                            <h2 className="text-xl sm:text-2xl md:text-4xl font-black text-gray-900 break-keep">
                                 스테이온과 함께 하고 있는 교회
                             </h2>
                         </div>
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
                             {partnerSites.map((site) => (
                                 <a
                                     key={site.slug}
                                     href={`https://${site.slug}.stayon-platform.com`}
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    className="block bg-gray-50 hover:bg-gray-100 border border-gray-100 rounded-2xl p-6 text-center transition-colors"
+                                    className="block bg-gray-50 hover:bg-gray-100 border border-gray-100 rounded-xl sm:rounded-2xl p-4 sm:p-6 text-center transition-colors"
                                 >
                                     <p className="font-bold text-gray-900 break-keep">{site.churchName}</p>
                                 </a>
@@ -341,18 +391,18 @@ export function WebsiteMain() {
             )}
 
             {/* 서비스 특징 섹션 (FEATURES) */}
-            <section id="features" className="py-20 px-6 max-w-6xl mx-auto">
-                <div className="text-center max-w-2xl mx-auto mb-16">
+            <section id="features" className="py-12 sm:py-20 px-4 sm:px-6 max-w-6xl mx-auto">
+                <div className="text-center max-w-2xl mx-auto mb-8 sm:mb-16">
                     <span className="text-xs font-extrabold text-[#3182F6] bg-blue-50 px-3.5 py-1.5 rounded-full inline-block mb-3">SERVICE FEATURES</span>
-                    <h2 className="text-2xl md:text-4xl font-black text-[#191F28] tracking-tight">
+                    <h2 className="text-xl sm:text-2xl md:text-4xl font-black text-[#191F28] tracking-tight break-keep">
                         교회 홈페이지에 꼭 필요한<br />핵심 기능만 담았습니다
                     </h2>
-                    <p className="text-gray-500 mt-3 text-sm md:text-base">어르신부터 새가족까지 누구나 한눈에 알아볼 수 있는 직관적인 구성</p>
+                    <p className="text-gray-500 mt-3 text-sm md:text-base break-keep">어르신부터 새가족까지 누구나 한눈에 알아볼 수 있는 직관적인 구성</p>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-8">
                     {featureCards.map((feat) => (
-                        <div key={feat.step} className="bg-white p-8 rounded-[2rem] border border-gray-100 shadow-2xs flex flex-col justify-between hover:shadow-md transition-shadow">
+                        <div key={feat.step} className="bg-white p-6 sm:p-8 rounded-[1.5rem] sm:rounded-[2rem] border border-gray-100 shadow-2xs flex flex-col justify-between hover:shadow-md transition-shadow">
                             <div>
                                 <div className="w-12 h-12 rounded-2xl bg-blue-50 text-[#3182F6] flex items-center justify-center mb-6">
                                     <feat.icon className="w-5 h-5" />
@@ -366,19 +416,19 @@ export function WebsiteMain() {
             </section>
 
             {/* 왜 필요한가? (WHY SECTION) */}
-            <section id="why" className="py-20 bg-white border-y border-gray-100 px-6">
+            <section id="why" className="py-12 sm:py-20 bg-white border-y border-gray-100 px-4 sm:px-6">
                 <div className="max-w-6xl mx-auto">
-                    <div className="text-center max-w-2xl mx-auto mb-16">
+                    <div className="text-center max-w-2xl mx-auto mb-8 sm:mb-16">
                         <span className="text-xs font-extrabold text-[#3182F6] bg-blue-50 px-3.5 py-1.5 rounded-full inline-block mb-3">WHY STAYON</span>
-                        <h2 className="text-2xl md:text-4xl font-black text-[#191F28] tracking-tight">
+                        <h2 className="text-xl sm:text-2xl md:text-4xl font-black text-[#191F28] tracking-tight break-keep">
                             우리 교회에 공식 홈페이지가<br />반드시 필요한 이유
                         </h2>
-                        <p className="text-gray-500 mt-3 text-sm md:text-base">온라인상의 첫인상이 곧 교회의 신뢰도와 전도로 이어집니다.</p>
+                        <p className="text-gray-500 mt-3 text-sm md:text-base break-keep">온라인상의 첫인상이 곧 교회의 신뢰도와 전도로 이어집니다.</p>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6">
                         {whyCards.map((card) => (
-                            <div key={card.title} className="bg-[#F8F9FA] p-8 rounded-[2rem] border border-gray-100">
+                            <div key={card.title} className="bg-[#F8F9FA] p-6 sm:p-8 rounded-[1.5rem] sm:rounded-[2rem] border border-gray-100">
                                 <div className="w-12 h-12 bg-white shadow-2xs rounded-2xl flex items-center justify-center text-[#3182F6] mb-6">
                                     <card.icon className="w-6 h-6" />
                                 </div>
@@ -391,28 +441,28 @@ export function WebsiteMain() {
             </section>
 
             {/* 기존 방식 비교 섹션 (COMPARISON) */}
-            <section id="comparison" className="py-24 bg-white border-y border-gray-100 px-6">
+            <section id="comparison" className="py-12 sm:py-24 bg-white border-y border-gray-100 px-4 sm:px-6">
                 <div className="max-w-6xl mx-auto">
-                    <div className="text-center max-w-2xl mx-auto mb-16">
+                    <div className="text-center max-w-2xl mx-auto mb-8 sm:mb-16">
                         <span className="text-xs font-extrabold text-[#3182F6] bg-blue-50 px-3.5 py-1.5 rounded-full inline-block mb-3">COMPARISON</span>
-                        <h2 className="text-2xl md:text-4xl font-black text-[#191F28] tracking-tight">
+                        <h2 className="text-xl sm:text-2xl md:text-4xl font-black text-[#191F28] tracking-tight break-keep">
                             외주 제작 vs 스테이온 교회 플랫폼
                         </h2>
-                        <p className="text-gray-500 mt-3 text-sm md:text-base">비용은 확 낮추고, 관리의 편리함은 극대화했습니다.</p>
+                        <p className="text-gray-500 mt-3 text-sm md:text-base break-keep">비용은 확 낮추고, 관리의 편리함은 극대화했습니다.</p>
                     </div>
 
-                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 max-w-5xl mx-auto items-stretch">
+                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6 max-w-5xl mx-auto items-stretch">
 
                         {/* 좌측: 기존 방식 카드 (소프트 그레이 스타일 & 토스 감성 마감) */}
-                        <div className="lg:col-span-6 bg-[#F8F9FA] rounded-[2.5rem] border border-gray-100 p-8 md:p-10 flex flex-col justify-between transition-all hover:bg-[#F2F4F6]">
+                        <div className="lg:col-span-6 bg-[#F8F9FA] rounded-[1.75rem] sm:rounded-[2.5rem] border border-gray-100 p-6 md:p-10 flex flex-col justify-between transition-all hover:bg-[#F2F4F6]">
                             <div>
-                                <div className="inline-flex items-center gap-1.5 bg-gray-200/60 text-gray-600 font-bold text-xs px-3.5 py-1.5 rounded-full mb-6">
+                                <div className="inline-flex items-center gap-1.5 bg-gray-200/60 text-gray-600 font-bold text-xs px-3.5 py-1.5 rounded-full mb-4 sm:mb-6">
                                     <XCircle className="w-4 h-4 text-gray-400" /> 기존 웹에이전시 외주 제작
                                 </div>
-                                <h3 className="text-xl md:text-2xl font-black text-gray-900 mb-3 tracking-tight">
+                                <h3 className="text-lg sm:text-xl md:text-2xl font-black text-gray-900 mb-3 tracking-tight break-keep">
                                     비싸고 수정이 번거로운<br />구식 에이전시 방식
                                 </h3>
-                                <p className="text-gray-500 text-sm md:text-base leading-relaxed mb-8 break-keep">
+                                <p className="text-gray-500 text-sm md:text-base leading-relaxed mb-6 sm:mb-8 break-keep">
                                     제작업체와 미팅하고 수백만 원을 지불해야 하며, 예배 시간 하나를 바꿀 때마다 추가 비용과 불필요한 연락 지연이 발생합니다.
                                 </p>
                             </div>
@@ -434,22 +484,22 @@ export function WebsiteMain() {
                         </div>
 
                         {/* 우측: 스테이온 솔루션 카드 (첫 번째 섹션과 동일한 딥 네이비 #191F28 + 블루 포인트 스타일) */}
-                        <div className="lg:col-span-6 bg-[#191F28] text-white rounded-[2.5rem] p-8 md:p-10 flex flex-col justify-between relative overflow-hidden shadow-xl shadow-slate-200">
+                        <div className="lg:col-span-6 bg-[#191F28] text-white rounded-[1.75rem] sm:rounded-[2.5rem] p-6 md:p-10 flex flex-col justify-between relative overflow-hidden shadow-xl shadow-slate-200">
                             <div className="absolute top-0 right-0 w-48 h-48 bg-blue-500/20 rounded-bl-full blur-xl pointer-events-none"></div>
 
                             <div>
-                                <div className="inline-flex items-center gap-1.5 bg-blue-500/20 text-blue-400 font-bold text-xs px-3.5 py-1.5 rounded-full mb-6 border border-blue-500/30">
+                                <div className="inline-flex items-center gap-1.5 bg-blue-500/20 text-blue-400 font-bold text-xs px-3.5 py-1.5 rounded-full mb-4 sm:mb-6 border border-blue-500/30">
                                     <CheckCircle2 className="w-4 h-4 text-emerald-400" /> 스테이온 교회 플랫폼
                                 </div>
-                                <h3 className="text-xl md:text-2xl font-black text-white mb-3 tracking-tight">
+                                <h3 className="text-lg sm:text-xl md:text-2xl font-black text-white mb-3 tracking-tight break-keep">
                                     누구나 직접 고치고 관리하는<br />스마트 홈 솔루션
                                 </h3>
-                                <p className="text-slate-400 text-sm md:text-base leading-relaxed mb-8 break-keep">
+                                <p className="text-slate-400 text-sm md:text-base leading-relaxed mb-6 sm:mb-8 break-keep">
                                     스마트폰이나 PC에서 빈칸만 채우면 PC와 모바일 반응형 사이트가 즉시 완성됩니다. 서버비와 도메인 비용이 모두 포함되어 있습니다.
                                 </p>
                             </div>
 
-                            <div className="space-y-4 border-t border-white/10 pt-6 relative z-10">
+                            <div className="space-y-3 sm:space-y-4 border-t border-white/10 pt-5 sm:pt-6 relative z-10">
                                 <div className="flex items-center gap-3 text-sm font-semibold text-white">
                                     <div className="w-6 h-6 rounded-full bg-emerald-400/20 text-emerald-400 flex items-center justify-center flex-shrink-0 text-xs font-bold">✓</div>
                                     <span>초기 제작비 0원 <span className="text-slate-400 text-xs font-normal">(첫 1개월 무료 체험)</span></span>
@@ -470,19 +520,19 @@ export function WebsiteMain() {
             </section>
 
             {/* 요금 안내 섹션 (PRICING) - 토스 스타일 배너 카드 조합으로 직관성 극대화 */}
-            <section id="pricing" className="py-24 bg-white border-y border-gray-100 px-6">
+            <section id="pricing" className="py-12 sm:py-24 bg-white border-y border-gray-100 px-4 sm:px-6">
                 <div className="max-w-6xl mx-auto">
-                    <div className="text-center max-w-2xl mx-auto mb-16">
+                    <div className="text-center max-w-2xl mx-auto mb-8 sm:mb-16">
                         <span className="text-xs font-extrabold text-[#3182F6] bg-blue-50 px-3.5 py-1.5 rounded-full inline-block mb-3">PRICING PLAN</span>
-                        <h2 className="text-2xl md:text-4xl font-black text-[#191F28] tracking-tight">
+                        <h2 className="text-xl sm:text-2xl md:text-4xl font-black text-[#191F28] tracking-tight break-keep">
                             합리적이고 투명한 요금 안내
                         </h2>
-                        <p className="text-gray-500 mt-3 text-sm md:text-base">숨겨진 추가 비용이 전혀 없습니다. 교회 재정에 맞게 선택하세요.</p>
+                        <p className="text-gray-500 mt-3 text-sm md:text-base break-keep">숨겨진 추가 비용이 전혀 없습니다. 교회 재정에 맞게 선택하세요.</p>
 
-                        <div className="inline-flex items-center bg-gray-100 p-1.5 rounded-full mt-8">
+                        <div className="inline-flex items-center bg-gray-100 p-1.5 rounded-full mt-6 sm:mt-8">
                             <button
                                 onClick={() => setBillingType('monthly')}
-                                className={`relative z-10 px-7 py-3 rounded-full text-sm font-bold transition-colors ${billingType === 'monthly' ? 'text-gray-900' : 'text-gray-500 hover:text-gray-900'
+                                className={`relative z-10 px-4 sm:px-7 py-2.5 sm:py-3 rounded-full text-[13px] sm:text-sm font-bold transition-colors whitespace-nowrap ${billingType === 'monthly' ? 'text-gray-900' : 'text-gray-500 hover:text-gray-900'
                                     }`}
                             >
                                 {billingType === 'monthly' && (
@@ -496,7 +546,7 @@ export function WebsiteMain() {
                             </button>
                             <button
                                 onClick={() => setBillingType('quarterly')}
-                                className={`relative z-10 px-7 py-3 rounded-full text-sm font-bold transition-colors flex items-center gap-2 ${billingType === 'quarterly' ? 'text-gray-900' : 'text-gray-500 hover:text-gray-900'
+                                className={`relative z-10 px-4 sm:px-7 py-2.5 sm:py-3 rounded-full text-[13px] sm:text-sm font-bold transition-colors flex items-center gap-1.5 sm:gap-2 whitespace-nowrap ${billingType === 'quarterly' ? 'text-gray-900' : 'text-gray-500 hover:text-gray-900'
                                     }`}
                             >
                                 {billingType === 'quarterly' && (
@@ -507,7 +557,7 @@ export function WebsiteMain() {
                                     />
                                 )}
                                 <span>3개월 결제</span>
-                                <span className="text-[11px] px-2.5 py-0.5 rounded-full font-black bg-[#3182F6] text-white">
+                                <span className="text-[10px] sm:text-[11px] px-2 sm:px-2.5 py-0.5 rounded-full font-black bg-[#3182F6] text-white whitespace-nowrap">
                                     45% 할인
                                 </span>
                             </button>
@@ -515,51 +565,51 @@ export function WebsiteMain() {
                     </div>
 
                     {/* 토스 레퍼런스 스타일의 강조형 와이드 프로모션 배너 카드 컨테이너 */}
-                    <div className="max-w-5xl mx-auto bg-[#F8F9FA] rounded-[2.5rem] border border-gray-100 overflow-hidden mb-8">
+                    <div className="max-w-5xl mx-auto bg-[#F8F9FA] rounded-[1.75rem] sm:rounded-[2.5rem] border border-gray-100 overflow-hidden mb-6 sm:mb-8">
                         <div className="grid grid-cols-1 lg:grid-cols-12 items-stretch">
 
                             {/* 좌측: 혜택 안내 설명 영역 */}
-                            <div className="lg:col-span-7 p-8 md:p-12 flex flex-col justify-between">
+                            <div className="lg:col-span-7 p-6 md:p-12 flex flex-col justify-between">
                                 <div>
-                                    <div className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-blue-50 text-[#3182F6] text-xs font-bold mb-6">
-                                        <Tag className="w-3.5 h-3.5" /> 정식 출시 전, 최저가 교회 홈 오픈 혜택
+                                    <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-blue-50 text-[#3182F6] text-xs font-bold mb-4 sm:mb-6">
+                                        <Tag className="w-3.5 h-3.5 shrink-0" /> <span className="break-keep">정식 출시 전, 최저가 교회 홈 오픈 혜택</span>
                                     </div>
-                                    <h3 className="text-2xl md:text-3xl font-black text-[#191F28] tracking-tight mb-4">
+                                    <h3 className="text-xl sm:text-2xl md:text-3xl font-black text-[#191F28] tracking-tight mb-3 sm:mb-4 break-keep">
                                         초기 구축 비용 0원,<br />
                                         가장 스마트한 교회 홈페이지
                                     </h3>
-                                    <p className="text-gray-500 text-sm md:text-base leading-relaxed mb-6 break-keep">
+                                    <p className="text-gray-500 text-sm md:text-base leading-relaxed mb-5 sm:mb-6 break-keep">
                                         현재 서비스 안정화를 위한 특별 베네핏이 적용 중입니다. 부담 없는 가격으로 우리 교회만의 품격 있는 공식 사이트를 오픈해보세요.
                                     </p>
 
-                                    <div className="bg-white rounded-2xl p-4 border border-gray-100 flex items-center gap-3">
+                                    <div className="bg-white rounded-2xl p-3.5 sm:p-4 border border-gray-100 flex items-center gap-3">
                                         <div className="w-8 h-8 rounded-xl bg-blue-50 text-[#3182F6] flex items-center justify-center flex-shrink-0">
                                             <Sparkles className="w-4 h-4" />
                                         </div>
-                                        <div className="text-xs md:text-sm font-bold text-[#17325C]">첫 1개월 무료 체험 기간을 제공해 드립니다.</div>
+                                        <div className="text-xs md:text-sm font-bold text-[#17325C] break-keep">첫 1개월 무료 체험 기간을 제공해 드립니다.</div>
                                     </div>
                                 </div>
 
-                                <div className="pt-6">
-                                    <a href="#faq" className="text-xs font-bold text-gray-400 hover:text-gray-600 transition-colors inline-flex items-center gap-1">
+                                <div className="pt-5 sm:pt-6">
+                                    <a href="#faq" onClick={scrollToSection('faq')} className="text-xs font-bold text-gray-400 hover:text-gray-600 transition-colors inline-flex items-center gap-1">
                                         요금제 상세 약관 및 환불 규정 확인하기 <ChevronRight className="w-3.5 h-3.5" />
                                     </a>
                                 </div>
                             </div>
 
                             {/* 우측: 다크 프리미엄 프라이싱 카드 영역 (토스 핀테크 스타일, 비교 섹션과 동일한 시그니처 네이비 #191F28) */}
-                            <div className="lg:col-span-5 bg-[#191F28] text-white p-8 md:p-12 flex flex-col justify-between relative overflow-hidden">
+                            <div className="lg:col-span-5 bg-[#191F28] text-white p-6 md:p-12 flex flex-col justify-between relative overflow-hidden">
                                 <div className="absolute top-0 right-0 w-40 h-40 bg-blue-500/20 rounded-bl-full pointer-events-none blur-xl"></div>
 
                                 <div>
-                                    <div className="flex items-center justify-between mb-4">
+                                    <div className="flex items-center justify-between mb-4 gap-2">
                                         <span className="text-xs font-bold text-blue-200 uppercase tracking-wider">Church Standard Plan</span>
-                                        <span className="text-[10px] bg-amber-400 text-gray-900 font-black px-2.5 py-1 rounded-full">
+                                        <span className="text-[10px] bg-amber-400 text-gray-900 font-black px-2.5 py-1 rounded-full shrink-0 whitespace-nowrap">
                                             인기 추천
                                         </span>
                                     </div>
 
-                                    <div className="relative space-y-1 mb-6 overflow-hidden">
+                                    <div className="relative space-y-1 mb-5 sm:mb-6 overflow-hidden">
                                         <AnimatePresence mode="wait" initial={false}>
                                             <motion.div
                                                 key={billingType}
@@ -571,11 +621,11 @@ export function WebsiteMain() {
                                                 <div className="text-xs text-gray-400 line-through font-semibold">
                                                     {billingType === 'monthly' ? '월 14,900원' : '3개월 44,700원'}
                                                 </div>
-                                                <div className="flex items-baseline gap-1.5">
-                                                    <span className="text-5xl font-black tracking-tight text-white">
+                                                <div className="flex items-baseline gap-1.5 flex-wrap">
+                                                    <span className="text-4xl sm:text-5xl font-black tracking-tight text-white">
                                                         {billingType === 'monthly' ? '9,900' : '27,900'}
                                                     </span>
-                                                    <span className="text-blue-200 text-sm font-medium">
+                                                    <span className="text-blue-200 text-xs sm:text-sm font-medium whitespace-nowrap">
                                                         {billingType === 'monthly' ? '원 / 월' : '원 / 년 (12개월)'}
                                                     </span>
                                                 </div>
@@ -583,9 +633,9 @@ export function WebsiteMain() {
                                         </AnimatePresence>
                                     </div>
 
-                                    <div className="w-full h-px bg-white/10 mb-6"></div>
+                                    <div className="w-full h-px bg-white/10 mb-5 sm:mb-6"></div>
 
-                                    <ul className="space-y-3 text-xs md:text-sm text-white font-medium mb-8">
+                                    <ul className="space-y-3 text-xs md:text-sm text-white font-medium mb-6 sm:mb-8">
                                         <li className="flex items-center gap-2.5"><CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" /> 교회 공식 홈페이지 정식 운영</li>
                                         <li className="flex items-center gap-2.5"><CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" /> 도메인 연결 기본 지원</li>
                                         <li className="flex items-center gap-3"><CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" /> 네이버/구글 SEO 검색 최적화</li>
@@ -606,36 +656,36 @@ export function WebsiteMain() {
                     </div>
 
                     {/* 서브 플랜 카드 (운영 관리 대행 옵션) */}
-                    <div className="max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div className="relative bg-white p-8 rounded-[2rem] border border-gray-100 shadow-2xs flex flex-col justify-between opacity-60 pointer-events-none cursor-not-allowed select-none">
+                    <div className="max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
+                        <div className="relative bg-white p-6 sm:p-8 rounded-[1.5rem] sm:rounded-[2rem] border border-gray-100 shadow-2xs flex flex-col justify-between opacity-60 pointer-events-none cursor-not-allowed select-none">
                             <div>
-                                <div className="flex items-center justify-between mb-3">
-                                    <h3 className="text-sm font-extrabold text-gray-400 flex items-center gap-1.5">
-                                        <Lock className="w-3.5 h-3.5 text-gray-400" />
+                                <div className="flex items-center justify-between mb-3 gap-2">
+                                    <h3 className="text-sm font-extrabold text-gray-400 flex items-center gap-1.5 break-keep">
+                                        <Lock className="w-3.5 h-3.5 text-gray-400 shrink-0" />
                                         운영 관리 대행 서비스 (선택 옵션)
                                     </h3>
-                                    <span className="text-xs bg-gray-100 text-gray-500 font-bold px-2.5 py-1 rounded-full">준비중</span>
+                                    <span className="text-xs bg-gray-100 text-gray-500 font-bold px-2.5 py-1 rounded-full shrink-0 whitespace-nowrap">준비중</span>
                                 </div>
-                                <p className="text-gray-400 text-xs md:text-sm leading-relaxed mb-4">
+                                <p className="text-gray-400 text-xs md:text-sm leading-relaxed mb-4 break-keep">
                                     컴퓨터나 홈페이지 관리가 부담스러우신 목회자님이나 교역자분들을 위해 스테이온 전담 팀이 직접 수정 및 업데이트를 대행해 드립니다.
                                 </p>
                             </div>
-                            <div className="text-xs text-gray-400 font-medium">
+                            <div className="text-xs text-gray-400 font-medium break-keep">
                                 🔒 준비 중인 서비스입니다. 출시되면 바로 알려드릴게요.
                             </div>
                         </div>
 
-                        <div className="bg-white p-8 rounded-[2rem] border border-gray-100 shadow-2xs flex flex-col justify-between">
+                        <div className="bg-white p-6 sm:p-8 rounded-[1.5rem] sm:rounded-[2rem] border border-gray-100 shadow-2xs flex flex-col justify-between">
                             <div>
-                                <div className="flex items-center justify-between mb-3">
-                                    <h3 className="text-sm font-extrabold text-[#17325C]">독립 도메인 및 SSL 보안서버</h3>
-                                    <span className="text-xs bg-emerald-50 text-emerald-600 font-bold px-2.5 py-1 rounded-full">기본 포함무상</span>
+                                <div className="flex items-center justify-between mb-3 gap-2">
+                                    <h3 className="text-sm font-extrabold text-[#17325C] break-keep">독립 도메인 및 SSL 보안서버</h3>
+                                    <span className="text-xs bg-emerald-50 text-emerald-600 font-bold px-2.5 py-1 rounded-full shrink-0 whitespace-nowrap">기본 포함무상</span>
                                 </div>
-                                <p className="text-gray-500 text-xs md:text-sm leading-relaxed mb-4">
+                                <p className="text-gray-500 text-xs md:text-sm leading-relaxed mb-4 break-keep">
                                     보안에 민감한 교회 사이트를 위해 안전한 HTTPS SSL 인증서와 고유 도메인 연결을 추가 비용 없이 기본으로 세팅해 드립니다.
                                 </p>
                             </div>
-                            <div className="text-xs text-emerald-600 font-medium">
+                            <div className="text-xs text-emerald-600 font-medium break-keep">
                                 ✨ 별도의 서버 유지비나 구축 외주비가 일체 없습니다.
                             </div>
                         </div>
@@ -644,14 +694,14 @@ export function WebsiteMain() {
             </section>
 
             {/* 자주 묻는 질문 (FAQ) */}
-            <section id="faq" className="py-20 px-6">
+            <section id="faq" className="py-12 sm:py-20 px-4 sm:px-6">
                 <div className="max-w-3xl mx-auto">
-                    <div className="text-center mb-16">
+                    <div className="text-center mb-8 sm:mb-16">
                         <span className="text-xs font-extrabold text-[#3182F6] bg-blue-50 px-3.5 py-1.5 rounded-full inline-block mb-3">FAQ</span>
-                        <h2 className="text-2xl md:text-4xl font-black text-[#191F28] tracking-tight">자주 묻는 질문</h2>
+                        <h2 className="text-xl sm:text-2xl md:text-4xl font-black text-[#191F28] tracking-tight">자주 묻는 질문</h2>
                     </div>
 
-                    <div className="space-y-3">
+                    <div className="space-y-2.5 sm:space-y-3">
                         {[
                             { q: '정말 초기 제작비나 외주 비용이 전혀 없나요?', a: '네, 별도의 외주 개발 비용이나 초기 세팅비가 전혀 없습니다. 스탠다드 플랜 첫 1개월은 무료로 충분히 체험해 보실 수 있습니다.' },
                             { q: '컴퓨터를 잘 다루지 못하는 교역자나 성도도 만들 수 있나요?', a: '물론입니다! 스마트폰이나 PC에서 안내에 따라 빈칸에 교회 이름과 예배 시간, 주소를 입력하기만 하면 누구나 5분 만에 정돈된 사이트가 완성됩니다.' },
@@ -661,13 +711,13 @@ export function WebsiteMain() {
                             <div key={idx} className="bg-white border border-gray-100 rounded-2xl overflow-hidden transition-all shadow-2xs">
                                 <button
                                     onClick={() => toggleFaq(idx)}
-                                    className="w-full p-5 text-left font-extrabold text-sm md:text-base flex justify-between items-center hover:bg-gray-50/60 text-gray-900"
+                                    className="w-full p-4 sm:p-5 text-left font-extrabold text-sm md:text-base flex justify-between items-center gap-3 hover:bg-gray-50/60 text-gray-900"
                                 >
-                                    <span>{faq.q}</span>
-                                    {openFaq === idx ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
+                                    <span className="break-keep">{faq.q}</span>
+                                    {openFaq === idx ? <ChevronUp className="w-4 h-4 text-gray-400 shrink-0" /> : <ChevronDown className="w-4 h-4 text-gray-400 shrink-0" />}
                                 </button>
                                 {openFaq === idx && (
-                                    <div className="p-5 pt-0 text-gray-500 text-xs md:text-sm leading-relaxed break-keep">
+                                    <div className="p-4 sm:p-5 pt-0 text-gray-500 text-xs md:text-sm leading-relaxed break-keep">
                                         {faq.a}
                                     </div>
                                 )}
@@ -678,10 +728,10 @@ export function WebsiteMain() {
             </section>
 
             {/* 하단 최종 CTA 섹션 */}
-            <section className="bg-[#17325C] text-white py-20 px-6 text-center">
-                <div className="max-w-3xl mx-auto space-y-6">
-                    <h2 className="text-2xl md:text-4xl font-black break-keep">우리 교회 공식 홈페이지, 지금 바로 시작하세요</h2>
-                    <p className="text-blue-200 text-sm md:text-base font-normal">첫 1개월 무료 체험 · 설치비 0원 · 보수적이고 안정적인 플랫폼</p>
+            <section className="bg-[#17325C] text-white py-12 sm:py-20 px-4 sm:px-6 text-center">
+                <div className="max-w-3xl mx-auto space-y-4 sm:space-y-6">
+                    <h2 className="text-xl sm:text-2xl md:text-4xl font-black break-keep">우리 교회 공식 홈페이지, 지금 바로 시작하세요</h2>
+                    <p className="text-blue-200 text-sm md:text-base font-normal break-keep">첫 1개월 무료 체험 · 설치비 0원 · 보수적이고 안정적인 플랫폼</p>
                     <div>
                         <button
                             onClick={() => navigate('/website-create')}
@@ -703,6 +753,13 @@ export function WebsiteMain() {
                     <ArrowRight className="w-5 h-5" />
                 </button>
             </div>
+
+            {/* 모바일 퀵 네비게이션 가로 스크롤바 숨기기 */}
+            <style dangerouslySetInnerHTML={{
+                __html: `
+                .no-scrollbar::-webkit-scrollbar { display: none; }
+                .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+            `}} />
 
         </div>
     );

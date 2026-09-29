@@ -18,7 +18,7 @@ import {
   ArrowLeft, Eye, Plus, Trash2, Send, Music, UserCheck, Wallet, ChevronUp,
   ChevronDown, Youtube, Check, Copy, CalendarIcon, Clock, BookOpen, Sparkles, Upload,
   MapPin, Info, ImageIcon, X, Megaphone, Share2, FileText, Move, Users,
-  Pencil, GripVertical, Quote, MessagesSquare, Lock, Tent, Palette, ExternalLink
+  Pencil, GripVertical, Quote, MessagesSquare, Lock, Tent, Palette, ExternalLink, Search
 } from "lucide-react";
 import { toast } from "sonner";
 import { useFeatureUpdateNotice } from "../../hooks/useFeatureUpdateNotice";
@@ -207,6 +207,12 @@ export function AdminEditor() {
   const [previewChurchName, setPreviewChurchName] = useState("");
   const [previewDescription, setPreviewDescription] = useState("");
 
+  // 우리 교회 주보(/view/{uid})를 구글 등 검색엔진에 노출할지 여부. 주보엔 심방 명단,
+  // 애경사, 새신자 이름 같은 정보가 들어갈 수 있어 기본값은 꺼짐(opt-in)이며,
+  // 교회가 직접 켜야만 사이트맵에 포함되어 검색에 노출된다(functions/src/index.ts 연동).
+  const [bulletinSearchable, setBulletinSearchable] = useState(false);
+  const [bulletinSearchableSaving, setBulletinSearchableSaving] = useState(false);
+
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (!user) return;
@@ -226,6 +232,7 @@ export function AdminEditor() {
           }
           if (typeof data.churchName === "string") setPreviewChurchName(data.churchName);
           if (typeof data.description === "string") setPreviewDescription(data.description);
+          if (typeof data.bulletinSearchable === "boolean") setBulletinSearchable(data.bulletinSearchable);
           // 커스텀 디자인 사용 권한 판정용 계정 데이터(allowedTemplates, 요금제 등).
           setAccountData(data);
         }
@@ -377,6 +384,26 @@ export function AdminEditor() {
       }, "image/jpeg", 0.85);
     };
     img.src = coverOriginal;
+  };
+
+  const handleToggleBulletinSearchable = async (checked: boolean) => {
+    if (!auth.currentUser) {
+      toast.error("로그인이 필요합니다");
+      return;
+    }
+    const uid = auth.currentUser.uid;
+    setBulletinSearchable(checked); // 낙관적 업데이트
+    setBulletinSearchableSaving(true);
+    try {
+      await setDoc(doc(db, "users", uid), { bulletinSearchable: checked }, { merge: true });
+      toast.success(checked ? "이제 우리 교회 주보가 검색엔진에 노출돼요." : "검색엔진 노출을 껐어요.");
+    } catch (error) {
+      console.error("검색엔진 노출 설정 저장 실패:", error);
+      setBulletinSearchable(!checked); // 실패 시 되돌리기
+      toast.error("설정 저장 중 오류가 발생했습니다.");
+    } finally {
+      setBulletinSearchableSaving(false);
+    }
   };
 
   const handleCancelCoverEditor = () => {
@@ -4366,6 +4393,32 @@ export function AdminEditor() {
       {activeTab === "cover" && (
       <div className="container mx-auto px-4 py-6 max-w-4xl">
         <Card className="p-5 rounded-[1.75rem] border-0 bg-white shadow-xl shadow-blue-500/5">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <h2 className="text-xl font-bold flex items-center gap-3 text-gray-800">
+                <div className="w-2.5 h-8 bg-emerald-500 rounded-full shrink-0" /> 검색엔진 노출
+              </h2>
+              <p className="text-xs text-gray-500 mt-1.5 leading-relaxed">
+                켜면 우리 교회 주보 링크가 구글, 네이버 검색결과에 나올 수 있어요. 기본값은 꺼짐이고,
+                꺼져 있으면 링크를 아는 사람만 볼 수 있어요. 주보에 외부 공개를 원치 않는 내용이 들어갈 수 있으니, 신중하게 켜주세요.
+              </p>
+            </div>
+            <Switch
+              checked={bulletinSearchable}
+              onCheckedChange={handleToggleBulletinSearchable}
+              disabled={bulletinSearchableSaving}
+              className="shrink-0 mt-1"
+            />
+          </div>
+          {bulletinSearchable && (
+            <p className="text-[11px] text-emerald-600/90 font-medium mt-3 leading-relaxed flex items-start gap-1.5">
+              <Search className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+              검색엔진에 실제로 반영되기까지는 며칠에서 몇 주가 걸릴 수 있어요.
+            </p>
+          )}
+        </Card>
+
+        <Card className="p-5 rounded-[1.75rem] border-0 bg-white shadow-xl shadow-blue-500/5 mt-4">
           <div className="mb-4">
             <h2 className="text-xl font-bold flex items-center gap-3 text-gray-800">
               <div className="w-2.5 h-8 bg-blue-600 rounded-full shrink-0" /> 카카오톡 공유 이미지

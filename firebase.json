@@ -16,6 +16,14 @@
         "function": "churchSitemap"
       },
       {
+        "source": "/bulletin-sitemap.xml",
+        "function": "bulletinSitemap"
+      },
+      {
+        "source": "/website",
+        "function": "siteOG"
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }

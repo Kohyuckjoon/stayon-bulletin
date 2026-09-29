@@ -26,59 +26,18 @@ interface LocationSectionProps {
     primaryColor?: string;
 }
 
-// 이미지 시안 기준 기본 데이터
-const DEFAULT_SUBWAY_GUIDES: SubwayGuide[] = [
-    {
-        lineName: "분당선/신분당선",
-        lineColor: "#F5A623",
-        description: "정자역(2번 출구)에서 220번 버스 환승 → 백현교차로(남서울 골프장 입구) 정류장(4 정거장)에서 하차",
-    },
-    {
-        lineName: "분당선",
-        lineColor: "#F5A623",
-        description: "수내역(2번 또는 3번 출구)에서 200m 직진 → 하나은행 앞 버스정류소에서 220번, 370번 버스 환승 → 백현교차로 정류장(2 정거장)에서 하차",
-    },
-    {
-        lineName: "신분당선",
-        lineColor: "#D0021B",
-        description: "판교역(1번 출구)에서 150m 직진 후 횡단보도 건너편 → 판교역북편 버스정류장에서 마을버스 107번, 117번 환승 → 백현교차로 정류장(4 정거장)에서 하차",
-    },
-];
-
-const DEFAULT_BUS_GUIDES: BusGuide[] = [
-    {
-        direction: "안양방면",
-        busNumbers: ["1303"],
-        routeInfo: "안양역 - 안양시청 - 관양동 - 인덕원역 - 백현교차로 - 정자역 - 죽전 - 단국대학교 - 외국어대학교",
-    },
-    {
-        direction: "강남/양재방면",
-        busNumbers: ["1241"],
-        routeInfo: "신논현역 - 강남역티월드 - 서초구청 - 낙생고등학교 - 오리역 - 법무연수원 - 청덕중고교",
-    },
-    {
-        direction: "휘문/잠실방면",
-        busNumbers: ["6900"],
-        routeInfo: "휘문고입구 - 삼성역 - 잠실종합운동장 - 잠실역 - 석촌역 - 수서역 - 낙생고등학교 - 동천 - 광교차고지",
-    },
-    {
-        direction: "판교역방면",
-        busNumbers: ["310", "370", "누리1"],
-        routeInfo: "판교역동편 - 성남역 - 서현역 - 수내역 - 한국석유관리원.교회앞",
-    },
-];
-
 export function LocationSection({
-    churchName = "판교채플",
-    address = "경기도 성남시 분당구 안양판교로 1219 (판교동)",
-    phone = "031-719-3882",
-    fax = "031-716-3881",
+    churchName = "",
+    address = "",
+    phone,
+    fax,
     mapDownloadUrl,
-    subwayGuides = DEFAULT_SUBWAY_GUIDES,
-    busGuides = DEFAULT_BUS_GUIDES,
-    parkingInfo = "성전 내 주차장 및 제2주차장을 이용하실 수 있습니다. 주일 예배 시간대에는 안내위원의 지시에 따라 주차해 주시기 바랍니다.",
+    subwayGuides = [],
+    busGuides = [],
+    parkingInfo,
     primaryColor = "#1B3A6B",
 }: LocationSectionProps) {
+    // 주차 안내는 교회가 실제로 입력한 내용이 있을 때만 탭 자체를 보여줌(가짜 안내문 대체 없음)
     const [activeTab, setActiveTab] = useState<"location" | "parking">("location");
 
     // 카카오 지도 기본 길찾기 URL 생성
@@ -86,129 +45,110 @@ export function LocationSection({
 
     return (
         <section className="w-full bg-white py-10 sm:py-16 px-4 sm:px-8">
-            <div className="max-w-5xl mx-auto">
-                {/* 1. 상단 히어로 타이틀 밴드 */}
-                <div 
-                    className="rounded-3xl p-8 sm:p-12 text-white mb-8 shadow-sm transition-all"
-                    style={{ backgroundColor: primaryColor }}
-                >
-                    <p className="text-xs font-bold tracking-[0.25em] text-white/70 mb-2">VISIT US</p>
-                    <h2 className="text-2xl sm:text-4xl font-black mb-3 break-keep">
+            <div className="max-w-6xl mx-auto">
+                {/* 1. 상단 타이틀 — 다른 섹션(최근 소식 등)과 같은 결: 흰 배경에 왼쪽 정렬 라벨+제목 */}
+                <div className="mb-8 sm:mb-10">
+                    <p className="text-xs font-bold tracking-[0.25em] mb-2" style={{ color: primaryColor }}>VISIT US</p>
+                    <h2 className="text-2xl sm:text-3xl font-black text-gray-900 mb-3 break-keep">
                         {churchName} 오시는 길
                     </h2>
-                    <p className="text-xs sm:text-sm text-white/80 font-medium break-keep">
+                    <p className="text-sm text-gray-500 font-medium break-keep">
                         대중교통과 주차 정보를 한눈에 확인하세요.
                     </p>
                 </div>
 
-                {/* 2. 탭 스위처 (오시는 방법 / 주차안내) */}
-                <div className="flex justify-center mb-10">
-                    <div className="bg-[#F1F5F9] p-1.5 rounded-full flex gap-1">
-                        <button
-                            onClick={() => setActiveTab("location")}
-                            className={`px-6 py-2.5 rounded-full text-xs sm:text-sm font-bold transition-all ${
-                                activeTab === "location"
-                                    ? "bg-[#1E293B] text-white shadow-sm"
-                                    : "text-gray-500 hover:text-gray-900"
-                            }`}
-                        >
-                            오시는 방법
-                        </button>
-                        <button
-                            onClick={() => setActiveTab("parking")}
-                            className={`px-6 py-2.5 rounded-full text-xs sm:text-sm font-bold transition-all ${
-                                activeTab === "parking"
-                                    ? "bg-[#1E293B] text-white shadow-sm"
-                                    : "text-gray-500 hover:text-gray-900"
-                            }`}
-                        >
-                            주차안내
-                        </button>
+                {/* 2. 탭 스위처 (오시는 방법 / 주차안내) — 주차 안내는 실제로 입력된 내용이 있을 때만 노출 */}
+                {parkingInfo && (
+                    <div className="flex justify-center mb-10">
+                        <div className="bg-[#F1F5F9] p-1.5 rounded-full flex gap-1">
+                            <button
+                                onClick={() => setActiveTab("location")}
+                                className={`px-6 py-2.5 rounded-full text-xs sm:text-sm font-bold transition-all ${
+                                    activeTab === "location"
+                                        ? "bg-[#1E293B] text-white shadow-sm"
+                                        : "text-gray-500 hover:text-gray-900"
+                                }`}
+                            >
+                                오시는 방법
+                            </button>
+                            <button
+                                onClick={() => setActiveTab("parking")}
+                                className={`px-6 py-2.5 rounded-full text-xs sm:text-sm font-bold transition-all ${
+                                    activeTab === "parking"
+                                        ? "bg-[#1E293B] text-white shadow-sm"
+                                        : "text-gray-500 hover:text-gray-900"
+                                }`}
+                            >
+                                주차안내
+                            </button>
+                        </div>
                     </div>
-                </div>
+                )}
 
                 {/* TAB 1: 오시는 방법 */}
                 {activeTab === "location" && (
                     <div className="space-y-10">
-                        {/* 지도 & 메인 정보 카드 */}
-                        <div className="bg-[#F8FAFC] border border-gray-100 rounded-3xl overflow-hidden shadow-sm grid grid-cols-1 lg:grid-cols-12">
-                            {/* 좌측: 정보 영역 */}
-                            <div className="lg:col-span-5 p-7 sm:p-10 flex flex-col justify-between bg-white lg:bg-transparent">
-                                <div>
-                                    <h3 className="text-xl sm:text-2xl font-black text-gray-900 mb-6 break-keep">
-                                        {churchName}
-                                    </h3>
-                                    <div className="space-y-4 text-xs sm:text-sm font-medium text-gray-600">
-                                        <div className="flex items-start gap-3">
-                                            <MapPin className="w-4 h-4 text-gray-400 shrink-0 mt-0.5" />
-                                            <div>
-                                                <span className="font-bold text-gray-900 block mb-0.5">주소</span>
-                                                <span className="break-keep">{address}</span>
-                                            </div>
-                                        </div>
-                                        {phone && (
-                                            <div className="flex items-start gap-3">
-                                                <Phone className="w-4 h-4 text-gray-400 shrink-0 mt-0.5" />
-                                                <div>
-                                                    <span className="font-bold text-gray-900 block mb-0.5">전화</span>
-                                                    <span>{phone}</span>
-                                                </div>
-                                            </div>
-                                        )}
-                                        {fax && (
-                                            <div className="flex items-start gap-3">
-                                                <Printer className="w-4 h-4 text-gray-400 shrink-0 mt-0.5" />
-                                                <div>
-                                                    <span className="font-bold text-gray-900 block mb-0.5">팩스</span>
-                                                    <span>{fax}</span>
-                                                </div>
-                                            </div>
-                                        )}
+                        {/* 메인 정보 카드 — 카카오맵 지도 미리보기(iframe)는 빼고, 정보 카드 + 길찾기 버튼만 사용 */}
+                        <div className="bg-[#F8FAFC] border border-gray-100 rounded-3xl p-7 sm:p-10 max-w-xl">
+                            <h3 className="text-xl sm:text-2xl font-black text-gray-900 mb-6 break-keep">
+                                {churchName}
+                            </h3>
+                            <div className="space-y-4 text-xs sm:text-sm font-medium text-gray-600">
+                                <div className="flex items-start gap-3">
+                                    <MapPin className="w-4 h-4 text-gray-400 shrink-0 mt-0.5" />
+                                    <div>
+                                        <span className="font-bold text-gray-900 block mb-0.5">주소</span>
+                                        <span className="break-keep">{address}</span>
                                     </div>
                                 </div>
-
-                                <div className="mt-8 pt-6 border-t border-gray-100">
-                                    <a
-                                        href={kakaoMapSearchUrl}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="inline-flex items-center justify-center w-full bg-[#FEE500] text-[#191919] font-bold text-xs sm:text-sm py-3 px-4 rounded-2xl hover:bg-[#FADA0A] transition-all gap-2"
-                                    >
-                                        카카오맵에서 길찾기 →
-                                    </a>
-                                </div>
+                                {phone && (
+                                    <div className="flex items-start gap-3">
+                                        <Phone className="w-4 h-4 text-gray-400 shrink-0 mt-0.5" />
+                                        <div>
+                                            <span className="font-bold text-gray-900 block mb-0.5">전화</span>
+                                            <span>{phone}</span>
+                                        </div>
+                                    </div>
+                                )}
+                                {fax && (
+                                    <div className="flex items-start gap-3">
+                                        <Printer className="w-4 h-4 text-gray-400 shrink-0 mt-0.5" />
+                                        <div>
+                                            <span className="font-bold text-gray-900 block mb-0.5">팩스</span>
+                                            <span>{fax}</span>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
 
-                            {/* 우측: 지도 영역 (Iframe / Kakao Map) */}
-                            <div className="lg:col-span-7 aspect-square sm:aspect-video lg:aspect-auto min-h-[300px] bg-gray-200 relative">
-                                <iframe
-                                    title={`${churchName} 지도`}
-                                    src={`https://m.map.kakao.com/actions/searchView?q=${encodeURIComponent(address)}`}
-                                    className="w-full h-full border-0"
-                                />
+                            <div className="mt-8 pt-6 border-t border-gray-100">
+                                <a
+                                    href={kakaoMapSearchUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center justify-center w-full bg-[#FEE500] text-[#191919] font-bold text-xs sm:text-sm py-3 px-4 rounded-2xl hover:bg-[#FADA0A] transition-all gap-2"
+                                >
+                                    카카오맵에서 길찾기 →
+                                </a>
                             </div>
                         </div>
 
-                        {/* 약도 다운로드 밴드 */}
+                        {/* 약도 다운로드 밴드 — 실제로 등록된 파일이 있을 때만 노출(항상 실패하는 버튼 방지) */}
+                        {mapDownloadUrl && (
                         <div className="bg-[#F8FAFC] border border-gray-100 rounded-2xl p-4 sm:p-6 flex flex-col sm:flex-row items-center justify-between gap-4">
                             <p className="text-xs sm:text-sm text-gray-600 font-medium text-center sm:text-left break-keep">
                                 교회의 인쇄용 약도 파일이 필요하신 분은 아래 버튼을 눌러 다운로드하세요.
                             </p>
                             <a
-                                href={mapDownloadUrl || "#"}
+                                href={mapDownloadUrl}
                                 download
-                                onClick={(e) => {
-                                    if (!mapDownloadUrl) {
-                                        e.preventDefault();
-                                        alert("준비된 약도 다운로드 파일이 없습니다.");
-                                    }
-                                }}
                                 className="inline-flex items-center gap-2 bg-white border border-gray-200 text-xs sm:text-sm font-bold text-gray-800 px-5 py-2.5 rounded-xl hover:bg-gray-50 transition-all shrink-0 shadow-sm"
                             >
                                 <Download className="w-4 h-4 text-gray-500" />
                                 약도 다운로드
                             </a>
                         </div>
+                        )}
 
                         {/* 지하철 안내 */}
                         {subwayGuides.length > 0 && (
@@ -293,7 +233,7 @@ export function LocationSection({
                 )}
 
                 {/* TAB 2: 주차 안내 */}
-                {activeTab === "parking" && (
+                {activeTab === "parking" && parkingInfo && (
                     <div className="bg-[#F8FAFC] border border-gray-100 rounded-3xl p-8 sm:p-12">
                         <div className="flex items-center gap-3 mb-6">
                             <div className="p-3 rounded-2xl bg-white border border-gray-200 shadow-sm text-gray-800">

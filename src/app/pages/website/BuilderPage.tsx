@@ -83,7 +83,7 @@ const emptyForm = {
   phone: '', email: '', address: '', locationDetail: '', intro: '', logoUrl: '', heroImageUrl: '', buildingImageUrl: '',
   metaTitle: '', metaDesc: '',
   kakaoLink: '', youtubeLink: '', instagramLink: '',
-  youtubeVideoId: '', latestSermonTitle: '', latestSermonSpeaker: '',
+  youtubeVideoId: '', latestSermonTitle: '', latestSermonSpeaker: '', sermonExcerpt: '',
 }
 
 // 선택한 이미지 파일을 캔버스로 리사이즈/압축해서 Blob으로 변환
@@ -163,6 +163,7 @@ export default function BuilderPage({ onBack }: Props) {
   const [onlineWorshipEnabled, setOnlineWorshipEnabled] = useState<boolean>(true)
   const [mainWorshipGroup, setMainWorshipGroup] = useState<string>('')
   const [introVideoEnabled, setIntroVideoEnabled] = useState<boolean>(true)
+  const [sermonDisplayMode, setSermonDisplayMode] = useState<'video' | 'text'>('video')
 
   const update = (field: keyof typeof form, value: string) => setForm(p => ({ ...p, [field]: value }))
 
@@ -389,6 +390,7 @@ export default function BuilderPage({ onBack }: Props) {
     setSermons([])
     setOnlineWorshipEnabled(true)
     setIntroVideoEnabled(true)
+    setSermonDisplayMode('video')
     setMainWorshipGroup('')
     setSlug('')
     setSlugError('')
@@ -423,6 +425,7 @@ export default function BuilderPage({ onBack }: Props) {
       youtubeVideoId: site.youtubeVideoId || '',
       latestSermonTitle: site.latestSermonTitle || '',
       latestSermonSpeaker: site.latestSermonSpeaker || '',
+      sermonExcerpt: site.sermonExcerpt || '',
     })
     // 구버전에 단일 worshipTime 문자열만 있던 프로젝트는, 예배 1개짜리 목록으로 자동 변환해서 데이터 유실 없이 이어서 편집 가능하게 함
     setWorshipServices(
@@ -448,6 +451,7 @@ export default function BuilderPage({ onBack }: Props) {
     })))
     setOnlineWorshipEnabled(site.onlineWorshipEnabled !== false)
     setIntroVideoEnabled(site.introVideoEnabled !== false)
+    setSermonDisplayMode(site.sermonDisplayMode === 'text' ? 'text' : 'video')
     setMainWorshipGroup(site.mainWorshipGroup || '')
     setSelectedColor(site.primaryColor || '#1B3A6B')
     setActiveMenus(site.activeMenus || ['home', 'worship', 'community', 'news', 'online-worship', 'location'])
@@ -505,6 +509,8 @@ export default function BuilderPage({ onBack }: Props) {
     instagramLink: form.instagramLink,
     youtubeVideoId: form.youtubeVideoId ? extractYoutubeId(form.youtubeVideoId) : '',
     introVideoEnabled,
+    sermonDisplayMode,
+    sermonExcerpt: form.sermonExcerpt,
     latestSermonTitle: form.latestSermonTitle,
     latestSermonSpeaker: form.latestSermonSpeaker,
     worshipServices: worshipServices.filter(s => s.title.trim() || s.time.trim()),
@@ -821,6 +827,7 @@ export default function BuilderPage({ onBack }: Props) {
                     setSermons([])
                     setOnlineWorshipEnabled(true)
                     setIntroVideoEnabled(true)
+                    setSermonDisplayMode('video')
                     setMainWorshipGroup('')
                     setSlug('')
                     setSlugError('')
@@ -1141,9 +1148,45 @@ export default function BuilderPage({ onBack }: Props) {
                     <h3 style={{ fontWeight: 700, color: THEME.navy, marginBottom: 20, fontSize: 16 }}>설교 · 미디어</h3>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                       <div>
-                        <Field label="유튜브 영상 ID 또는 링크" placeholder="ex. dQw4w9WgXcQ 또는 유튜브 주소" value={form.youtubeVideoId} onChange={v => update('youtubeVideoId', v)} />
-                        <p style={{ fontSize: 12, color: THEME.muted, marginTop: 4 }}>유튜브 링크를 그대로 붙여넣어도 자동으로 인식됩니다. 비워두면 이 섹션 자체가 안 보입니다.</p>
+                        <label style={{ fontSize: 13, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 6 }}>표시 방식</label>
+                        <div style={{ display: 'flex', gap: 4, background: '#F3F4F6', borderRadius: 10, padding: 4, width: 'fit-content' }}>
+                          {[
+                            { key: 'video' as const, label: '영상으로 표시' },
+                            { key: 'text' as const, label: '텍스트로 표시' },
+                          ].map(opt => (
+                            <button
+                              key={opt.key}
+                              onClick={() => setSermonDisplayMode(opt.key)}
+                              style={{
+                                background: sermonDisplayMode === opt.key ? 'white' : 'transparent',
+                                border: 'none',
+                                borderRadius: 8,
+                                padding: '8px 16px',
+                                fontFamily: 'inherit',
+                                fontWeight: sermonDisplayMode === opt.key ? 700 : 500,
+                                fontSize: 13,
+                                color: sermonDisplayMode === opt.key ? THEME.navy : THEME.muted,
+                                boxShadow: sermonDisplayMode === opt.key ? '0 1px 4px rgba(0,0,0,0.1)' : 'none',
+                                cursor: 'pointer',
+                              }}
+                            >
+                              {opt.label}
+                            </button>
+                          ))}
+                        </div>
+                        <p style={{ fontSize: 12, color: THEME.muted, marginTop: 6 }}>영상 없이 글로만 교회를 소개하고 싶을 때 "텍스트로 표시"를 선택하세요.</p>
                       </div>
+                      {sermonDisplayMode === 'video' ? (
+                        <div>
+                          <Field label="유튜브 영상 ID 또는 링크" placeholder="ex. dQw4w9WgXcQ 또는 유튜브 주소" value={form.youtubeVideoId} onChange={v => update('youtubeVideoId', v)} />
+                          <p style={{ fontSize: 12, color: THEME.muted, marginTop: 4 }}>유튜브 링크를 그대로 붙여넣어도 자동으로 인식됩니다. 비워두면 이 섹션 자체가 안 보입니다.</p>
+                        </div>
+                      ) : (
+                        <div>
+                          <TextareaField label="교회 소개 문구" placeholder="ex. 스테이온교회는 1936년에 설립되어 90여 년의 역사 속에서 하나님의 은혜로 성장해 왔습니다..." value={form.sermonExcerpt} onChange={v => update('sermonExcerpt', v)} />
+                          <p style={{ fontSize: 12, color: THEME.muted, marginTop: 4 }}>2~5줄 정도의 짧은 요약을 권장합니다. 비워두면 이 섹션 자체가 안 보입니다.</p>
+                        </div>
+                      )}
                       <label style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', padding: '10px 14px', borderRadius: 10, background: introVideoEnabled ? THEME.skyLight : '#F9FAFB', border: `1px solid ${introVideoEnabled ? '#BFDBFE' : THEME.border}`, transition: 'all 0.15s' }}>
                         <div
                           onClick={() => setIntroVideoEnabled(v => !v)}
@@ -1161,8 +1204,8 @@ export default function BuilderPage({ onBack }: Props) {
                         <span style={{ fontWeight: 500, fontSize: 14, color: THEME.text, flex: 1 }} onClick={() => setIntroVideoEnabled(v => !v)}>교회 소개 영상 섹션 표시</span>
                       </label>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                        <Field label="최근 설교 제목" placeholder="ex. 은혜 위에 은혜러라" value={form.latestSermonTitle} onChange={v => update('latestSermonTitle', v)} />
-                        <Field label="설교자 (선택)" placeholder="ex. 홍길동 목사" value={form.latestSermonSpeaker} onChange={v => update('latestSermonSpeaker', v)} />
+                        <Field label="영상 제목" placeholder="ex. 스테이온교회를 소개합니다" value={form.latestSermonTitle} onChange={v => update('latestSermonTitle', v)} />
+                        <Field label="부제 / 소개 문구 (선택)" placeholder="ex. 담임목사 홍길동" value={form.latestSermonSpeaker} onChange={v => update('latestSermonSpeaker', v)} />
                       </div>
                     </div>
                   </div>
