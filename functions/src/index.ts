@@ -327,40 +327,56 @@ export const bulletinOG = functions.https.onRequest(async (req, res) => {
   // 2. 검색봇(구글/빙/네이버)인 경우: 교회가 "검색엔진 노출"을 켠 주보만 실제
   //    내용을 채워서 내려주고, 안 켠 주보는 noindex를 명시해 혹시라도 이
   //    URL이 발견되더라도 검색결과엔 절대 나오지 않게 한다. 실제 방문자(성도)
-  //    화면과는 완전히 분리된 분기라 이 아래 3번(일반 방문자)엔 영향 없음
+  //    화면과는 완전히 분리된 분기라 이 아래 3번(일반 방문자)엔 영향 없음.
+  //
+  //    아래 bulletinSearchable 분기는 일부러 SPA(index.html의 <script> 태그)를
+  //    전혀 포함하지 않는 완전히 독립된 정적 HTML만 반환한다 — SPA를 같이
+  //    보내면 구글이 자바스크립트를 실행하는 2차 렌더링 단계에서 이 React
+  //    앱(BulletinView.tsx)이 그대로 마운트되면서, Firestore에서 주보 데이터를
+  //    다 받아오기 전인 "불러오는 중..." 로딩 스피너 화면에서 캡처가 끝나버리는
+  //    문제가 실제로 확인됨(구글 서치콘솔 "실시간 테스트"로 재현). 검색봇에게는
+  //    처음부터 로딩이 필요 없는 완성된 HTML만 주면 이 문제 자체가 생기지 않음
   if (SEARCH_BOT_REGEX.test(userAgent)) {
+    if (bulletinSearchable) {
+      const safeTitle = escapeHtml(ogTitle);
+      const safeDesc = escapeHtml(description);
+      const safeUrl = escapeHtml(
+        `https://bulletin.stayon-platform.com/view/${bulletinId}`
+      );
+      const safeImageUrl = /^https?:\/\//.test(imageUrl) ?
+        escapeHtml(imageUrl) :
+        "";
+      const imageTag = safeImageUrl ?
+        `<meta property="og:image" content="${safeImageUrl}" />` :
+        "";
+      const html = `
+        <!DOCTYPE html>
+        <html lang="ko">
+        <head>
+          <meta charset="utf-8" />
+          <title>${safeTitle}</title>
+          <meta name="description" content="${safeDesc}" />
+          <link rel="canonical" href="${safeUrl}" />
+          <meta property="og:type" content="website" />
+          <meta property="og:title" content="${safeTitle}" />
+          <meta property="og:description" content="${safeDesc}" />
+          <meta property="og:url" content="${safeUrl}" />
+          ${imageTag}
+        </head>
+        <body>
+          <h1>${safeTitle}</h1>
+          <p>${safeDesc}</p>
+        </body>
+        </html>
+      `;
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.status(200).send(html);
+      return;
+    }
+
     const indexPath = path.join(__dirname, "../dist/index.html");
     if (fs.existsSync(indexPath)) {
       const indexHtml = fs.readFileSync(indexPath, "utf8");
-
-      if (bulletinSearchable) {
-        const safeTitle = escapeHtml(ogTitle);
-        const safeDesc = escapeHtml(description);
-        const safeUrl = escapeHtml(
-          `https://bulletin.stayon-platform.com/view/${bulletinId}`
-        );
-        const safeImageUrl = /^https?:\/\//.test(imageUrl) ?
-          escapeHtml(imageUrl) :
-          "";
-        const merged = injectChurchMeta(indexHtml, {
-          title: safeTitle,
-          description: safeDesc,
-          canonicalUrl: safeUrl,
-          imageUrl: safeImageUrl,
-        });
-        const bodyHtml = [
-          `<h1>${safeTitle}</h1>`,
-          `<p>${safeDesc}</p>`,
-        ].join("\n");
-        const withBody = merged.replace(
-          "<div id=\"root\"></div>",
-          `<div id="root">${bodyHtml}</div>`
-        );
-        res.setHeader("Content-Type", "text/html; charset=utf-8");
-        res.status(200).send(withBody);
-        return;
-      }
-
       const withNoindex = indexHtml.replace(
         "</head>",
         "  <meta name=\"robots\" content=\"noindex, nofollow\" />\n  </head>"
