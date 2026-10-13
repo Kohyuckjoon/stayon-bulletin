@@ -7,7 +7,7 @@ import {onSchedule} from "firebase-functions/v2/scheduler";
 import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
 import {google} from "googleapis";
-import {sendMailNotification} from "./utils/adminNotify";
+import {sendMailNotification, sendCustomerEmail} from "./utils/adminNotify";
 import * as path from "path";
 import * as fs from "fs";
 
@@ -205,6 +205,311 @@ export const updateMonthlyViews = onSchedule(
     console.log(
       `[이번 달 조회수 갱신 완료] 대상 교회 수: ${totalsByAuthor.size}`
     );
+  }
+);
+
+// ============================================================
+// 정기결제(빌링) — src/hooks/useBillingKey.ts(프론트)에서 발급한 빌링키로
+// 서버가 매달 실제 결제를 긁는 부분. usePayment.ts(기존 단건 결제) 및 그
+// 관련 함수는 이 블록에서 전혀 건드리지 않음 — 완전히 새로운 코드.
+// ============================================================
+
+const RECURRING_ADMIN_EMAILS = [
+  "akhj123akhjk@gmail.com", "stayon.platform@gmail.com",
+];
+
+// 다음 결제일 계산. src/hooks/useBillingKey.ts의 addMonthsClamped와 동일한
+// 규칙("해당 일자가 없는 달은 말일에 결제") — 프론트/서버가 서로 다른
+// 빌드라 공유 import는 못 하고, 같은 로직을 서버 쪽에도 그대로 둠.
+/**
+ * @param {Date} date 기준 날짜
+ * @param {number} months 더할 개월 수
+ * @return {Date} 말일 보정이 적용된 결과 날짜
+ */
+function addMonthsClamped(date: Date, months: number): Date {
+  const targetDay = date.getDate();
+  const d = new Date(date);
+  d.setDate(1);
+  d.setMonth(d.getMonth() + months);
+  const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  d.setDate(Math.min(targetDay, lastDay));
+  return d;
+}
+
+// TODO: NHN KCP 정기결제 채널이 포트원에서 승인되면, 발급받는 API
+// 시크릿키를 functions 환경변수 PORTONE_API_SECRET으로 설정해야 실제
+// 결제가 성공함. 지금은 이 값이 없거나 채널이 미승인이라 항상 실패
+// 응답이 오는 게 정상 — 그 실패 처리 경로(재시도/정지/메일)는 지금도
+// testRecurringBillingNow로 바로 테스트할 수 있다.
+/**
+ * @param {string} billingKey 포트원이 발급한 빌링키
+ * @param {number} amount 결제 금액(원)
+ * @param {string} orderName 주문명(결제 내역에 표시됨)
+ * @param {string} customerId 결제 요청자 식별용 uid
+ * @return {Promise<object>} 결제 결과({success, message?})
+ */
+async function chargeBillingKeyPayment(
+  billingKey: string,
+  amount: number,
+  orderName: string,
+  customerId: string
+): Promise<{ success: boolean; message?: string }> {
+  const secret = process.env.PORTONE_API_SECRET;
+  if (!secret) {
+    return {success: false, message: "PORTONE_API_SECRET 환경변수 미설정"};
+  }
+  const paymentId = `stayon_recurring_${customerId}_${Date.now()}`;
+  try {
+    const res = await fetch(
+      `https://api.portone.io/payments/${encodeURIComponent(paymentId)}` +
+        "/billing-key",
+      {
+        method: "POST",
+        headers: {
+          "Authorization": `PortOne ${secret}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          billingKey,
+          orderName,
+          customer: {id: customerId},
+          amount: {total: amount},
+          currency: "KRW",
+        }),
+      }
+    );
+    const json = (await res.json()) as { message?: string; code?: string };
+    if (!res.ok || json.code) {
+      return {
+        success: false,
+        message: json.message || `HTTP ${res.status}`,
+      };
+    }
+    return {success: true};
+  } catch (error) {
+    console.error("[정기결제] 빌링키 결제 요청 오류:", error);
+    return {success: false, message: String(error)};
+  }
+}
+
+// 교회 한 곳의 정기결제를 처리하는 핵심 로직. 매일 도는 스케줄 함수와
+// 운영자 수동 테스트 함수가 공통으로 쓴다 — 여기 한 곳만 고치면 둘 다
+// 같이 바뀐다.
+/**
+ * @param {string} uid 처리할 사용자(교회)의 uid
+ * @param {FirebaseFirestore.DocumentData} data users/{uid} 문서 데이터
+ * @return {Promise<void>}
+ */
+async function processOneRecurringUser(
+  uid: string,
+  data: FirebaseFirestore.DocumentData
+): Promise<void> {
+  const billingKey = data.billingKey as string | undefined;
+  const amount = data.billingAmount as number | undefined;
+  const planName = (data.billingPlanName as string) || "정기결제";
+  const email = (data.email as string) || "";
+  const churchName = (data.churchName as string) || "교회담당자";
+
+  if (!billingKey || !amount) {
+    console.error(`[정기결제] ${uid} — billingKey/billingAmount 없음`);
+    return;
+  }
+
+  const result = await chargeBillingKeyPayment(
+    billingKey, amount, planName, uid
+  );
+
+  if (result.success) {
+    const now = new Date();
+    let baseDate = now;
+    const current = data.lastPaymentDate as
+      FirebaseFirestore.Timestamp | undefined;
+    if (current?.toDate && current.toDate() > now) {
+      baseDate = current.toDate();
+    }
+    const newExpiration = addMonthsClamped(baseDate, 1);
+
+    await db.collection("users").doc(uid).update({
+      status: "allinone",
+      isPaidUser: true,
+      currentPlan: planName,
+      lastPaymentDate: admin.firestore.Timestamp.fromDate(newExpiration),
+      nextBillingDate:
+        admin.firestore.Timestamp.fromDate(addMonthsClamped(now, 1)),
+      billingFailCount: 0,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    try {
+      await sendMailNotification("PAYMENT", {
+        buyerName: churchName,
+        buyerEmail: email,
+        planName,
+        amount: amount.toLocaleString(),
+        date: new Date().toLocaleString("ko-KR", {timeZone: "Asia/Seoul"}),
+      });
+    } catch (e) {
+      console.error("[정기결제] 성공 알림 메일 실패:", e);
+    }
+    console.log(`[정기결제 성공] ${uid} / ${amount}원`);
+    return;
+  }
+
+  // 실패 처리 — 최대 3회(3일) 재시도, 최종 실패 시 일시정지
+  const failCount = ((data.billingFailCount as number) || 0) + 1;
+  if (failCount >= 3) {
+    await db.collection("users").doc(uid).update({
+      subscriptionActive: false,
+      billingFailCount: failCount,
+      billingSuspendedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    await sendCustomerEmail(
+      email,
+      "[STAYON] 정기결제 실패로 서비스가 일시 정지됐어요",
+      `<p>${churchName}님, 3회 결제 시도가 모두 실패하여 서비스 이용이 ` +
+        "일시 정지됐습니다.</p><p>카드 정보를 확인하신 후 마이페이지 " +
+        "(관리자 홈 &gt; 결제 관리)에서 다시 등록해주세요.</p>"
+    );
+    console.log(`[정기결제 최종 실패] ${uid} — 서비스 일시정지`);
+  } else {
+    await db.collection("users").doc(uid).update({billingFailCount: failCount});
+    await sendCustomerEmail(
+      email,
+      "[STAYON] 정기결제에 실패했어요",
+      `<p>${churchName}님, 카드 결제에 실패했습니다(사유: ` +
+        `${result.message || "알 수 없음"}).</p>` +
+        `<p>${3 - failCount}회 더 자동으로 재시도하며, 계속 실패하면 ` +
+        "서비스가 일시 정지될 수 있어요.</p>"
+    );
+    console.log(`[정기결제 실패 ${failCount}/3] ${uid}`);
+  }
+}
+
+// 매일 한국시간 09:00에 1번, 오늘이 결제일인 정기결제 사용자를 전부 찾아
+// 처리한다. 카드를 막 등록한 사용자는 nextBillingDate가 "오늘"로 잡혀
+// 있어서(useBillingKey.ts 참고) 이 함수가 첫 결제도 같이 처리하게 된다.
+export const processRecurringBilling = onSchedule(
+  {schedule: "0 9 * * *", timeZone: "Asia/Seoul"},
+  async () => {
+    const now = admin.firestore.Timestamp.now();
+    const dueSnap = await db
+      .collection("users")
+      .where("subscriptionActive", "==", true)
+      .where("nextBillingDate", "<=", now)
+      .get();
+
+    console.log(`[정기결제 스케줄] 대상 ${dueSnap.size}건`);
+    for (const docSnap of dueSnap.docs) {
+      await processOneRecurringUser(docSnap.id, docSnap.data());
+    }
+  }
+);
+
+// 결제 3일 전 안내 메일. 매일 한국시간 10:00에 1번 돌면서, nextBillingDate가
+// 정확히 3일 뒤인 사용자를 찾아 안내 메일을 보낸다.
+export const sendUpcomingBillingReminders = onSchedule(
+  {schedule: "0 10 * * *", timeZone: "Asia/Seoul"},
+  async () => {
+    const kstNow = new Date(
+      new Date().toLocaleString("en-US", {timeZone: "Asia/Seoul"})
+    );
+    const target = new Date(kstNow);
+    target.setDate(target.getDate() + 3);
+    const dayStart = new Date(
+      target.getFullYear(), target.getMonth(), target.getDate()
+    );
+    const dayEnd = new Date(dayStart);
+    dayEnd.setDate(dayEnd.getDate() + 1);
+
+    const dueSnap = await db
+      .collection("users")
+      .where("subscriptionActive", "==", true)
+      .where(
+        "nextBillingDate", ">=", admin.firestore.Timestamp.fromDate(dayStart)
+      )
+      .where(
+        "nextBillingDate", "<", admin.firestore.Timestamp.fromDate(dayEnd)
+      )
+      .get();
+
+    console.log(`[정기결제 3일 전 안내] 대상 ${dueSnap.size}건`);
+    for (const docSnap of dueSnap.docs) {
+      const data = docSnap.data();
+      const email = (data.email as string) || "";
+      const churchName = (data.churchName as string) || "교회담당자";
+      const amount = (data.billingAmount as number) || 0;
+      await sendCustomerEmail(
+        email,
+        "[STAYON] 3일 뒤 정기결제가 예정돼 있어요",
+        `<p>${churchName}님, 3일 뒤(${target.toLocaleDateString("ko-KR")}) ` +
+          `${amount.toLocaleString()}원이 등록하신 카드로 자동 결제될 ` +
+          "예정이에요.</p><p>해지를 원하시면 마이페이지(관리자 홈 &gt; " +
+          "결제 관리)에서 미리 해지해주세요.</p>"
+      );
+    }
+  }
+);
+
+// 운영자 전용 수동 테스트 트리거. KCP 정기결제 승인 전이라 실제 결제
+// 자체는 항상 실패하지만(PORTONE_API_SECRET 미설정), 재시도 횟수 증가·
+// 3회 후 자동 정지·메일 발송 같은 주변 로직은 이 함수로 지금 바로 눌러서
+// 확인할 수 있다. 매일 도는 스케줄 함수를 기다릴 필요 없이
+// ?adminEmail=관리자이메일&uid=테스트할uid 로 호출하면 그 사용자 한 명만
+// 즉시 처리한다. 일반 성도/사이트 방문자가 쓰는 라우트와는 무관.
+export const testRecurringBillingNow = functions.https.onRequest(
+  async (req, res) => {
+    const callerEmail = req.query.adminEmail as string | undefined;
+    if (!callerEmail || !RECURRING_ADMIN_EMAILS.includes(callerEmail)) {
+      res.status(403).send("adminEmail 쿼리에 운영자 이메일을 넣어주세요.");
+      return;
+    }
+    const uid = req.query.uid as string | undefined;
+    if (!uid) {
+      res.status(400).send("uid 쿼리 파라미터가 필요합니다.");
+      return;
+    }
+    const snap = await db.collection("users").doc(uid).get();
+    if (!snap.exists) {
+      res.status(404).send("해당 uid의 사용자를 찾을 수 없습니다.");
+      return;
+    }
+    await processOneRecurringUser(uid, snap.data() || {});
+    res.status(200).send(
+      "처리 완료. Firestore users/" + uid + " 문서의 billingFailCount/" +
+        "subscriptionActive 값과 콘솔 로그, 메일함을 확인해보세요."
+    );
+  }
+);
+
+// 유튜브 채널 링크의 채널명을 대신 가져와준다. 유튜브 공식 oEmbed는 영상(watch) URL만
+// 지원하고 채널 URL은 지원하지 않아서(404), 채널 페이지 HTML의 og:title 메타태그를
+// 직접 읽는 방식으로 우회한다. 브라우저에서 바로 채널 페이지를 fetch하면 CORS로 막히기
+// 때문에 서버(여기)에서 대신 가져와 돌려준다. AdminEditor.tsx에서 채널 링크 입력 후
+// blur 시 호출한다. 실패해도 관리자가 채널명을 직접 입력하면 되므로 치명적이지 않다.
+export const fetchYoutubeChannelName = functions.https.onRequest(
+  async (req, res) => {
+    res.set("Access-Control-Allow-Origin", "*");
+    const channelUrl = String(req.query.url || "");
+    if (!/^https:\/\/(www\.)?youtube\.com\//.test(channelUrl)) {
+      res.status(400).json({error: "invalid url"});
+      return;
+    }
+    try {
+      const resp = await fetch(channelUrl, {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        },
+      });
+      const html = await resp.text();
+      const match = html.match(
+        /<meta property="og:title" content="([^"]*)"/
+      );
+      res.json({name: match ? match[1] : ""});
+    } catch (error) {
+      console.error("유튜브 채널명 가져오기 실패:", error);
+      res.status(500).json({error: "fetch failed"});
+    }
   }
 );
 

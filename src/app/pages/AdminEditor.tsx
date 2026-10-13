@@ -18,7 +18,8 @@ import {
   ArrowLeft, Eye, Plus, Trash2, Send, Music, UserCheck, Wallet, ChevronUp,
   ChevronDown, Youtube, Check, Copy, CalendarIcon, Clock, BookOpen, Sparkles, Upload,
   MapPin, Info, ImageIcon, X, Megaphone, Share2, FileText, Move, Users,
-  Pencil, GripVertical, Quote, MessagesSquare, Lock, Tent, Palette, ExternalLink, Search
+  Pencil, GripVertical, Quote, MessagesSquare, Lock, Tent, Palette, ExternalLink, Search,
+  Instagram, AtSign
 } from "lucide-react";
 import { toast } from "sonner";
 import { useFeatureUpdateNotice } from "../../hooks/useFeatureUpdateNotice";
@@ -654,6 +655,12 @@ export function AdminEditor() {
   ]);
   const [officersEnabled, setOfficersEnabled] = useState(true);
 
+  // 금주의 찬양 "더보기" - 기존 단일 youtubeId 카드와 별개로, 최대 8개까지 추가 영상을
+  // 카드뷰로 보여주는 신규 기능. 토글로 켜고 끌 수 있으며 기본값은 꺼짐.
+  const [extraHymns, setExtraHymns] = useState<{ id: string; youtubeId: string; title: string }[]>([]);
+  const [extraHymnsEnabled, setExtraHymnsEnabled] = useState(false);
+  const [fetchingHymnId, setFetchingHymnId] = useState<string | null>(null);
+
   // 담임목사 인사말(스탠다드 요금제 이상). 이름/사진은 위 "섬기시는분 안내 설정 > 담임 목사"의
   // seniorPastor.name/photoUrl을 그대로 재사용하고(중복 입력 방지), 여기서는 인사말 고유
   // 정보만 별도로 관리한다. phoneSectionEnabled는 연락처 블록 전체의 노출 on/off,
@@ -680,6 +687,20 @@ export function AdminEditor() {
   const [locationImage, setLocationImage] = useState("");
   const [locationImageRatio, setLocationImageRatio] = useState<"4:3" | "1:1">("4:3");
   const locationImageInputRef = useRef<HTMLInputElement | null>(null);
+
+  // 메뉴 > "교회 SNS · 유튜브" 화면용. 네이버 블로그/인스타그램/쓰레드는 링크만 있으면
+  // 되고(비워두면 그 항목만 안 보임), 유튜브는 채널 링크 + (자동으로 가져온) 채널명 +
+  // 관리자가 직접 올리는 썸네일 이미지로 구성한다 - 채널 URL은 oEmbed로 썸네일을
+  // 못 가져오기 때문(영상 링크만 지원됨).
+  const [snsEnabled, setSnsEnabled] = useState(true);
+  const [snsNaverBlog, setSnsNaverBlog] = useState("");
+  const [snsInstagram, setSnsInstagram] = useState("");
+  const [snsThreads, setSnsThreads] = useState("");
+  const [youtubeChannelUrl, setYoutubeChannelUrl] = useState("");
+  const [youtubeChannelName, setYoutubeChannelName] = useState("");
+  const [youtubeChannelThumbnail, setYoutubeChannelThumbnail] = useState("");
+  const [fetchingChannelName, setFetchingChannelName] = useState(false);
+  const youtubeThumbnailInputRef = useRef<HTMLInputElement | null>(null);
 
   // "교회 로고" - 교회 주소·표어처럼 거의 안 바뀌는 값이라 새 주보 작성 시 최근 값을 이어받는다.
   // 성도 화면 맨 위(히어로 사진 바로 아래)에 흰색 띠로 표시된다.
@@ -798,6 +819,92 @@ export function AdminEditor() {
       toast.error("이미지를 읽는 중 오류가 발생했습니다.");
     };
     reader.readAsDataURL(file);
+  };
+
+  const handleYoutubeThumbnailUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      toast.error("이미지 파일(png, jpeg 등)만 업로드 가능합니다.");
+      return;
+    }
+    if (!auth.currentUser) {
+      toast.error("로그인이 필요합니다");
+      return;
+    }
+    const uid = auth.currentUser.uid;
+
+    const reader2 = new FileReader();
+    reader2.onload = (event) => {
+      const img = new Image();
+      img.src = event.target?.result as string;
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        const MAX_SIZE = 480;
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > MAX_SIZE) {
+            height *= MAX_SIZE / width;
+            width = MAX_SIZE;
+          }
+        } else {
+          if (height > MAX_SIZE) {
+            width *= MAX_SIZE / height;
+            height = MAX_SIZE;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx?.drawImage(img, 0, 0, width, height);
+
+        canvas.toBlob(async (blob) => {
+          if (!blob) {
+            toast.error("이미지 처리에 실패했습니다.");
+            return;
+          }
+          try {
+            const fileRef = storageRef(storage, `youtubeThumbnails/${uid}.jpg`);
+            await uploadBytes(fileRef, blob, { contentType: "image/jpeg" });
+            const url = await getDownloadURL(fileRef);
+            setYoutubeChannelThumbnail(url);
+            toast.success("썸네일 이미지가 등록되었습니다.");
+          } catch (error) {
+            console.error("유튜브 채널 썸네일 업로드 실패:", error);
+            toast.error("업로드 중 오류가 발생했습니다.");
+          }
+        }, "image/jpeg", 0.8);
+      };
+    };
+    reader2.onerror = () => {
+      toast.error("이미지를 읽는 중 오류가 발생했습니다.");
+    };
+    reader2.readAsDataURL(file);
+  };
+
+  // 유튜브 채널 URL은 oEmbed가 지원되지 않아(영상 링크만 지원), 서버 함수가 채널
+  // 페이지의 og:title을 대신 읽어서 채널명을 돌려준다. 실패해도(함수 미배포, 네트워크
+  // 오류 등) 채널명 입력창은 그대로 수동 입력 가능한 상태로 남는다.
+  const handleYoutubeChannelUrlBlur = async (rawUrl: string) => {
+    const url = rawUrl.trim();
+    if (!url) return;
+    setFetchingChannelName(true);
+    try {
+      const res = await fetch(
+        `https://asia-northeast3-stayonsbplatform.cloudfunctions.net/fetchYoutubeChannelName?url=${encodeURIComponent(url)}`
+      );
+      if (res.ok) {
+        const data = await res.json();
+        if (data.name) setYoutubeChannelName(data.name);
+      }
+    } catch {
+      // 서버 함수가 아직 배포되지 않았거나 네트워크 오류 - 채널명은 직접 입력하면 된다.
+    }
+    setFetchingChannelName(false);
   };
 
   // 교회 로고 업로드. 로고는 투명 배경 PNG가 많으므로 JPEG로 바꾸지 않고 PNG로 유지한다.
@@ -953,6 +1060,16 @@ export function AdminEditor() {
             setChurchIntroEnabled(data.churchIntroEnabled !== false);
           }
           if (data.churchImage) setChurchImage(data.churchImage);
+          // SNS·유튜브 채널도 표어·로고처럼 거의 안 바뀌므로 최근 값을 이어받는다.
+          if (data.snsNaverBlog || data.snsInstagram || data.snsThreads || data.youtubeChannelUrl) {
+            setSnsEnabled(data.snsEnabled !== false);
+            setSnsNaverBlog(data.snsNaverBlog || "");
+            setSnsInstagram(data.snsInstagram || "");
+            setSnsThreads(data.snsThreads || "");
+            setYoutubeChannelUrl(data.youtubeChannelUrl || "");
+            setYoutubeChannelName(data.youtubeChannelName || "");
+            setYoutubeChannelThumbnail(data.youtubeChannelThumbnail || "");
+          }
           // 담임 목사는 표어·로고처럼 거의 안 바뀌므로 최근 값을 이어받는다.
           if (data.seniorPastor && data.seniorPastor.name) {
             setSeniorPastor({
@@ -1091,6 +1208,54 @@ export function AdminEditor() {
 
   const updateOfficer = (officerId: string, field: 'position' | 'name' | 'photoUrl' | 'duty', val: string) => {
     setOfficers(officers.map((o) => (o.id === officerId ? { ...o, [field]: val } : o)));
+  };
+
+  // 찬양 "더보기" 영상 목록 조작. 링크를 입력하고 포커스를 벗어나면(onBlur) ID를 추출해
+  // 유튜브 oEmbed로 제목을 자동으로 가져와 저장한다(매번 성도 화면에서 다시 불러오지 않도록).
+  const addExtraHymn = () => {
+    if (extraHymns.length >= 8) {
+      toast("최대 8개까지 추가할 수 있어요.");
+      return;
+    }
+    setExtraHymns([...extraHymns, { id: Date.now().toString(), youtubeId: "", title: "" }]);
+  };
+
+  const removeExtraHymn = (hymnId: string) => {
+    setExtraHymns(extraHymns.filter((h) => h.id !== hymnId));
+  };
+
+  const updateExtraHymnRaw = (hymnId: string, rawInput: string) => {
+    setExtraHymns(extraHymns.map((h) => (h.id === hymnId ? { ...h, youtubeId: rawInput } : h)));
+  };
+
+  const extractYoutubeVideoId = (input: string): string | null => {
+    const trimmed = input.trim();
+    if (!trimmed) return null;
+    const match = trimmed.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/);
+    if (match) return match[1];
+    if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) return trimmed;
+    return null;
+  };
+
+  const handleExtraHymnBlur = async (hymnId: string, rawInput: string) => {
+    const videoId = extractYoutubeVideoId(rawInput);
+    if (!videoId) {
+      if (rawInput.trim() !== "") toast("유튜브 링크를 확인해주세요.");
+      return;
+    }
+    setFetchingHymnId(hymnId);
+    let title = "제목 없음";
+    try {
+      const res = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${videoId}`)}&format=json`);
+      if (res.ok) {
+        const data = await res.json();
+        title = data.title || "제목 없음";
+      }
+    } catch {
+      // 네트워크 오류 - "제목 없음"으로 저장해두고, 링크를 다시 입력하면 재시도된다.
+    }
+    setExtraHymns((prev) => prev.map((h) => (h.id === hymnId ? { ...h, youtubeId: videoId, title } : h)));
+    setFetchingHymnId(null);
   };
 
   // 중직자 사진 업로드 - handleImageUpload와 동일한 압축 규칙(600px, JPEG 0.75) +
@@ -1344,6 +1509,8 @@ export function AdminEditor() {
       ministersEnabled,
       officers,
       officersEnabled,
+      extraHymns,
+      extraHymnsEnabled,
       seniorPastor,
       seniorPastorEnabled,
       sharingQuestions,
@@ -1353,6 +1520,13 @@ export function AdminEditor() {
       addressEnabled,
       locationImage,
       locationImageRatio,
+      snsEnabled,
+      snsNaverBlog,
+      snsInstagram,
+      snsThreads,
+      youtubeChannelUrl,
+      youtubeChannelName,
+      youtubeChannelThumbnail,
       mottoEnabled,
       mottoLabelType,
       mottoCustomLabel,
@@ -1375,7 +1549,7 @@ export function AdminEditor() {
       isPreview: true // 미리보기 모드임을 알림
     };
     localStorage.setItem("temp_bulletin", JSON.stringify(tempData));
-  }, [bulletinData, titleFontSizeEnabled, sections, announcements, midweekServices, sundayServices, ministers, ministersEnabled, officers, officersEnabled, seniorPastor, seniorPastorEnabled, sharingQuestions, sharingEnabled, churchAddress, churchAddressDetail, addressEnabled, locationImage, locationImageRatio, mottoEnabled, mottoLabelType, mottoCustomLabel, mottoText, mottoReference, churchVisionEnabled, churchVision, churchMissionEnabled, churchMission, pastorGreetingEnabled, pastorGreeting, pastoralColumnsEnabled, bulletinTemplate, accountData, customDesignConfig, churchLogo, churchLogoEnabled, churchLogoSize, churchIntro, churchIntroEnabled, churchImage]);
+  }, [bulletinData, titleFontSizeEnabled, sections, announcements, midweekServices, sundayServices, ministers, ministersEnabled, officers, officersEnabled, extraHymns, extraHymnsEnabled, seniorPastor, seniorPastorEnabled, sharingQuestions, sharingEnabled, churchAddress, churchAddressDetail, addressEnabled, locationImage, locationImageRatio, snsEnabled, snsNaverBlog, snsInstagram, snsThreads, youtubeChannelUrl, youtubeChannelName, youtubeChannelThumbnail, mottoEnabled, mottoLabelType, mottoCustomLabel, mottoText, mottoReference, churchVisionEnabled, churchVision, churchMissionEnabled, churchMission, pastorGreetingEnabled, pastorGreeting, pastoralColumnsEnabled, bulletinTemplate, accountData, customDesignConfig, churchLogo, churchLogoEnabled, churchLogoSize, churchIntro, churchIntroEnabled, churchImage]);
 
   useEffect(() => {
     if (isEditing && id) {
@@ -1425,6 +1599,10 @@ export function AdminEditor() {
               setOfficers(data.officers);
             }
             setOfficersEnabled(data.officersEnabled !== false);
+            if (data.extraHymns && Array.isArray(data.extraHymns)) {
+              setExtraHymns(data.extraHymns);
+            }
+            setExtraHymnsEnabled(data.extraHymnsEnabled === true);
             if (data.seniorPastor && typeof data.seniorPastor === "object") {
               setSeniorPastor({
                 role: data.seniorPastor.role || "담임 목사",
@@ -1454,6 +1632,13 @@ export function AdminEditor() {
             setAddressEnabled(data.addressEnabled !== false);
             setLocationImage(data.locationImage || "");
             setLocationImageRatio(data.locationImageRatio === "1:1" ? "1:1" : "4:3");
+            setSnsEnabled(data.snsEnabled !== false);
+            setSnsNaverBlog(data.snsNaverBlog || "");
+            setSnsInstagram(data.snsInstagram || "");
+            setSnsThreads(data.snsThreads || "");
+            setYoutubeChannelUrl(data.youtubeChannelUrl || "");
+            setYoutubeChannelName(data.youtubeChannelName || "");
+            setYoutubeChannelThumbnail(data.youtubeChannelThumbnail || "");
             setChurchLogo(data.churchLogo || "");
             setChurchLogoEnabled(data.churchLogoEnabled !== false);
             setChurchLogoSize(normalizeChurchLogoSize(data.churchLogoSize));
@@ -1667,6 +1852,16 @@ export function AdminEditor() {
           duty: String(o.duty || ""),
         }));
 
+      // 찬양 더보기도 링크를 안 채운 빈 행은 저장하지 않고, 최대 8개까지만 저장한다.
+      const sanitizedExtraHymns = extraHymns
+        .filter((h: any) => String(h.youtubeId || "").trim() !== "")
+        .slice(0, 8)
+        .map((h: any) => ({
+          id: String(h.id || Date.now()),
+          youtubeId: String(h.youtubeId || ""),
+          title: String(h.title || ""),
+        }));
+
       const sanitizedSeniorPastor = {
         role: String(seniorPastor.role || "담임 목사"),
         name: String(seniorPastor.name || ""),
@@ -1754,6 +1949,8 @@ export function AdminEditor() {
         accountNumber: String(bulletinData.accountNumber || ""),
         accountHolder: String(bulletinData.accountHolder || ""),
         youtubeId: String(bulletinData.youtubeId || ""),
+        extraHymns: sanitizedExtraHymns,
+        extraHymnsEnabled,
         backgroundImage: String(bulletinData.backgroundImage || "/stayon_image.png"),
         pageBgTheme: String(bulletinData.pageBgTheme || DEFAULT_PAGE_BG_THEME_ID),
         titleFontSize: titleFontSizeEnabled ? Math.min(32, Math.max(18, Number(bulletinData.titleFontSize) || 24)) : null,
@@ -1775,6 +1972,13 @@ export function AdminEditor() {
         addressEnabled,
         locationImage: String(locationImage || ""),
         locationImageRatio,
+        snsEnabled,
+        snsNaverBlog: String(snsNaverBlog || ""),
+        snsInstagram: String(snsInstagram || ""),
+        snsThreads: String(snsThreads || ""),
+        youtubeChannelUrl: String(youtubeChannelUrl || ""),
+        youtubeChannelName: String(youtubeChannelName || ""),
+        youtubeChannelThumbnail: String(youtubeChannelThumbnail || ""),
         churchLogo: String(churchLogo || ""),
         churchLogoEnabled,
         churchLogoSize: normalizeChurchLogoSize(churchLogoSize),
@@ -2383,6 +2587,107 @@ export function AdminEditor() {
               />
             </div>
           </div>
+        </Card>
+
+        {/* 찬양 "더보기" - 위 금주의 찬양(youtubeId)과 별개로, 최대 8개까지 추가 영상을
+            카드뷰로 보여주는 신규 기능. 켜고 끌 수 있는 토글. */}
+        <Card className="p-5 rounded-[1.75rem] border-0 bg-white shadow-xl shadow-red-500/5 relative overflow-hidden">
+          <div className="flex flex-col gap-3 mb-4">
+            <div className="min-w-0">
+              <h2 className="text-xl font-bold flex items-center gap-3 text-gray-800">
+                <div className="w-2.5 h-8 bg-red-500 rounded-full shrink-0" /> 찬양 더보기
+              </h2>
+              <p className="text-xs text-gray-400 mt-1.5 font-medium leading-relaxed">
+                성도 화면 "찬양 영상 미리보기" 카드 아래에 더보기를 추가해서, 최대 8개의 영상을 카드뷰로 더 보여줄 수 있어요.
+              </p>
+              <p className="text-[11px] text-red-400 mt-1 font-bold leading-relaxed">
+                링크를 넣고 다른 곳을 누르면 유튜브 제목을 자동으로 가져와요.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <label
+                htmlFor="extra-hymns-toggle"
+                className={`flex items-center gap-3 py-2 px-4 rounded-full transition-all duration-300 cursor-pointer select-none shrink-0 ${extraHymnsEnabled
+                  ? "bg-red-50/80 shadow-sm border border-red-100"
+                  : "bg-gray-100/70 border border-transparent"
+                  }`}
+              >
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`w-2 h-2 rounded-full transition-colors shrink-0 ${extraHymnsEnabled ? "bg-red-500 animate-pulse" : "bg-gray-400"
+                      }`}
+                  />
+                  <span
+                    className={`text-xs font-bold transition-colors whitespace-nowrap ${extraHymnsEnabled ? "text-red-600" : "text-gray-500"
+                      }`}
+                  >
+                    {extraHymnsEnabled ? "주보에 표시 중" : "주보에서 숨김"}
+                  </span>
+                </div>
+                <Switch
+                  id="extra-hymns-toggle"
+                  checked={extraHymnsEnabled}
+                  onCheckedChange={setExtraHymnsEnabled}
+                  className="data-[state=checked]:bg-red-500 data-[state=unchecked]:bg-gray-300 transition-colors duration-200"
+                />
+              </label>
+
+              {extraHymnsEnabled && (
+                <Button
+                  onClick={addExtraHymn}
+                  variant="outline"
+                  disabled={extraHymns.length >= 8}
+                  className="rounded-full border-dashed border-2 px-6 border-red-200 text-red-500 hover:bg-red-50 font-bold text-xs h-10 shrink-0 disabled:opacity-40"
+                >
+                  <Plus className="w-4 h-4 mr-1.5" /> 영상 추가 ({extraHymns.length}/8)
+                </Button>
+              )}
+            </div>
+          </div>
+
+          {extraHymnsEnabled && (
+            <div className="space-y-3">
+              {extraHymns.length === 0 && (
+                <p className="text-xs text-gray-400 font-medium py-6 text-center">
+                  아직 추가된 영상이 없어요. "영상 추가"를 눌러 유튜브 링크를 넣어보세요.
+                </p>
+              )}
+              {extraHymns.map((hymn) => (
+                <div key={hymn.id} className="p-4 bg-slate-50/80 rounded-[1.5rem] border border-slate-100 hover:bg-white hover:shadow-md transition-all">
+                  <div className="flex gap-3 items-start">
+                    <div className="w-12 h-12 bg-red-50 rounded-xl flex items-center justify-center shrink-0">
+                      <Youtube className="w-6 h-6 text-red-500" />
+                    </div>
+                    <div className="flex-1 min-w-0 space-y-2">
+                      <Input
+                        placeholder="유튜브 URL 주소를 입력하세요"
+                        value={hymn.youtubeId}
+                        onChange={(e) => updateExtraHymnRaw(hymn.id, e.target.value)}
+                        onBlur={(e) => handleExtraHymnBlur(hymn.id, e.target.value)}
+                        className="rounded-2xl h-11 border-red-100 focus-visible:ring-red-200 text-sm"
+                      />
+                      <p className="text-[11px] text-gray-400 font-medium truncate pl-1">
+                        {fetchingHymnId === hymn.id
+                          ? "제목 불러오는 중..."
+                          : hymn.title
+                            ? `제목: ${hymn.title}`
+                            : "링크를 입력하면 제목을 자동으로 가져와요"}
+                      </p>
+                    </div>
+                    <Button
+                      onClick={() => removeExtraHymn(hymn.id)}
+                      variant="ghost"
+                      size="icon"
+                      className="shrink-0 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-full"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </Card>
 
         <Card className="p-5 rounded-[1.75rem] border-0 bg-white shadow-xl shadow-purple-500/5">
@@ -3897,6 +4202,164 @@ export function AdminEditor() {
                   placeholder="상세 주소나 교회 이름 (예: 2층 예배실)"
                   className="rounded-xl h-11 border-slate-200 bg-white text-sm font-bold"
                 />
+              </div>
+            </div>
+          )}
+        </Card>
+
+        {/* 교회 SNS · 유튜브 - 메뉴 > 교회 SNS·유튜브 화면에 쓰인다. 각 링크는 비워두면
+            그 항목만 안 보이고, 유튜브는 oEmbed로 채널 썸네일을 못 가져오기 때문에
+            썸네일만 관리자가 직접 올리고 채널명은 서버에서 자동으로 가져온다. */}
+        <Card className="p-5 rounded-[1.75rem] border-0 bg-white shadow-xl shadow-blue-500/5 relative overflow-hidden">
+          <div className="flex flex-col gap-3 mb-4">
+            <div className="min-w-0">
+              <h2 className="text-xl font-bold flex items-center gap-3 text-slate-800">
+                <div className="w-2.5 h-8 bg-blue-600 rounded-full shrink-0" /> 교회 SNS · 유튜브
+              </h2>
+              <p className="text-xs text-slate-400 mt-1.5 font-medium leading-relaxed">
+                성도 화면 우측 상단 <b>메뉴 &gt; 교회 SNS·유튜브</b> 화면에 표시돼요. 비워두면 그 항목만 안 보여요.
+              </p>
+            </div>
+
+            <label
+              htmlFor="sns-toggle"
+              className={`flex items-center gap-3 py-2 px-4 rounded-full transition-all duration-300 cursor-pointer select-none self-start ${snsEnabled
+                ? "bg-blue-50/80 shadow-sm border border-blue-100"
+                : "bg-gray-100/70 border border-transparent"
+                }`}
+            >
+              <div className="flex items-center gap-2">
+                <span
+                  className={`w-2 h-2 rounded-full transition-colors shrink-0 ${snsEnabled ? "bg-blue-600 animate-pulse" : "bg-gray-400"
+                    }`}
+                />
+                <span
+                  className={`text-xs font-bold transition-colors whitespace-nowrap ${snsEnabled ? "text-blue-700" : "text-gray-500"
+                    }`}
+                >
+                  {snsEnabled ? "주보에 표시 중" : "주보에서 숨김"}
+                </span>
+              </div>
+              <Switch
+                id="sns-toggle"
+                checked={snsEnabled}
+                onCheckedChange={setSnsEnabled}
+                className="data-[state=checked]:bg-blue-600 data-[state=unchecked]:bg-gray-300 transition-colors duration-200"
+              />
+            </label>
+          </div>
+
+          {snsEnabled && (
+            <div className="space-y-5">
+              <div className="space-y-2.5">
+                <span className="text-[11px] font-black text-blue-600 uppercase tracking-wider">SNS 링크</span>
+
+                <div className="flex items-center gap-2.5">
+                  <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 bg-[#03C75A]/10">
+                    <BookOpen className="w-5 h-5 text-[#03C75A]" />
+                  </div>
+                  <Input
+                    value={snsNaverBlog}
+                    onChange={(e) => setSnsNaverBlog(e.target.value)}
+                    placeholder="네이버 블로그 주소 (예: https://blog.naver.com/...)"
+                    className="rounded-xl h-11 border-slate-200 bg-white text-sm font-bold"
+                  />
+                </div>
+
+                <div className="flex items-center gap-2.5">
+                  <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 bg-pink-50">
+                    <Instagram className="w-5 h-5 text-pink-500" />
+                  </div>
+                  <Input
+                    value={snsInstagram}
+                    onChange={(e) => setSnsInstagram(e.target.value)}
+                    placeholder="인스타그램 주소 (예: https://instagram.com/...)"
+                    className="rounded-xl h-11 border-slate-200 bg-white text-sm font-bold"
+                  />
+                </div>
+
+                <div className="flex items-center gap-2.5">
+                  <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 bg-slate-900/5">
+                    <AtSign className="w-5 h-5 text-slate-800" />
+                  </div>
+                  <Input
+                    value={snsThreads}
+                    onChange={(e) => setSnsThreads(e.target.value)}
+                    placeholder="쓰레드 주소 (예: https://threads.net/...)"
+                    className="rounded-xl h-11 border-slate-200 bg-white text-sm font-bold"
+                  />
+                </div>
+              </div>
+
+              <div className="h-px bg-slate-100" />
+
+              <div className="space-y-2.5">
+                <span className="text-[11px] font-black text-red-500 uppercase tracking-wider">유튜브 채널</span>
+
+                <div className="flex items-center gap-2.5">
+                  <div className="w-10 h-10 bg-red-50 rounded-xl flex items-center justify-center shrink-0">
+                    <Youtube className="w-5 h-5 text-red-500" />
+                  </div>
+                  <Input
+                    value={youtubeChannelUrl}
+                    onChange={(e) => setYoutubeChannelUrl(e.target.value)}
+                    onBlur={(e) => handleYoutubeChannelUrlBlur(e.target.value)}
+                    placeholder="유튜브 채널 주소 (예: https://youtube.com/@교회이름)"
+                    className="rounded-xl h-11 border-slate-200 bg-white text-sm font-bold"
+                  />
+                </div>
+
+                {youtubeChannelUrl.trim() && (
+                  <div className="flex gap-3 items-start pl-[50px]">
+                    <div className="shrink-0">
+                      <input
+                        type="file"
+                        accept="image/png, image/jpeg, image/jpg, image/webp"
+                        ref={youtubeThumbnailInputRef}
+                        onChange={handleYoutubeThumbnailUpload}
+                        className="hidden"
+                      />
+                      {youtubeChannelThumbnail ? (
+                        <div className="relative w-16 h-16">
+                          <div className="w-16 h-16 rounded-xl overflow-hidden border border-slate-200 bg-slate-50">
+                            <img src={youtubeChannelThumbnail} alt="채널 썸네일" className="w-full h-full object-cover" />
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setYoutubeChannelThumbnail("")}
+                            className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-black/50 hover:bg-black/70 text-white flex items-center justify-center"
+                            title="썸네일 삭제"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => youtubeThumbnailInputRef.current?.click()}
+                          className="w-16 h-16 rounded-xl border-2 border-dashed border-red-200 bg-red-50/40 hover:bg-red-50 hover:border-red-300 transition-all flex items-center justify-center text-red-400"
+                          title="썸네일 업로드"
+                        >
+                          <ImageIcon className="w-5 h-5" />
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="flex-1 min-w-0 space-y-1.5">
+                      <Input
+                        value={youtubeChannelName}
+                        onChange={(e) => setYoutubeChannelName(e.target.value)}
+                        placeholder="채널명"
+                        className="rounded-xl h-10 border-slate-200 bg-white text-sm font-bold"
+                      />
+                      <p className="text-[11px] font-medium text-slate-400 leading-relaxed pl-1">
+                        {fetchingChannelName
+                          ? "채널명 불러오는 중..."
+                          : "링크 입력 후 다른 곳을 누르면 채널명을 자동으로 가져와요. 썸네일은 직접 올려주세요."}
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}

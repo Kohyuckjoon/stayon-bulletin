@@ -1,5 +1,44 @@
 import * as nodemailer from "nodemailer";
 
+// 정기결제(빌링) 전용 — 교회(성도) 본인에게 직접 보내는 메일. 기존
+// sendAdminEmail/sendMailNotification은 전부 "관리자(gmailUser) 자신에게"
+// 보내는 알림용이라, 결제 3일 전 안내·실패/해지 안내처럼 고객에게 직접
+// 보내야 하는 메일은 이 함수로 완전히 분리한다. 기존 두 함수는 그대로 둠.
+export const sendCustomerEmail = async (
+  to: string,
+  subject: string,
+  htmlContent: string
+) => {
+  const gmailUser = process.env.GMAIL_USER;
+  const gmailPass = process.env.GMAIL_PASS;
+
+  if (!to) {
+    console.error("❌ 수신자 이메일이 없어 발송을 건너뜁니다:", subject);
+    return;
+  }
+  if (!gmailUser || !gmailPass) {
+    console.error("❌ GMAIL_USER 또는 GMAIL_PASS 환경변수가 설정되지 않았습니다.");
+    return;
+  }
+
+  const transporter = nodemailer.createTransport({
+    service: "gmail",
+    auth: {user: gmailUser, pass: gmailPass},
+  });
+
+  try {
+    const info = await transporter.sendMail({
+      from: `"STAYON 스테이온" <${gmailUser}>`,
+      to,
+      subject,
+      html: htmlContent,
+    });
+    console.log(`[고객 이메일 전송 성공] ${subject} → ${to}, 응답: ${info.response}`);
+  } catch (err) {
+    console.error("❌ 고객 이메일 전송 오류 상세:", err);
+  }
+};
+
 export const sendAdminEmail = async (
   subject: string,
   htmlContent: string

@@ -70,6 +70,8 @@ export function BulletinView() {
   // "말씀 적용 질문" 각 항목은 아코디언처럼 접혀있다가, 눌렀을 때 펼쳐진다. 하나를 펼쳐도
   // 다른 항목이 접히지 않도록(동시에 여러 개 펼침 가능) id 목록으로 펼침 상태를 관리한다.
   const [expandedQuestionIds, setExpandedQuestionIds] = useState<Set<string>>(new Set());
+  // "찬양 영상 미리보기" 카드의 "더보기" - 같은 화면에서 아래로 펼쳐서 extraHymns 카드뷰를 보여준다.
+  const [showAllHymns, setShowAllHymns] = useState(false);
   const toggleQuestion = (id: string) => {
     setExpandedQuestionIds((prev) => {
       const next = new Set(prev);
@@ -317,6 +319,7 @@ export function BulletinView() {
           accent={isWarmIvoryFamily(effectiveTemplateId) ? "#2F5C52" : "#2563eb"}
           pastoralColumnsEnabled={bulletin.pastoralColumnsEnabled === true}
           officersEnabled={bulletin.officersEnabled !== false}
+          snsEnabled={bulletin.snsEnabled !== false}
         />
       )}
       {/* 토스 스타일의 미리보기 알림 바 */}
@@ -459,27 +462,92 @@ export function BulletinView() {
                   <div className="h-[1px] flex-1 bg-gray-100"></div>
                 </div>
 
-                <a
-                  href={bulletin.youtubeId.startsWith('http') ? bulletin.youtubeId : `https://www.youtube.com/results?search_query=${bulletin.youtubeId}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="group block relative overflow-hidden rounded-[2rem] bg-gradient-to-br from-red-500 to-rose-600 p-[1px] shadow-xl shadow-red-500/10 active:scale-[0.98] transition-all"
-                >
-                  <div className="bg-white rounded-[1.95rem] p-4 flex items-center justify-between">
-                    <div className="flex items-center gap-4">
-                      <div className="w-12 h-12 bg-red-50 rounded-2xl flex items-center justify-center shrink-0">
-                        <Youtube className="w-6 h-6 text-red-500" />
+                <div className="relative overflow-hidden rounded-[2rem] bg-gradient-to-br from-red-500 to-rose-600 p-[1px] shadow-xl shadow-red-500/10">
+                  <div className="bg-white rounded-[1.95rem] overflow-hidden">
+                    <a
+                      href={bulletin.youtubeId.startsWith('http') ? bulletin.youtubeId : `https://www.youtube.com/results?search_query=${bulletin.youtubeId}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="group block p-4 flex items-center justify-between active:scale-[0.98] transition-transform"
+                    >
+                      <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 bg-red-50 rounded-2xl flex items-center justify-center shrink-0">
+                          <Youtube className="w-6 h-6 text-red-500" />
+                        </div>
+                        <div>
+                          <h4 className="font-bold text-gray-800 text-sm">찬양 영상 미리보기</h4>
+                          <p className="text-[11px] text-gray-400">성도들과 함께 찬양을 준비해요</p>
+                        </div>
                       </div>
-                      <div>
-                        <h4 className="font-bold text-gray-800 text-sm">찬양 영상 미리보기</h4>
-                        <p className="text-[11px] text-gray-400">성도들과 함께 찬양을 준비해요</p>
+                      <div className="w-10 h-10 bg-gray-50 group-hover:bg-red-50 rounded-full flex items-center justify-center transition-colors">
+                        <ChevronLeft className="w-4 h-4 text-gray-300 group-hover:text-red-500 rotate-180" />
                       </div>
-                    </div>
-                    <div className="w-10 h-10 bg-gray-50 group-hover:bg-red-50 rounded-full flex items-center justify-center transition-colors">
-                      <ChevronLeft className="w-4 h-4 text-gray-300 group-hover:text-red-500 rotate-180" />
-                    </div>
+                    </a>
+
+                    {bulletin.extraHymnsEnabled && Array.isArray(bulletin.extraHymns) && bulletin.extraHymns.length > 0 && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => setShowAllHymns((v) => !v)}
+                          className="w-full flex items-center gap-2.5 px-4 py-3 border-t border-gray-100 active:bg-gray-50 transition-colors"
+                        >
+                          <div className="flex items-center -space-x-2 shrink-0">
+                            {bulletin.extraHymns.slice(0, 3).map((hymn: { id: string; youtubeId: string }, i: number) => (
+                              <div
+                                key={hymn.id}
+                                className="w-7 h-7 rounded-full border-2 border-white overflow-hidden bg-gray-100 shadow-sm"
+                                style={{ zIndex: 3 - i }}
+                              >
+                                <img
+                                  src={`https://img.youtube.com/vi/${hymn.youtubeId}/default.jpg`}
+                                  alt=""
+                                  className="w-full h-full object-cover"
+                                />
+                              </div>
+                            ))}
+                          </div>
+                          <span className="flex-1 text-left text-[12px] font-bold text-gray-600">
+                            {showAllHymns ? "접기" : `찬양 더보기 ${bulletin.extraHymns.length}곡`}
+                          </span>
+                          <ChevronDown className={`w-4 h-4 text-gray-300 transition-transform ${showAllHymns ? "rotate-180" : ""}`} />
+                        </button>
+
+                        {showAllHymns && (
+                          <div className="px-4 pb-4 pt-1 animate-in fade-in slide-in-from-top-2 duration-300">
+                            <div className="flex gap-3 overflow-x-auto pb-1 snap-x snap-mandatory">
+                              {bulletin.extraHymns.map((hymn: { id: string; youtubeId: string; title: string }) => (
+                                <a
+                                  key={hymn.id}
+                                  href={`https://www.youtube.com/watch?v=${hymn.youtubeId}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="shrink-0 w-[32%] min-w-[110px] snap-start active:scale-[0.97] transition-all"
+                                >
+                                  <div className="rounded-2xl overflow-hidden bg-gray-100 aspect-video relative ring-1 ring-black/5">
+                                    <img
+                                      src={`https://img.youtube.com/vi/${hymn.youtubeId}/mqdefault.jpg`}
+                                      alt={hymn.title || "찬양 영상"}
+                                      className="w-full h-full object-cover"
+                                      loading="lazy"
+                                    />
+                                    <div className="absolute inset-0 flex items-center justify-center bg-black/10">
+                                      <div className="w-8 h-8 rounded-full bg-white/90 flex items-center justify-center">
+                                        <Youtube className="w-4 h-4 text-red-500" />
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <p className="text-[12px] font-semibold text-gray-700 mt-2 leading-snug line-clamp-2">
+                                    {hymn.title || "찬양 영상"}
+                                  </p>
+                                </a>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    )}
                   </div>
-                </a>
+                </div>
               </div>
             )}
 

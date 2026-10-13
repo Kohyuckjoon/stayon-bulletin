@@ -836,12 +836,19 @@ export function AdminDashboard() {
               </p>
             </div>
 
-            <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+            <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-3">
               <button
                 onClick={() => navigate("/admin/pricing")}
                 className="text-[11px] sm:text-xs font-black text-blue-600 hover:text-blue-700 flex items-center gap-1 group cursor-pointer"
               >
                 연장 및 결제하기
+                <ChevronRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
+              </button>
+              <button
+                onClick={() => navigate("/admin/billing")}
+                className="text-[11px] sm:text-xs font-black text-slate-500 hover:text-slate-700 flex items-center gap-1 group cursor-pointer"
+              >
+                카드 · 정기결제 관리
                 <ChevronRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
               </button>
             </div>

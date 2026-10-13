@@ -3,6 +3,7 @@
 //  - 떠 있는 둥근 카드 없음. 모든 섹션이 아이보리 배경 위에 그대로 얹혀 구분선으로만 나뉨.
 //  - 예배 안내(수요/금요/새벽/오후)는 화면 폭을 꽉 채우는 전체폭 짙은 네이비 섹션.
 // 사역자 상세/순서 상세 모달은 BulletinView.tsx가 공통으로 계속 관리한다.
+import { useState } from "react";
 import {
   Clock,
   Megaphone,
@@ -62,6 +63,8 @@ export function WarmIvoryTemplate({
   handleCopyAccount,
 }: WarmIvoryTemplateProps) {
   const headerBgImage = bulletin.backgroundImage || "/stayon_kakao_pr.png";
+  // "찬양 영상 미리보기"의 "더보기" - 같은 화면에서 아래로 펼쳐서 extraHymns 카드뷰를 보여준다.
+  const [showAllHymns, setShowAllHymns] = useState(false);
 
   // 전체폭 네이비 섹션 안에 들어가는 개별 예배 안내 블록 (라벨|내용 2열 표 레이아웃)
   const renderNavyService = (opts: {
@@ -270,22 +273,87 @@ export function WarmIvoryTemplate({
 
         {/* 찬양 영상 */}
         {bulletin.youtubeId && (
-          <a
-            href={bulletin.youtubeId.startsWith("http") ? bulletin.youtubeId : `https://www.youtube.com/results?search_query=${bulletin.youtubeId}`}
-            target="_blank"
-            rel="noreferrer"
-            className="flex items-center justify-between gap-3 px-6 py-7 border-b-2"
-            style={{ borderColor: SECTION_LINE }}
-          >
-            <div className="flex items-center gap-3">
-              <Youtube className="w-5 h-5 shrink-0" style={{ color: ACCENT }} />
-              <div>
-                <p className="font-bold text-sm" style={{ color: INK }}>찬양 영상 미리보기</p>
-                <p className="text-[11px] font-medium" style={{ color: MUTED }}>성도들과 함께 찬양을 준비해요</p>
+          <div className="border-b-2" style={{ borderColor: SECTION_LINE }}>
+            <a
+              href={bulletin.youtubeId.startsWith("http") ? bulletin.youtubeId : `https://www.youtube.com/results?search_query=${bulletin.youtubeId}`}
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center justify-between gap-3 px-6 py-7"
+            >
+              <div className="flex items-center gap-3">
+                <Youtube className="w-5 h-5 shrink-0" style={{ color: ACCENT }} />
+                <div>
+                  <p className="font-bold text-sm" style={{ color: INK }}>찬양 영상 미리보기</p>
+                  <p className="text-[11px] font-medium" style={{ color: MUTED }}>성도들과 함께 찬양을 준비해요</p>
+                </div>
               </div>
-            </div>
-            <ChevronRight className="w-4 h-4" style={{ color: MUTED }} />
-          </a>
+              <ChevronRight className="w-4 h-4" style={{ color: MUTED }} />
+            </a>
+
+            {bulletin.extraHymnsEnabled && Array.isArray(bulletin.extraHymns) && bulletin.extraHymns.length > 0 && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setShowAllHymns((v) => !v)}
+                  className="w-full flex items-center gap-2.5 px-6 py-3 border-t"
+                  style={{ borderColor: DIVIDER }}
+                >
+                  <div className="flex items-center -space-x-2 shrink-0">
+                    {bulletin.extraHymns.slice(0, 3).map((hymn: { id: string; youtubeId: string }, i: number) => (
+                      <div
+                        key={hymn.id}
+                        className="w-7 h-7 rounded-full border-2 overflow-hidden bg-gray-100"
+                        style={{ zIndex: 3 - i, borderColor: PAGE_BG }}
+                      >
+                        <img
+                          src={`https://img.youtube.com/vi/${hymn.youtubeId}/default.jpg`}
+                          alt=""
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  <span className="flex-1 text-left text-[12px] font-bold" style={{ color: ACCENT }}>
+                    {showAllHymns ? "접기" : `찬양 더보기 ${bulletin.extraHymns.length}곡`}
+                  </span>
+                  <ChevronDown className={`w-4 h-4 transition-transform ${showAllHymns ? "rotate-180" : ""}`} style={{ color: MUTED }} />
+                </button>
+
+                {showAllHymns && (
+                  <div className="px-6 pb-6 pt-1">
+                    <div className="flex gap-3 overflow-x-auto pb-1 snap-x snap-mandatory">
+                      {bulletin.extraHymns.map((hymn: { id: string; youtubeId: string; title: string }) => (
+                        <a
+                          key={hymn.id}
+                          href={`https://www.youtube.com/watch?v=${hymn.youtubeId}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="shrink-0 w-[32%] min-w-[110px] snap-start"
+                        >
+                          <div className="rounded-xl overflow-hidden bg-gray-100 aspect-video relative ring-1 ring-black/5">
+                            <img
+                              src={`https://img.youtube.com/vi/${hymn.youtubeId}/mqdefault.jpg`}
+                              alt={hymn.title || "찬양 영상"}
+                              className="w-full h-full object-cover"
+                              loading="lazy"
+                            />
+                            <div className="absolute inset-0 flex items-center justify-center bg-black/10">
+                              <div className="w-7 h-7 rounded-full bg-white/90 flex items-center justify-center">
+                                <Youtube className="w-3.5 h-3.5" style={{ color: ACCENT }} />
+                              </div>
+                            </div>
+                          </div>
+                          <p className="text-[12px] font-semibold mt-2 leading-snug line-clamp-2" style={{ color: INK }}>
+                            {hymn.title || "찬양 영상"}
+                          </p>
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
         )}
 
         {/* 예배 시간표 */}

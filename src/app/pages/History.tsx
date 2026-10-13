@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router";
 import { auth, db } from "../../firebase"; // Firebase 설정 경로 확인 필요
-import { collection, query, where, orderBy, getDocs, deleteDoc, doc, addDoc, serverTimestamp} from "firebase/firestore";
+import { collection, query, where, orderBy, getDocs, deleteDoc, doc, addDoc, serverTimestamp, getDoc} from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
@@ -49,18 +49,34 @@ export function History() {
   const [isLoading, setIsLoading] = useState(true);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
+  // 전체 다운로드(CSV)용 - 교회명/부서명은 users/{uid}에서 가져온다.
+  const [churchProfile, setChurchProfile] = useState({ churchName: "", department: "" });
+
   // 1. 사용자 인증 및 데이터 로드
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
         setCurrentUserId(user.uid);
         fetchBulletins(user.uid);
+        fetchChurchProfile(user.uid);
       } else {
         navigate("/login");
       }
     });
     return () => unsubscribe();
   }, [navigate]);
+
+  const fetchChurchProfile = async (uid: string) => {
+    try {
+      const snap = await getDoc(doc(db, "users", uid));
+      if (snap.exists()) {
+        const data = snap.data();
+        setChurchProfile({ churchName: data.churchName || "", department: data.department || "" });
+      }
+    } catch (error) {
+      console.error("교회 정보 로드 실패:", error);
+    }
+  };
 
   // 2. Firestore 데이터 가져오기
   const fetchBulletins = async (uid: string) => {
@@ -87,6 +103,45 @@ export function History() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  // 전체 다운로드(CSV, 데이터 백업용). 엑셀에서 쉼표/따옴표/줄바꿈이 섞인 값이 깨지지
+  // 않도록 각 칸을 escapeCsv로 감싸고, UTF-8 BOM을 앞에 붙여야 엑셀이 한글을 깨뜨리지
+  // 않고 읽는다(BOM 없으면 "유니코드 깨짐" 문제가 생김).
+  const escapeCsvCell = (value: string) => {
+    const v = String(value ?? "");
+    if (v.includes(",") || v.includes("\"") || v.includes("\n")) {
+      return `"${v.replace(/"/g, '""')}"`;
+    }
+    return v;
+  };
+
+  const handleDownloadAll = () => {
+    if (bulletins.length === 0) {
+      toast.error("다운로드할 주보가 없습니다.");
+      return;
+    }
+    const header = ["No", "교회명", "부서명", "날짜", "말씀 제목(본문)", "본문 구절", "설교자"];
+    const rows = bulletins.map((b, i) => [
+      String(i + 1),
+      churchProfile.churchName,
+      churchProfile.department,
+      b.date || "",
+      b.subtitle || "",
+      b.scripture || "",
+      b.preacher || "",
+    ]);
+    const csvContent = [header, ...rows].map((row) => row.map(escapeCsvCell).join(",")).join("\r\n");
+    const blob = new Blob(["﻿" + csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `주보히스토리_${churchProfile.churchName || "교회"}_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast.success("다운로드가 시작됩니다.");
   };
 
   // const handleCopy = (bulletin: any) => {
@@ -180,8 +235,8 @@ export function History() {
               <h1 className="text-base sm:text-xl font-bold truncate">주보 히스토리</h1>
             </div>
 
-            {/* 전체 다운로드 버튼: 서비스 준비중 UI 적용 */}
-            <TooltipProvider>
+            {/* 전체 다운로드: 기존엔 "준비중" 잠금 버튼이었음(아래 주석). CSV 다운로드로 교체. */}
+            {/* <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <div className="cursor-not-allowed shrink-0">
@@ -199,7 +254,15 @@ export function History() {
                   <p className="text-[11px] font-bold">더 나은 기능을 위해 준비 중입니다!</p>
                 </TooltipContent>
               </Tooltip>
-            </TooltipProvider>
+            </TooltipProvider> */}
+            <Button
+              variant="outline"
+              onClick={handleDownloadAll}
+              className="rounded-full bg-emerald-50/70 text-emerald-700 border-emerald-200 hover:bg-emerald-100 flex items-center gap-2 h-8 px-3 text-xs sm:h-9 sm:text-sm shrink-0"
+            >
+              <Download className="w-3.5 h-3.5" />
+              전체 다운로드
+            </Button>
           </div>
         </div>
       </div>

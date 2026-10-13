@@ -15,9 +15,10 @@ interface BulletinMenuProps {
   accent?: string; // 적용된 템플릿의 포인트색 (기본 파랑)
   pastoralColumnsEnabled?: boolean; // false면 "목회 칼럼" 메뉴 항목 자체를 목록에서 뺀다
   officersEnabled?: boolean; // false면 "중직자" 메뉴 항목 자체를 목록에서 뺀다
+  snsEnabled?: boolean; // false면 "교회 SNS·유튜브" 메뉴 항목 자체를 목록에서 뺀다
 }
 
-export function BulletinMenu({ bulletinId, churchLogo, variant = "over-hero", accent = "#2563eb", pastoralColumnsEnabled = false, officersEnabled = true }: BulletinMenuProps) {
+export function BulletinMenu({ bulletinId, churchLogo, variant = "over-hero", accent = "#2563eb", pastoralColumnsEnabled = false, officersEnabled = true, snsEnabled = true }: BulletinMenuProps) {
   const [open, setOpen] = useState(false); // 사용자 의도(열림/닫힘)
   const [mounted, setMounted] = useState(false); // DOM 유지 여부 (닫는 애니메이션 동안 남겨둠)
   const [show, setShow] = useState(false); // transform 구동 (열림=제자리, 닫힘=우측 밖)
@@ -75,10 +76,10 @@ export function BulletinMenu({ bulletinId, churchLogo, variant = "over-hero", ac
     { key: "column", label: "목회 칼럼", sub: "지난 칼럼 모아보기", icon: Newspaper, to: `${base}/column`, ready: true, active: pathname === `${base}/column` },
     { key: "church-news", label: "지난 교회 소식", sub: "교회 소식 모아보기", icon: Megaphone, to: `${base}/church-news`, ready: true, active: pathname === `${base}/church-news` },
     { key: "location", label: "오시는 길", sub: "약도 · 주소 · 길찾기", icon: MapPin, to: `${base}/location`, ready: true, active: pathname === `${base}/location` },
-    { key: "history", label: "교회 연혁", icon: Clock, ready: false },
-    { key: "sns", label: "교회 SNS · 유튜브 · 네이버 카페", icon: Share2, ready: false },
-    { key: "org", label: "부서 · 기관 조직도", icon: Network, ready: false },
-  ].filter((item) => (item.key !== "column" || pastoralColumnsEnabled) && (item.key !== "officers" || officersEnabled));
+    // { key: "history", label: "교회 연혁", icon: Clock, ready: false }, // 준비중이라 메뉴에서 임시로 숨김
+    { key: "sns", label: "교회 SNS · 유튜브", sub: "블로그 · 인스타그램 · 쓰레드", icon: Share2, to: `${base}/sns`, ready: true, active: pathname === `${base}/sns` },
+    // { key: "org", label: "부서 · 기관 조직도", icon: Network, ready: false }, // 준비중이라 메뉴에서 임시로 숨김
+  ].filter((item) => (item.key !== "column" || pastoralColumnsEnabled) && (item.key !== "officers" || officersEnabled) && (item.key !== "sns" || snsEnabled));
 
   const go = (item: (typeof items)[number]) => {
     if (!item.ready) {

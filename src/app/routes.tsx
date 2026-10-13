@@ -13,9 +13,11 @@ import { PastoralColumnDetailPage } from "./pages/bulletin/PastoralColumnDetailP
 import { ChurchNewsListPage } from "./pages/bulletin/ChurchNewsListPage"; // 성도 화면 메뉴 > 지난 교회 소식
 import { ChurchNewsDetailPage } from "./pages/bulletin/ChurchNewsDetailPage"; // 지난 교회 소식 상세
 import { LocationPage } from "./pages/bulletin/LocationPage"; // 성도 화면 메뉴 > 오시는 길
+import { SnsPage } from "./pages/bulletin/SnsPage"; // 성도 화면 메뉴 > 교회 SNS·유튜브
 import { AdminDashboard } from "./pages/AdminDashboard";
 import { AdminEditor } from "./pages/AdminEditor";
 import { History } from "./pages/History";
+import { Billing } from "./pages/Billing"; // 결제 관리(정기결제) 화면
 import { ChurchNewsHistory } from "./pages/ChurchNewsHistory"; // 주보들에 흩어진 교회 소식을 날짜순으로 모아보는 페이지
 import { ChurchNewsDetail } from "./pages/ChurchNewsDetail"; // 교회 소식 모아보기 > 특정 주보의 교회 소식 상세
 import { Pricing } from "./pages/Pricing";
@@ -218,6 +220,7 @@ export const router = createBrowserRouter([
       { path: "view/:id/church-news", Component: ChurchNewsListPage }, // 성도 화면 메뉴 > 지난 교회 소식
       { path: "view/:id/church-news/:newsId", Component: ChurchNewsDetailPage }, // 지난 교회 소식 상세
       { path: "view/:id/location", Component: LocationPage }, // 성도 화면 메뉴 > 오시는 길
+      { path: "view/:id/sns", Component: SnsPage }, // 성도 화면 메뉴 > 교회 SNS·유튜브
       { path: "pricing", Component: Pricing },
       { path: "success", Component: SuccessPage }, // 모바일/성공 페이지 대응
       {
@@ -244,6 +247,7 @@ export const router = createBrowserRouter([
     children: [
       { index: true, Component: AdminDashboard },
       { path: "history", Component: History },
+      { path: "billing", Component: Billing }, // 결제 관리(정기결제) 화면
       { path: "church-news", Component: ChurchNewsHistory },
       { path: "church-news/:id", Component: ChurchNewsDetail },
       { path: "pricing", Component: Pricing },
