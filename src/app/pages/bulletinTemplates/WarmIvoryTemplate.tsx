@@ -393,7 +393,7 @@ export function WarmIvoryTemplate({
           <div className="px-6 py-7 border-b-2 last:border-b-0" style={{ borderColor: SECTION_LINE }}>
             <SectionHead label="ORDER OF WORSHIP" title="예배 순서" right={bulletin.specialSunday || undefined} />
             <div className="divide-y" style={{ borderColor: DIVIDER }}>
-              {bulletin.sections.map((section: any, index: number) => {
+              {bulletin.sections.filter((section: any) => !section.hidden).map((section: any, index: number) => {
                 const hasContent = section.content && section.content.trim() !== "";
                 return (
                   <button

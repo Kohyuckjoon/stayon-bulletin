@@ -329,13 +329,20 @@ async function processOneRecurringUser(
     }
     const newExpiration = addMonthsClamped(baseDate, 1);
 
+    // 다음 결제일은 "지금"이 아니라 "원래 예정됐던 결제일"을 기준으로
+    // +1개월 해야 "매월 같은 날 결제" 약속이 지켜진다. 실패 후 재시도로
+    // 처리 시각이 며칠 늦어져도(now 기준으로 계산하면) 결제일이 그 늦어진
+    // 날로 영구히 밀려버리는 버그가 있었음 — scheduledDue를 기준으로 고침.
+    const scheduledDue = (data.nextBillingDate as
+      FirebaseFirestore.Timestamp | undefined)?.toDate() || now;
+
     await db.collection("users").doc(uid).update({
       status: "allinone",
       isPaidUser: true,
       currentPlan: planName,
       lastPaymentDate: admin.firestore.Timestamp.fromDate(newExpiration),
       nextBillingDate:
-        admin.firestore.Timestamp.fromDate(addMonthsClamped(now, 1)),
+        admin.firestore.Timestamp.fromDate(addMonthsClamped(scheduledDue, 1)),
       billingFailCount: 0,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
@@ -368,7 +375,8 @@ async function processOneRecurringUser(
       "[STAYON] 정기결제 실패로 서비스가 일시 정지됐어요",
       `<p>${churchName}님, 3회 결제 시도가 모두 실패하여 서비스 이용이 ` +
         "일시 정지됐습니다.</p><p>카드 정보를 확인하신 후 마이페이지 " +
-        "(관리자 홈 &gt; 결제 관리)에서 다시 등록해주세요.</p>"
+        "(관리자 홈 &gt; 결제 관리)에서 다시 등록해주세요.</p>",
+      RECURRING_ADMIN_EMAILS
     );
     console.log(`[정기결제 최종 실패] ${uid} — 서비스 일시정지`);
   } else {
@@ -379,7 +387,8 @@ async function processOneRecurringUser(
       `<p>${churchName}님, 카드 결제에 실패했습니다(사유: ` +
         `${result.message || "알 수 없음"}).</p>` +
         `<p>${3 - failCount}회 더 자동으로 재시도하며, 계속 실패하면 ` +
-        "서비스가 일시 정지될 수 있어요.</p>"
+        "서비스가 일시 정지될 수 있어요.</p>",
+      RECURRING_ADMIN_EMAILS
     );
     console.log(`[정기결제 실패 ${failCount}/3] ${uid}`);
   }
@@ -389,7 +398,11 @@ async function processOneRecurringUser(
 // 처리한다. 카드를 막 등록한 사용자는 nextBillingDate가 "오늘"로 잡혀
 // 있어서(useBillingKey.ts 참고) 이 함수가 첫 결제도 같이 처리하게 된다.
 export const processRecurringBilling = onSchedule(
-  {schedule: "0 9 * * *", timeZone: "Asia/Seoul"},
+  {
+    schedule: "0 9 * * *",
+    timeZone: "Asia/Seoul",
+    secrets: ["PORTONE_API_SECRET"],
+  },
   async () => {
     const now = admin.firestore.Timestamp.now();
     const dueSnap = await db
@@ -444,7 +457,8 @@ export const sendUpcomingBillingReminders = onSchedule(
         `<p>${churchName}님, 3일 뒤(${target.toLocaleDateString("ko-KR")}) ` +
           `${amount.toLocaleString()}원이 등록하신 카드로 자동 결제될 ` +
           "예정이에요.</p><p>해지를 원하시면 마이페이지(관리자 홈 &gt; " +
-          "결제 관리)에서 미리 해지해주세요.</p>"
+          "결제 관리)에서 미리 해지해주세요.</p>",
+        RECURRING_ADMIN_EMAILS
       );
     }
   }
@@ -457,6 +471,7 @@ export const sendUpcomingBillingReminders = onSchedule(
 // ?adminEmail=관리자이메일&uid=테스트할uid 로 호출하면 그 사용자 한 명만
 // 즉시 처리한다. 일반 성도/사이트 방문자가 쓰는 라우트와는 무관.
 export const testRecurringBillingNow = functions.https.onRequest(
+  {secrets: ["PORTONE_API_SECRET"]},
   async (req, res) => {
     const callerEmail = req.query.adminEmail as string | undefined;
     if (!callerEmail || !RECURRING_ADMIN_EMAILS.includes(callerEmail)) {
@@ -534,6 +549,13 @@ export const bulletinOG = functions.https.onRequest(async (req, res) => {
     // 교회가 "검색엔진 노출"을 켰는지(users/{uid}.bulletinSearchable). 기본값은
     // false(opt-in) — AdminEditor.tsx "검색엔진 노출" 토글에서 켠 교회만 true
   let bulletinSearchable = false;
+  // 검색봇 노출용 본문을 제목·설명 한 줄보다 풍성하게 채우기 위한 추가 문단
+  // (날짜·본문 구절·설교자). 구글이 "내용이 거의 없는 템플릿 페이지"로 보고
+  // 색인을 꺼릴 수 있어서, 실제 주보 정보를 조금 더 넣어준다.
+  let extraBody = "";
+  // 경쟁사(주보플러스)처럼 article:published_time·구조화 데이터의 datePublished에
+  // 쓸 ISO 8601 날짜 - 주보 날짜가 "YYYY-MM-DD" 형식일 때만 채워진다.
+  let bulletinDateIso = "";
 
   if (bulletinId && bulletinId !== "view") {
     try {
@@ -541,10 +563,12 @@ export const bulletinOG = functions.https.onRequest(async (req, res) => {
 
       let userData: Record<string, unknown> | null = null;
       let bulletinData: Record<string, unknown> | null = null;
+      let authorUid: string | null = null;
 
       if (userDocRef.exists) {
         // ① /view/{교회 UID}
         userData = userDocRef.data() as Record<string, unknown>;
+        authorUid = bulletinId;
       } else {
         // ② users 중 currentBulletinId == 이 값
         const querySnapshot = await db
@@ -554,6 +578,7 @@ export const bulletinOG = functions.https.onRequest(async (req, res) => {
           .get();
         if (!querySnapshot.empty) {
           userData = querySnapshot.docs[0].data() as Record<string, unknown>;
+          authorUid = querySnapshot.docs[0].id;
         }
       }
 
@@ -569,6 +594,25 @@ export const bulletinOG = functions.https.onRequest(async (req, res) => {
               userData = uDoc.data() as Record<string, unknown>;
             }
           }
+        }
+      }
+
+      // ①②번 경로는 교회 uid만 찾았을 뿐 실제 발행된 주보(설교 제목 등)는
+      // 못 가져온 상태라, BulletinView.tsx가 /view/{uid}에서 쓰는 것과 동일한
+      // "최신 발행 주보" 조회를 여기서도 한 번 더 해줘야 한다. 이게 없으면
+      // 가장 흔한 공유 링크 형태(/view/{교회UID})에서 설교 제목이 전혀 안 들어가
+      // 모든 교회가 똑같은 일반 문구로만 노출되는 버그가 있었음(구글이 이런
+      // 템플릿성 페이지를 색인 안 하는 원인으로 추정됨).
+      if (!bulletinData && authorUid) {
+        const latestSnap = await db
+          .collection("bulletins")
+          .where("authorId", "==", authorUid)
+          .where("status", "==", "published")
+          .orderBy("publishedAt", "desc")
+          .limit(1)
+          .get();
+        if (!latestSnap.empty) {
+          bulletinData = latestSnap.docs[0].data() as Record<string, unknown>;
         }
       }
 
@@ -596,6 +640,32 @@ export const bulletinOG = functions.https.onRequest(async (req, res) => {
           (typeof bulletinData.title === "string" && bulletinData.title) ||
           (typeof bulletinData.subtitle === "string" && bulletinData.subtitle);
         if (sermon) description = `이번 주 말씀 — ${sermon}`;
+
+        const bits: string[] = [];
+        if (typeof bulletinData.date === "string" && bulletinData.date) {
+          bits.push(`날짜: ${bulletinData.date}`);
+        }
+        if (
+          typeof bulletinData.scripture === "string" && bulletinData.scripture
+        ) {
+          bits.push(`본문 구절: ${bulletinData.scripture}`);
+        }
+        if (
+          typeof bulletinData.preacher === "string" && bulletinData.preacher
+        ) {
+          bits.push(`설교자: ${bulletinData.preacher}`);
+        }
+        extraBody = bits.join(" · ");
+
+        // 경쟁사(주보플러스)의 개별 주보 페이지는 article:published_time을
+        // 명시해서 구글한테 "이 글은 특정 날짜의 콘텐츠"라고 알려준다 - 날짜
+        // 형식이 "YYYY-MM-DD"일 때만 ISO 8601(+09:00)로 변환해서 채운다.
+        if (
+          typeof bulletinData.date === "string" &&
+          /^\d{4}-\d{2}-\d{2}$/.test(bulletinData.date)
+        ) {
+          bulletinDateIso = `${bulletinData.date}T00:00:00+09:00`;
+        }
       }
     } catch (error) {
       console.error("Firestore 조회 에러:", error);
@@ -654,6 +724,85 @@ export const bulletinOG = functions.https.onRequest(async (req, res) => {
       const imageTag = safeImageUrl ?
         `<meta property="og:image" content="${safeImageUrl}" />` :
         "";
+      const safeExtraBody = extraBody ? escapeHtml(extraBody) : "";
+      const extraBodyTag = safeExtraBody ? `<p>${safeExtraBody}</p>` : "";
+      const pageUrl = `https://bulletin.stayon-platform.com/view/${bulletinId}`;
+      const hasImage = imageUrl && /^https?:\/\//.test(imageUrl);
+      const publishedTimeTag = bulletinDateIso ?
+        "<meta property=\"article:published_time\" " +
+          `content="${bulletinDateIso}" />` :
+        "";
+
+      // 검색엔진이 이 페이지를 "진짜 콘텐츠가 있는 페이지"로 더 잘 인식하도록
+      // schema.org 구조화 데이터(JSON-LD)를 Church/WebSite/WebPage/Article/
+      // BreadcrumbList 5종류로 연결해서 넣는다(경쟁사 주보 서비스가 쓰는
+      // 구조와 동일한 패턴). </script>로 끊기지 않게 "<"는 유니코드 이스케이프로 치환.
+      const structuredData = {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "Church",
+            "@id": `${pageUrl}#church`,
+            "name": churchName,
+            "url": pageUrl,
+            ...(hasImage ? {image: imageUrl, logo: imageUrl} : {}),
+          },
+          {
+            "@type": "WebSite",
+            "@id": `${pageUrl}#website`,
+            "name": `${churchName} 온라인주보`,
+            "url": pageUrl,
+            "inLanguage": "ko-KR",
+            "about": {"@id": `${pageUrl}#church`},
+          },
+          {
+            "@type": "WebPage",
+            "@id": `${pageUrl}#webpage`,
+            "url": pageUrl,
+            "name": ogTitle,
+            "description": description,
+            "inLanguage": "ko-KR",
+            "isPartOf": {"@id": `${pageUrl}#website`},
+            "about": {"@id": `${pageUrl}#church`},
+            "breadcrumb": {"@id": `${pageUrl}#breadcrumb`},
+          },
+          {
+            "@type": "BreadcrumbList",
+            "@id": `${pageUrl}#breadcrumb`,
+            "itemListElement": [
+              {
+                "@type": "ListItem", "position": 1,
+                "name": churchName, "item": pageUrl,
+              },
+              {
+                "@type": "ListItem", "position": 2,
+                "name": "온라인 주보", "item": pageUrl,
+              },
+            ],
+          },
+          {
+            "@type": "Article",
+            "@id": `${pageUrl}#article`,
+            "headline": ogTitle,
+            "description": description,
+            "mainEntityOfPage": {"@id": `${pageUrl}#webpage`},
+            "author": {"@type": "Organization", "name": churchName},
+            "publisher": {
+              "@type": "Organization",
+              "name": churchName,
+              ...(hasImage ?
+                {logo: {"@type": "ImageObject", "url": imageUrl}} :
+                {}),
+            },
+            "inLanguage": "ko-KR",
+            ...(bulletinDateIso ? {datePublished: bulletinDateIso} : {}),
+            ...(hasImage ? {image: [imageUrl]} : {}),
+          },
+        ],
+      };
+      const structuredDataTag = `<script type="application/ld+json">${
+        JSON.stringify(structuredData).replace(/</g, "\\u003c")
+      }</script>`;
       const html = `
         <!DOCTYPE html>
         <html lang="ko">
@@ -662,15 +811,23 @@ export const bulletinOG = functions.https.onRequest(async (req, res) => {
           <title>${safeTitle}</title>
           <meta name="description" content="${safeDesc}" />
           <link rel="canonical" href="${safeUrl}" />
-          <meta property="og:type" content="website" />
+          <meta property="og:type" content="article" />
           <meta property="og:title" content="${safeTitle}" />
           <meta property="og:description" content="${safeDesc}" />
           <meta property="og:url" content="${safeUrl}" />
+          <meta property="og:site_name" content="${escapeHtml(churchName)}" />
+          <meta property="og:locale" content="ko_KR" />
+          ${publishedTimeTag}
           ${imageTag}
+          <meta name="twitter:card" content="summary_large_image" />
+          <meta name="twitter:title" content="${safeTitle}" />
+          <meta name="twitter:description" content="${safeDesc}" />
+          ${structuredDataTag}
         </head>
         <body>
           <h1>${safeTitle}</h1>
           <p>${safeDesc}</p>
+          ${extraBodyTag}
         </body>
         </html>
       `;
@@ -1005,36 +1162,73 @@ export const siteOG = functions.https.onRequest(async (req, res) => {
   // 검색봇에게는 그 링크 목록을 정적 HTML에 미리 박아서 내려줘서, 렌더링을 기다리지
   // 않고 첫 크롤링에서 바로 각 교회 사이트를 발견할 수 있게 한다. 실제 방문자 화면과
   // /website 외 다른 경로는 전혀 건드리지 않음
-  if (!churchSlug && requestPath === "/website" && isSearchBot) {
-    try {
-      const indexPath = path.join(__dirname, "../dist/index.html");
-      if (fs.existsSync(indexPath)) {
-        const sitesSnap = await db
-          .collection("churchSites")
-          .where("published", "==", true)
-          .limit(24)
-          .get();
-        const links = sitesSnap.docs
-          .map((d) => {
-            const data = d.data() as Record<string, unknown>;
-            const name =
-              typeof data.churchName === "string" && data.churchName ?
-                data.churchName :
-                d.id;
-            return `<a href="https://${escapeHtml(d.id)}.stayon-platform.com/">${escapeHtml(name)}</a>`;
-          })
-          .join("\n");
-        const indexHtml = fs.readFileSync(indexPath, "utf8");
-        const withLinks = indexHtml.replace(
-          "</body>",
-          `<nav aria-label="스테이온과 함께 하고 있는 교회">${links}</nav></body>`
-        );
-        res.setHeader("Content-Type", "text/html; charset=utf-8");
-        res.status(200).send(withLinks);
-        return;
+  if (!churchSlug && requestPath === "/website") {
+    // 카카오톡 등 메신저 미리보기 봇: /website는 특정 교회가 아니라 "교회
+    // 홈페이지 제작" 제품 소개 페이지라서, 아무 분기도 안 타면 루트(/)의
+    // 일반 주보 홍보 문구가 그대로 나가버린다(실제로 확인된 버그) - 이 페이지
+    // 전용 OG 카드를 만들어준다.
+    if (isPreviewBot) {
+      const ogTitle = "교회 홈페이지 무료로 만들기 | STAYON";
+      const ogDesc =
+        "수백만 원짜리 교회 홈페이지를 3단계면 무료로 완성해요. " +
+        "디자인 몰라도 괜찮아요.";
+      const ogUrl = "https://bulletin.stayon-platform.com/website";
+      const ogImage =
+        "https://bulletin.stayon-platform.com/stayon_website_kakao_cover.png";
+      const html = `
+        <!DOCTYPE html>
+        <html lang="ko">
+        <head>
+          <meta charset="utf-8" />
+          <title>${ogTitle}</title>
+          <meta property="og:type" content="website" />
+          <meta property="og:title" content="${ogTitle}" />
+          <meta property="og:description" content="${ogDesc}" />
+          <meta property="og:url" content="${ogUrl}" />
+          <meta property="og:image" content="${ogImage}" />
+        </head>
+        <body>
+          <h1>${ogTitle}</h1>
+          <p>${ogDesc}</p>
+        </body>
+        </html>
+      `;
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.status(200).send(html);
+      return;
+    }
+
+    if (isSearchBot) {
+      try {
+        const indexPath = path.join(__dirname, "../dist/index.html");
+        if (fs.existsSync(indexPath)) {
+          const sitesSnap = await db
+            .collection("churchSites")
+            .where("published", "==", true)
+            .limit(24)
+            .get();
+          const links = sitesSnap.docs
+            .map((d) => {
+              const data = d.data() as Record<string, unknown>;
+              const name =
+                typeof data.churchName === "string" && data.churchName ?
+                  data.churchName :
+                  d.id;
+              return `<a href="https://${escapeHtml(d.id)}.stayon-platform.com/">${escapeHtml(name)}</a>`;
+            })
+            .join("\n");
+          const indexHtml = fs.readFileSync(indexPath, "utf8");
+          const withLinks = indexHtml.replace(
+            "</body>",
+            `<nav aria-label="스테이온과 함께 하고 있는 교회">${links}</nav></body>`
+          );
+          res.setHeader("Content-Type", "text/html; charset=utf-8");
+          res.status(200).send(withLinks);
+          return;
+        }
+      } catch (error) {
+        console.error("교회 사이트 링크 목록 조회 에러:", error);
       }
-    } catch (error) {
-      console.error("교회 사이트 링크 목록 조회 에러:", error);
     }
   }
 
@@ -1105,16 +1299,54 @@ export const churchSitemap = functions.https.onRequest(async (_req, res) => {
 export const bulletinSitemap = functions.https.onRequest(
   async (_req, res) => {
     try {
-      const snapshot = await db
+      const usersSnap = await db
         .collection("users")
         .where("bulletinSearchable", "==", true)
         .get();
 
       const urlEntries: string[] = [];
-      snapshot.forEach((doc) => {
+
+      // 교회당 "최신 주보" 고정 링크(/view/{uid}) - 항상 지금 발행된 주보를 보여줌
+      usersSnap.forEach((doc) => {
         const loc = `https://bulletin.stayon-platform.com/view/${doc.id}`;
         urlEntries.push(`  <url><loc>${loc}</loc></url>`);
       });
+
+      // 교회마다 발행된 주보 "전체"를 각자 고유 URL(/view/{주보문서ID})로도
+      // 등록한다. 매주 새 주보를 발행할 때마다 색인 가능한 페이지가 하나씩
+      // 쌓이게 하기 위함 - 경쟁사(주보플러스)처럼 "주보마다 영구 URL"이 있어야
+      // 콘텐츠가 누적되지, 교회당 "최신 주보" 링크 1개만으로는 매주 똑같은
+      // 페이지 하나만 재사용하는 꼴이라 구글이 쌓인 콘텐츠로 안 쳐준다.
+      const searchableUids = usersSnap.docs.map((d) => d.id);
+      if (searchableUids.length > 0) {
+        // Firestore "in" 쿼리는 최대 30개까지만 받아서 30개씩 끊어서 조회
+        const chunks: string[][] = [];
+        for (let i = 0; i < searchableUids.length; i += 30) {
+          chunks.push(searchableUids.slice(i, i + 30));
+        }
+        for (const chunk of chunks) {
+          const bulletinsSnap = await db
+            .collection("bulletins")
+            .where("authorId", "in", chunk)
+            .where("status", "==", "published")
+            .get();
+          bulletinsSnap.forEach((doc) => {
+            const data = doc.data() as Record<string, unknown>;
+            const publishedAt =
+              data.publishedAt as admin.firestore.Timestamp | undefined;
+            const lastmod = publishedAt ?
+              publishedAt.toDate().toISOString().split("T")[0] :
+              undefined;
+            const loc =
+              `https://bulletin.stayon-platform.com/view/${doc.id}`;
+            urlEntries.push(
+              lastmod ?
+                `  <url><loc>${loc}</loc><lastmod>${lastmod}</lastmod></url>` :
+                `  <url><loc>${loc}</loc></url>`
+            );
+          });
+        }
+      }
 
       const xml = [
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",

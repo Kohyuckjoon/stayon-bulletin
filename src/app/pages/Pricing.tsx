@@ -587,8 +587,16 @@ export function Pricing() {
           </div>
         ) : (
           <div className="flex flex-col items-center mb-6 sm:mb-10 w-full">
+            {/* 프로/올인원은 아직 세부 기능이 확정 안 됐으므로(위 "앞으로 이런 요금제로
+                확장돼요" 미리보기 카드와 동일), 실제 결제 카드 3장(월/3개월/정기결제)의
+                기능 리스트도 똑같이 블러+자물쇠 처리한다. 가격/결제 버튼은 그대로 둔다 —
+                요청받은 건 "기능만" 가리는 것이라, 결제 자체를 막는 판단은 하지 않는다. */}
+            {(() => {
+              const isFeatureLocked = selectedFeaturePlan === "pro" || selectedFeaturePlan === "allinone";
+              return (
+            <>
             {/* 모바일: 가로 스크롤 캐러셀(월/3개월/정기결제 3장) / sm 이상: 기존 그리드 */}
-            <div className="flex gap-3 overflow-x-auto snap-x snap-mandatory pb-2 -mx-3 px-3 sm:mx-0 sm:px-0 sm:pb-0 sm:grid sm:grid-cols-3 sm:gap-5 sm:overflow-visible w-full max-w-5xl items-start">
+            <div className="flex gap-3 overflow-x-auto snap-x snap-mandatory pb-2 -mx-3 px-3 sm:mx-0 sm:px-0 sm:pb-0 sm:grid sm:grid-cols-3 sm:gap-5 sm:overflow-visible w-full max-w-5xl items-stretch">
               {(["monthly", "threeMonth"] as const).map((duration) => {
                 const plan = buildFeaturePlan(featuredTier, selectedFeaturePlan, duration);
                 if (!plan) return null;
@@ -614,13 +622,25 @@ export function Pricing() {
                     <Button onClick={() => handlePlanSelection(plan, featuredTier.value)} className={`w-full rounded-[1.3rem] py-5 sm:py-7 mb-5 sm:mb-8 font-black border-none shadow-md transition-all active:scale-95 text-sm sm:text-base bg-gradient-to-r ${TIER_GRADIENT[featuredTier.value]} hover:opacity-90 text-white shadow-lg shadow-blue-100`}>
                       주보 시작하기
                     </Button>
-                    <div className="space-y-2.5 sm:space-y-3.5 flex-grow">
-                      {planFeatures.map((feature, fIndex) => (
-                        <div key={fIndex} className="flex items-start gap-2.5 sm:gap-3">
-                          <Check className="w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0 mt-0.5 text-blue-500" />
-                          <span className="text-xs sm:text-[13px] leading-tight font-medium text-slate-600">{feature}</span>
+                    <div className="relative flex-grow">
+                      <div className={`space-y-2.5 sm:space-y-3.5 ${isFeatureLocked ? "blur-[5px] opacity-50 select-none pointer-events-none" : ""}`}>
+                        {planFeatures.map((feature, fIndex) => (
+                          <div key={fIndex} className="flex items-start gap-2.5 sm:gap-3">
+                            <Check className="w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0 mt-0.5 text-blue-500" />
+                            <span className="text-xs sm:text-[13px] leading-tight font-medium text-slate-600">{feature}</span>
+                          </div>
+                        ))}
+                      </div>
+                      {isFeatureLocked && (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
+                          <div className="w-10 h-10 rounded-full bg-white shadow-md border border-slate-200 flex items-center justify-center text-slate-400">
+                            <Lock className="w-4 h-4" />
+                          </div>
+                          <span className="text-[10px] font-bold text-slate-400 text-center px-4 leading-relaxed">
+                            세부 기능은<br />업데이트 시 공개돼요
+                          </span>
                         </div>
-                      ))}
+                      )}
                     </div>
                   </Card>
                   </div>
@@ -646,17 +666,32 @@ export function Pricing() {
                 <Button onClick={handleRecurringSelection} className="w-full rounded-[1.3rem] py-5 sm:py-7 mb-5 sm:mb-8 font-black border-none shadow-md transition-all active:scale-95 text-sm sm:text-base bg-gradient-to-r from-emerald-500 to-teal-600 hover:opacity-90 text-white shadow-lg shadow-emerald-100 flex items-center justify-center gap-2">
                   <RefreshCcw className="w-4 h-4" /> 정기결제로 시작하기
                 </Button>
-                <div className="space-y-2.5 sm:space-y-3.5 flex-grow">
-                  {visibleFeatures(UPCOMING_FEATURE_TIERS.find((f) => f.key === selectedFeaturePlan)?.features || commonFeatures).map((feature, fIndex) => (
-                    <div key={fIndex} className="flex items-start gap-2.5 sm:gap-3">
-                      <Check className="w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0 mt-0.5 text-emerald-500" />
-                      <span className="text-xs sm:text-[13px] leading-tight font-medium text-slate-600">{feature}</span>
+                <div className="relative flex-grow">
+                  <div className={`space-y-2.5 sm:space-y-3.5 ${isFeatureLocked ? "blur-[5px] opacity-50 select-none pointer-events-none" : ""}`}>
+                    {visibleFeatures(UPCOMING_FEATURE_TIERS.find((f) => f.key === selectedFeaturePlan)?.features || commonFeatures).map((feature, fIndex) => (
+                      <div key={fIndex} className="flex items-start gap-2.5 sm:gap-3">
+                        <Check className="w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0 mt-0.5 text-emerald-500" />
+                        <span className="text-xs sm:text-[13px] leading-tight font-medium text-slate-600">{feature}</span>
+                      </div>
+                    ))}
+                  </div>
+                  {isFeatureLocked && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
+                      <div className="w-10 h-10 rounded-full bg-white shadow-md border border-slate-200 flex items-center justify-center text-slate-400">
+                        <Lock className="w-4 h-4" />
+                      </div>
+                      <span className="text-[10px] font-bold text-slate-400 text-center px-4 leading-relaxed">
+                        세부 기능은<br />업데이트 시 공개돼요
+                      </span>
                     </div>
-                  ))}
+                  )}
                 </div>
               </Card>
               </div>
             </div>
+            </>
+              );
+            })()}
           </div>
         )}
 

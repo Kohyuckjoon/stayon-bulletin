@@ -7,7 +7,8 @@ import * as nodemailer from "nodemailer";
 export const sendCustomerEmail = async (
   to: string,
   subject: string,
-  htmlContent: string
+  htmlContent: string,
+  cc?: string[]
 ) => {
   const gmailUser = process.env.GMAIL_USER;
   const gmailPass = process.env.GMAIL_PASS;
@@ -30,6 +31,7 @@ export const sendCustomerEmail = async (
     const info = await transporter.sendMail({
       from: `"STAYON 스테이온" <${gmailUser}>`,
       to,
+      ...(cc && cc.length > 0 ? {cc} : {}),
       subject,
       html: htmlContent,
     });

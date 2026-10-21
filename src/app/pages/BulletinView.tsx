@@ -643,7 +643,7 @@ export function BulletinView() {
                   )}
 
                   <div className="space-y-0.5">
-                    {bulletin.sections.map((section: any, index: number) => {
+                    {bulletin.sections.filter((section: any) => !section.hidden).map((section: any, index: number) => {
                       const hasContent = section.content && section.content.trim() !== "";
 
                       return (

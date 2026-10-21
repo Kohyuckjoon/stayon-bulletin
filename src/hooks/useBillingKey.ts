@@ -13,11 +13,10 @@ declare global {
   }
 }
 
-// TODO: NHN KCP 정기결제(빌링) 채널이 포트원에서 승인·발급되면, 아래 두 값 중
-// channelKey를 그 채널의 값으로 교체해야 함. 지금 들어있는 값은 기존 단건
-// 결제용 채널 키라서, 정기결제 전용 채널이 따로 나오면 반드시 바꿔야 함.
+// NHN KCP 정기결제(빌링) 전용 채널. 2026-10-21 KCP 정기결제 계약 완료 후
+// 발급된 채널키로 교체 완료(기존엔 단건결제용 채널키를 임시로 재사용 중이었음).
 const BILLING_STORE_ID = "store-cee37831-993c-4f67-a317-143a42ebd82b";
-const BILLING_CHANNEL_KEY = "channel-key-42cccb26-f8fd-4067-94ba-b13945900f21"; // TODO: 정기결제 전용 채널키로 교체
+const BILLING_CHANNEL_KEY = "channel-key-608b0f0e-f450-43cb-a1af-5f4e9e9ace32";
 
 // 다음 결제일 계산. "해당 일자가 없는 달은 말일에 결제"라는 정책(정기결제
 // 정책 섹션) 그대로 반영 — 예: 1/31 등록이면 다음 결제일은 2/28(또는 29).

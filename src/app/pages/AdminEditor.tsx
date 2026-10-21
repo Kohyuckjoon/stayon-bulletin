@@ -19,7 +19,7 @@ import {
   ChevronDown, Youtube, Check, Copy, CalendarIcon, Clock, BookOpen, Sparkles, Upload,
   MapPin, Info, ImageIcon, X, Megaphone, Share2, FileText, Move, Users,
   Pencil, GripVertical, Quote, MessagesSquare, Lock, Tent, Palette, ExternalLink, Search,
-  Instagram, AtSign
+  Instagram, AtSign, Loader2
 } from "lucide-react";
 import { toast } from "sonner";
 import { useFeatureUpdateNotice } from "../../hooks/useFeatureUpdateNotice";
@@ -64,6 +64,8 @@ interface BulletinSection {
   value: string;
   content?: string; // 클릭 시 팝업으로 보여주는 상세 전문(사도신경/주기도문 등)
   preview?: string; // 항목 바로 아래 인라인으로 짧게 보여주는 문구(찬송가 가사 등) - 성도 화면에서 최대 3줄
+  hidden?: boolean; // 체크하면 내용은 그대로 둔 채 성도 화면에서만 숨김 - 특송처럼 매주는
+  // 안 쓰는 순서를 지웠다 다시 쓸 때 내용을 또 입력 안 해도 되게 하기 위함
 }
 
 interface Announcement {
@@ -752,6 +754,99 @@ export function AdminEditor() {
         setChurchAddress(data.address);
       },
     }).open();
+  };
+
+  // 주보 배경 "직접 업로드" - 미리 만들어둔 BACKGROUND_TEMPLATES 외에, 관리자가
+  // 원하는 사진을 올려서 그대로 배경으로 쓸 수 있게 한다. 배경은 화면 전체를
+  // 덮는 히어로 이미지라 썸네일보다 큰 해상도(최대 1080px)로 저장한다.
+  // customBgUrl은 "지금 선택된 배경"(bulletinData.backgroundImage)과 별개로,
+  // "이 교회가 한 번이라도 올린 적 있는 커스텀 배경"을 기억해둔다 - 프리셋으로
+  // 바꿨다가 다시 업로드한 사진으로 돌아가고 싶을 때 재업로드 안 해도 되게 하기 위함.
+  // 실제 파일은 uid당 하나(bulletinBackgrounds/{uid}.jpg, 새로 올리면 덮어씀)라
+  // 편집 화면 진입 시 그 경로로 다운로드 URL을 미리 한 번 조회해서 기억해둔다.
+  const customBgInputRef = useRef<HTMLInputElement | null>(null);
+  const [customBgUrl, setCustomBgUrl] = useState("");
+  const [uploadingCustomBg, setUploadingCustomBg] = useState(false);
+
+  useEffect(() => {
+    const uid = auth.currentUser?.uid;
+    if (!uid) return;
+    getDownloadURL(storageRef(storage, `bulletinBackgrounds/${uid}.jpg`))
+      .then((url) => setCustomBgUrl(url))
+      .catch(() => {
+        // 한 번도 안 올렸으면 파일이 없어서 에러 나는 게 정상 - 조용히 무시
+      });
+  }, []);
+
+  const handleCustomBgUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      toast.error("이미지 파일(png, jpeg 등)만 업로드 가능합니다.");
+      return;
+    }
+    if (!auth.currentUser) {
+      toast.error("로그인이 필요합니다");
+      return;
+    }
+    const uid = auth.currentUser.uid;
+    setUploadingCustomBg(true);
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.src = event.target?.result as string;
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        const MAX_SIZE = 1080;
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > MAX_SIZE) {
+            height *= MAX_SIZE / width;
+            width = MAX_SIZE;
+          }
+        } else {
+          if (height > MAX_SIZE) {
+            width *= MAX_SIZE / height;
+            height = MAX_SIZE;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx?.drawImage(img, 0, 0, width, height);
+
+        canvas.toBlob(async (blob) => {
+          if (!blob) {
+            toast.error("이미지 처리에 실패했습니다.");
+            setUploadingCustomBg(false);
+            return;
+          }
+          try {
+            const fileRef = storageRef(storage, `bulletinBackgrounds/${uid}.jpg`);
+            await uploadBytes(fileRef, blob, { contentType: "image/jpeg" });
+            const url = await getDownloadURL(fileRef);
+            setBulletinData({ ...bulletinData, backgroundImage: url });
+            setCustomBgUrl(url);
+            toast.success("배경 이미지가 등록되었습니다.");
+          } catch (error) {
+            console.error("배경 이미지 업로드 실패:", error);
+            toast.error("업로드 중 오류가 발생했습니다.");
+          } finally {
+            setUploadingCustomBg(false);
+          }
+        }, "image/jpeg", 0.85);
+      };
+    };
+    reader.onerror = () => {
+      toast.error("이미지를 읽는 중 오류가 발생했습니다.");
+      setUploadingCustomBg(false);
+    };
+    reader.readAsDataURL(file);
   };
 
   // 위치 안내 이미지 업로드 핸들러. base64로 문서에 직접 저장하던 방식은 Firestore 문서
@@ -1748,6 +1843,11 @@ export function AdminEditor() {
   const updateSection = (sectionId: string, field: 'label' | 'value' | 'content' | 'preview', val: string) =>
     setSections(sections.map(s => s.id === sectionId ? { ...s, [field]: val } : s));
 
+  // "순서 숨기기" - 내용은 그대로 두고 성도 화면 노출만 끈다. 특송처럼 매주 쓰지
+  // 않는 순서를 지웠다 다시 쓸 때마다 내용을 재입력하지 않아도 되게 하기 위함.
+  const toggleSectionHidden = (sectionId: string) =>
+    setSections(sections.map(s => s.id === sectionId ? { ...s, hidden: !s.hidden } : s));
+
   const addAnnouncement = () => setAnnouncements([...announcements, { id: Date.now().toString(), title: "", content: "" }]);
   const removeAnnouncement = (annId: string) => setAnnouncements(announcements.filter(a => a.id !== annId));
   const updateAnnouncement = (annId: string, field: 'title' | 'content', val: string) =>
@@ -1884,6 +1984,7 @@ export function AdminEditor() {
         value: String(s.value || ""),
         content: String(s.content || ""),
         preview: String(s.preview || ""),
+        hidden: Boolean(s.hidden),
       }));
 
       const sanitizedAnnouncements = announcements.map((a) => ({
@@ -2144,6 +2245,80 @@ export function AdminEditor() {
             <div className="w-2.5 h-8 bg-indigo-500 rounded-full"></div> 주보 배경 선택
           </h2>
           <div className="flex gap-4 overflow-x-auto pb-6 pt-4 scrollbar-hide px-4">
+            {/* 직접 업로드 - 미리 만들어둔 템플릿 외에 원하는 사진을 배경으로 쓸 수 있게 한다.
+                맨 앞에 둬서 관리자가 놓치지 않게 한다. 한 번 올린 사진(customBgUrl)은 프리셋으로
+                바꿔도 계속 기억해뒀다가, 다시 누르면 재업로드 없이 바로 그 사진으로 돌아간다 -
+                변경(재업로드)은 우측 하단 연필 아이콘으로만 따로 트리거한다. */}
+            {(() => {
+              const isSelected = !!customBgUrl && bulletinData.backgroundImage === customBgUrl;
+              return (
+                <>
+                  <input
+                    type="file"
+                    accept="image/png, image/jpeg, image/jpg, image/webp"
+                    ref={customBgInputRef}
+                    onChange={handleCustomBgUpload}
+                    className="hidden"
+                  />
+                  <button
+                    disabled={uploadingCustomBg}
+                    onClick={() => {
+                      if (uploadingCustomBg) return;
+                      if (customBgUrl) {
+                        setBulletinData({ ...bulletinData, backgroundImage: customBgUrl });
+                      } else {
+                        customBgInputRef.current?.click();
+                      }
+                    }}
+                    className={`relative group shrink-0 transition-all p-1.5 ${isSelected
+                      ? 'ring-4 ring-blue-500 scale-105 shadow-lg z-10'
+                      : 'hover:scale-105'
+                      } rounded-[1.8rem] bg-slate-50 w-32 h-48 overflow-visible ${uploadingCustomBg ? 'cursor-wait' : ''}`}
+                  >
+                    <div className="w-full h-full rounded-[1.4rem] overflow-hidden relative bg-white border-2 border-dashed border-indigo-200">
+                      {customBgUrl ? (
+                        <>
+                          <img src={customBgUrl} alt="직접 업로드" className="w-full h-full object-cover object-top" />
+                          <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent flex items-end justify-center p-3">
+                            <span className="text-white text-[10px] font-bold">직접 업로드</span>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="w-full h-full flex flex-col items-center justify-center gap-1.5 text-indigo-400">
+                          <ImageIcon className="w-7 h-7" />
+                          <span className="text-[10px] font-bold">직접 업로드</span>
+                        </div>
+                      )}
+                      {uploadingCustomBg && (
+                        <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center gap-2">
+                          <Loader2 className="w-6 h-6 text-white animate-spin" />
+                          <span className="text-white text-[10px] font-bold">업로드 중...</span>
+                        </div>
+                      )}
+                    </div>
+                    {isSelected && !uploadingCustomBg && (
+                      <div className="absolute top-3 right-3 bg-blue-500 rounded-full p-1 shadow-md z-10">
+                        <Check className="w-3.5 h-3.5 text-white stroke-[3px]" />
+                      </div>
+                    )}
+                    {customBgUrl && !uploadingCustomBg && (
+                      <div
+                        role="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          customBgInputRef.current?.click();
+                        }}
+                        title="다른 사진으로 교체"
+                        className="absolute bottom-3 right-3 w-7 h-7 rounded-full bg-white shadow-md border border-slate-200 flex items-center justify-center text-slate-500 hover:text-blue-600 hover:border-blue-300"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                      </div>
+                    )}
+                  </button>
+                </>
+              );
+            })()}
+
             {BACKGROUND_TEMPLATES.map((tmpl) => (
               <button
                 key={tmpl.id}
@@ -2730,13 +2905,19 @@ export function AdminEditor() {
             ))} */}
 
             {sections.map((section, index) => (
-              <div key={section.id} className="p-4 bg-gray-50/50 rounded-[1.5rem] border border-gray-100 group hover:bg-white hover:shadow-lg transition-all">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-1">
+              <div key={section.id} className={`p-4 rounded-[1.5rem] border group hover:shadow-lg transition-all ${section.hidden ? 'bg-gray-100/70 border-gray-200 opacity-60' : 'bg-gray-50/50 border-gray-100 hover:bg-white'}`}>
+                <div className="flex items-center justify-between gap-2 mb-3">
+                  <div className="flex items-center gap-1 shrink-0">
                     <Button variant="ghost" size="icon" disabled={index === 0} onClick={() => moveSection(index, 'up')} className="h-7 w-7 rounded-lg bg-white border border-gray-100 shadow-sm"><ChevronUp className="w-4 h-4" /></Button>
                     <Button variant="ghost" size="icon" disabled={index === sections.length - 1} onClick={() => moveSection(index, 'down')} className="h-7 w-7 rounded-lg bg-white border border-gray-100 shadow-sm"><ChevronDown className="w-4 h-4" /></Button>
                   </div>
-                  <Button variant="ghost" size="icon" onClick={() => removeSection(section.id)} className="text-gray-300 hover:text-red-500 rounded-full h-8 w-8"><Trash2 className="w-4 h-4" /></Button>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <label className="flex items-center gap-1.5 text-xs font-bold text-gray-500 cursor-pointer select-none px-2.5 py-1 rounded-full bg-white border border-gray-100 shadow-sm whitespace-nowrap">
+                      <Checkbox checked={!!section.hidden} onCheckedChange={() => toggleSectionHidden(section.id)} className="h-3.5 w-3.5 shrink-0" />
+                      이번 주 숨기기
+                    </label>
+                    <Button variant="ghost" size="icon" onClick={() => removeSection(section.id)} className="text-gray-300 hover:text-red-500 rounded-full h-8 w-8 shrink-0"><Trash2 className="w-4 h-4" /></Button>
+                  </div>
                 </div>
 
                 <div className="space-y-2.5">
