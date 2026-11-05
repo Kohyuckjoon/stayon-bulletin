@@ -9,10 +9,21 @@ declare global {
   }
 }
 
+// 결제한 요금제 등급(users.status 값). planTier가 없으면 요금제 이름(예: "개척 베이직
+// 1개월 주보 플랜")에서 찾고, 그래도 모르면 예전 동작대로 올인원
+const PLAN_TIERS = ["basic", "standard", "pro", "allinone"];
+const PLAN_LABELS: Record<string, string> = { "베이직": "basic", "스탠다드": "standard", "프로": "pro", "올인원": "allinone" };
+const planTierOf = (planTier: string | undefined, planName: string) => {
+  if (planTier && PLAN_TIERS.includes(planTier)) return planTier;
+  const label = Object.keys(PLAN_LABELS).find((l) => planName.includes(l));
+  return label ? PLAN_LABELS[label] : "allinone";
+};
+
 export const usePayment = () => {
   const requestPayment = useCallback(async (data: {
     planName: string;
     amount: number;
+    planTier?: string; // basic | standard | pro | allinone
     buyerEmail?: string;
     buyerName?: string;
   }) => {
@@ -77,7 +88,7 @@ export const usePayment = () => {
 
             // Firestore 사용자 정보 업데이트
             await updateDoc(userDocRef, {
-              status: "allinone",
+              status: planTierOf(data.planTier, data.planName), // 결제한 요금제 등급 그대로(/super 상태값)
               isPaidUser: true,
               isTrialUsed: true,
               lastPaymentDate: Timestamp.fromDate(newExpirationDate),

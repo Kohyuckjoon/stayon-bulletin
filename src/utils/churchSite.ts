@@ -56,6 +56,23 @@ export interface ChurchSite {
   metaDesc?: string;
 
   // 결제/이용기간 관련 필드 (교회 사이트 제작 기능 전용, 주보 플랫폼과는 무관)
+  // 화면 방식: "multipage"(기본, 메뉴마다 주소가 따로 있는 페이지 전환형) / "onepage"(예전 한 페이지 스크롤형)
+  layoutMode?: "multipage" | "onepage";
+  denomination?: string; // 교단 마크 id(utils/denominations.ts). 없으면 예장 합동, "none"이면 사용 안 함
+  denominationWithLogo?: boolean; // 로고 이미지가 있어도 교단 마크를 옆에 같이 표시
+  hideLogo?: boolean; // 홈페이지에서는 로고 이미지를 쓰지 않음(교단 마크 + 교회 이름으로 표시). 주보 로고는 그대로
+  heroImages?: string[]; // 첫 화면 배너 사진(최대 10장). 첫 장은 heroImageUrl에도 같이 저장됨
+  heroTransition?: "slide" | "fade"; // 2장 이상일 때 넘김 방식: 슬라이드 / 디졸브
+  historyItems?: { date: string; content: string }[]; // 교회 연혁
+  prayerPosts?: { id: string; title: string; date: string; content: string }[]; // 중보기도(외부 공개해도 되는 기도제목)
+  // 교회 주보(종이 주보 파일): 교회가 쓰는 한글·워드·PDF·사진 파일을 그대로 올린 목록. 온라인 주보와 별개
+  // sermons/news: 교회가 "이 주보로 교회 소식·설교도 채우기"로 자동 분석해서 확인 후 넣은 내용(선택)
+  paperBulletins?: {
+    id: string; date: string; title: string; fileUrl: string; fileName: string; fileType: string;
+    sermons?: { service: string; title: string; scripture: string; preacher: string }[];
+    news?: { title: string; content: string }[];
+  }[];
+
   firstDeployedAt?: Timestamp; // 최초 배포(발행) 시각. 한 번 설정되면 재배포해도 절대 안 바뀜 — 30일 무료체험 기산점
   accessExpiresAt?: Timestamp; // 이 사이트를 이용할 수 있는 만료일(무료체험 또는 결제로 연장된 날짜)
 }

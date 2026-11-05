@@ -20,12 +20,24 @@
         "function": "bulletinSitemap"
       },
       {
+        "source": "/bulletin-rss.xml",
+        "function": "bulletinSitemap"
+      },
+      {
         "source": "/website",
         "function": "siteOG"
       },
       {
+        "source": "/searchable-churches.json",
+        "function": "bulletinSitemap"
+      },
+      {
+        "source": "/pricing",
+        "destination": "/pricing.html"
+      },
+      {
         "source": "**",
-        "destination": "/index.html"
+        "destination": "/app.html"
       }
     ]
   },

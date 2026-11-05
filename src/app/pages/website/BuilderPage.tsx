@@ -4,7 +4,9 @@ import { Timestamp } from 'firebase/firestore'
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage'
 import { auth, storage } from '../../../firebase'
 import { getChurchSite, getChurchSitesByOwner, createChurchSite, updateChurchSite, publishChurchSite, extendChurchSiteAccess, extractYoutubeId, MENU_ITEMS as menuItems, ChurchSite } from '../../../utils/churchSite'
-import { checkSlugFormat, isSlugTaken } from '../../../utils/slugValidation'
+import { checkSlugFormat, isSlugTaken, confirmPermanentAddress } from '../../../utils/slugValidation'
+import { DENOMINATIONS, DEFAULT_DENOMINATION, NO_DENOMINATION, denominationLogoSrc } from '../../../utils/denominations'
+import { fetchOwnerData, builderDefaultsFromBulletin, BuilderDefaults } from '../../../utils/churchSiteContent'
 import { WebsiteRenderer } from './WebsiteRenderer'
 
 // 미리보기 패널 안에서 실제 배포 화면(WebsiteRenderer)을 데스크톱 폭(1280px) 기준으로 그린 뒤
@@ -42,6 +44,35 @@ interface Props {
 type WorshipService = { title: string; time: string; note: string; group: string }
 type VisionItem = { title: string; desc: string }
 type NewsItem = { title: string; date: string; content: string }
+type PaperSermon = { service: string; title: string; scripture: string; preacher: string }
+type PaperNews = { title: string; content: string }
+// sermons/news: 자동 분석 후 교회가 확인 화면에서 고른 설교·교회 소식(홈페이지 '설교'·'교회 소식'에 보임)
+type PaperBulletin = { id: string; date: string; title: string; fileUrl: string; fileName: string; fileType: string; sermons?: PaperSermon[]; news?: PaperNews[] }
+// 주보 자동 분석 결과(서버 analyzePaperBulletin이 돌려주는 형식)
+type PaperAnalysis = {
+  sermons: PaperSermon[]
+  news: PaperNews[]
+  basic: {
+    churchName: string; pastorName: string; phone: string; address: string; intro: string
+    worshipServices: { group: string; title: string; time: string }[]
+    staff: { role: string; name: string }[]
+  }
+}
+type AnalysisReview = {
+  bulletinId: string
+  result: PaperAnalysis
+  sermons: boolean[]
+  news: boolean[]
+  basic: Record<string, boolean>
+}
+const ANALYZE_URL = 'https://asia-northeast3-stayonsbplatform.cloudfunctions.net/analyzePaperBulletin'
+// 다운로드 주소(…/o/<경로>?alt=media…) → Storage 경로
+const storagePathFromUrl = (url: string) => {
+  const m = url.match(/\/o\/([^?]+)/)
+  return m ? decodeURIComponent(m[1]) : ''
+}
+// 교회 주보 파일로 받는 형식(한글·워드·PDF·사진). 한글·워드는 브라우저에서 바로 안 열려서 홈페이지에선 내려받기로 제공
+const PAPER_BULLETIN_ACCEPT = '.hwp,.hwpx,.doc,.docx,.pdf,.jpg,.jpeg,.png'
 type StaffMember = { role: string; name: string; department: string; phone: string; email: string; photoUrl: string }
 type LayLeader = { role: string; name: string; department: string; photoUrl: string }
 // comments/views는 실제 방문자 반응이 아니라 카드 디자인 상 보여주는 장식용 숫자라, 교회에서 직접 원하는 값을 적어넣는 선택 입력 필드
@@ -156,16 +187,72 @@ export default function BuilderPage({ onBack }: Props) {
   const [newWorshipGroupName, setNewWorshipGroupName] = useState('')
   const [visionItems, setVisionItems] = useState<VisionItem[]>([])
   const [newsItems, setNewsItems] = useState<NewsItem[]>([])
+  // 교회 주보(종이 주보 파일) — 한글·워드·PDF·사진 파일을 그대로 올림. 온라인 주보와 별개
+  const [paperBulletins, setPaperBulletins] = useState<PaperBulletin[]>([])
+  const [paperDraft, setPaperDraft] = useState<{ date: string; title: string }>({ date: '', title: '' })
+  const [uploadingPaper, setUploadingPaper] = useState(false)
+  // "이 주보로 교회 소식·설교도 채우기" — 켜고 올리면 AI가 주보를 읽고 확인 화면을 띄움(교회가 고른 것만 들어감)
+  const [paperAnalyze, setPaperAnalyze] = useState(false)
+  const [analyzingPaperId, setAnalyzingPaperId] = useState<string | null>(null)
+  const [analysisReview, setAnalysisReview] = useState<AnalysisReview | null>(null)
   const [staffMembers, setStaffMembers] = useState<StaffMember[]>([])
   const [layLeaders, setLayLeaders] = useState<LayLeader[]>([])
   const [galleryImages, setGalleryImages] = useState<string[]>([])
+  // 히어로(첫 화면 배너) 사진 여러 장 + 2장 이상일 때 넘김 방식. 첫 번째 사진은 heroImageUrl에도
+  // 같이 저장해서 원페이지형·카카오 미리보기·검색봇 등 예전 필드를 쓰는 곳이 그대로 동작하게 함
+  const [heroImages, setHeroImages] = useState<string[]>([])
+  const [heroTransition, setHeroTransition] = useState<'slide' | 'fade'>('slide')
+  const [denomination, setDenomination] = useState<string>(DEFAULT_DENOMINATION) // 교단 마크(기본 예장 합동)
+  const [denominationWithLogo, setDenominationWithLogo] = useState(false) // 로고가 있어도 교단 마크 같이 표시
+  const [hideLogo, setHideLogo] = useState(false) // 홈페이지에서는 로고 이미지 안 씀
   const [sermons, setSermons] = useState<Sermon[]>([])
   const [onlineWorshipEnabled, setOnlineWorshipEnabled] = useState<boolean>(true)
+  // 화면 방식: 페이지 전환형(기본, 메뉴마다 주소가 따로 있어 검색에 유리) / 원페이지(예전 한 페이지 스크롤)
+  const [layoutMode, setLayoutMode] = useState<'multipage' | 'onepage'>('multipage')
   const [mainWorshipGroup, setMainWorshipGroup] = useState<string>('')
   const [introVideoEnabled, setIntroVideoEnabled] = useState<boolean>(true)
   const [sermonDisplayMode, setSermonDisplayMode] = useState<'video' | 'text'>('video')
 
   const update = (field: keyof typeof form, value: string) => setForm(p => ({ ...p, [field]: value }))
+
+  // ── 온라인 주보 내용으로 빈 칸 자동 채우기 + 주보와 다를 때 약한 안내 ──────────────────
+  // 주보는 읽기만 함(빌더에서 고친 내용을 주보에 복사하지 않음)
+  const [bulletinDefaults, setBulletinDefaults] = useState<BuilderDefaults | null>(null)
+  const prefilledFor = useRef<string | null>(null)
+  useEffect(() => {
+    if (!uid) return
+    let cancelled = false
+    fetchOwnerData(uid).then(o => { if (!cancelled) setBulletinDefaults(builderDefaultsFromBulletin(o)) })
+    return () => { cancelled = true }
+  }, [uid])
+  useEffect(() => {
+    const key = selectedProject ?? (creating ? '__new__' : null)
+    if (!key || !bulletinDefaults || prefilledFor.current === key) return
+    prefilledFor.current = key
+    const d = bulletinDefaults
+    setForm(p => {
+      const next = { ...p }
+      ;(Object.keys(d.text) as (keyof typeof d.text)[]).forEach(k => {
+        const cur = String(next[k] ?? '').trim()
+        if (!cur || (k === 'pastorRole' && cur === '담임목사')) (next as Record<string, string>)[k] = d.text[k] || ''
+      })
+      return next
+    })
+    setWorshipServices(prev => (prev.length ? prev : d.worshipServices))
+    setStaffMembers(prev => (prev.length ? prev : d.staffMembers))
+    setLayLeaders(prev => (prev.length ? prev : d.layLeaders))
+  }, [bulletinDefaults, selectedProject, creating])
+  const norm = (v: unknown) => String(v ?? '').replace(/\s+/g, ' ').trim()
+  // 홈페이지에서 실제로 어느 쪽이 보이는지(utils/churchSiteContent.ts buildSiteContent 기준)
+  const HOMEPAGE_USES_BUILDER: string[] = ['churchName', 'email']
+  const bulletinHint = (k: keyof BuilderDefaults['text']) => {
+    const dv = bulletinDefaults?.text[k]
+    const cur = norm(form[k as keyof typeof form])
+    if (!dv || !cur || cur === norm(dv)) return undefined
+    return <BulletinDiffHint builderWins={HOMEPAGE_USES_BUILDER.includes(k)} />
+  }
+  const listHint = (cur: string[], def: string[]) =>
+    def.length && cur.length && norm(cur.join('|')) !== norm(def.join('|')) ? <BulletinDiffHint builderWins={false} /> : undefined
 
   const [uploadingLogo, setUploadingLogo] = useState(false)
   const [uploadingHero, setUploadingHero] = useState(false)
@@ -190,22 +277,41 @@ export default function BuilderPage({ onBack }: Props) {
     }
   }
 
+  // 히어로 사진: 한 번에 여러 장 선택 가능, 총 GALLERY_MAX_IMAGES장까지(홈 화면 사진과 같은 방식)
   const handleHeroFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
+    const files = Array.from(e.target.files || [])
     e.target.value = ''
-    if (!file) return
+    if (!files.length) return
     if (!uid) { alert('로그인이 필요합니다.'); return }
-    if (!file.type.startsWith('image/')) { alert('이미지 파일만 업로드할 수 있습니다.'); return }
+    if (files.some(f => !f.type.startsWith('image/'))) { alert('이미지 파일만 업로드할 수 있습니다.'); return }
+    const remainingSlots = GALLERY_MAX_IMAGES - heroImages.length
+    if (remainingSlots <= 0) { alert(`사진은 최대 ${GALLERY_MAX_IMAGES}장까지 올릴 수 있어요.`); return }
+    const filesToUpload = files.slice(0, remainingSlots)
+    if (files.length > filesToUpload.length) {
+      alert(`사진은 최대 ${GALLERY_MAX_IMAGES}장까지 올릴 수 있어서, 앞의 ${filesToUpload.length}장만 업로드할게요.`)
+    }
     setUploadingHero(true)
     try {
-      const url = await uploadImageAndGetUrl(file, 1600, 'image/jpeg', 0.75, uid, 'hero')
-      update('heroImageUrl', url)
+      const urls: string[] = []
+      for (let i = 0; i < filesToUpload.length; i++) {
+        urls.push(await uploadImageAndGetUrl(filesToUpload[i], 1920, 'image/jpeg', 0.75, uid, `hero-${Date.now()}-${i}`))
+      }
+      setHeroImages(prev => [...prev, ...urls])
     } catch {
       alert('이미지를 업로드하지 못했습니다. 다시 시도해주세요.')
     } finally {
       setUploadingHero(false)
     }
   }
+  const removeHeroImage = (i: number) => setHeroImages(prev => prev.filter((_, idx) => idx !== i))
+  // 순서 바꾸기(맨 앞 사진이 대표 사진 = 처음 보이는 사진)
+  const moveHeroImage = (i: number, dir: -1 | 1) => setHeroImages(prev => {
+    const j = i + dir
+    if (j < 0 || j >= prev.length) return prev
+    const next = [...prev]
+    ;[next[i], next[j]] = [next[j], next[i]]
+    return next
+  })
 
   const handleBuildingFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -255,6 +361,91 @@ export default function BuilderPage({ onBack }: Props) {
     }
   }
   const removeGalleryImage = (i: number) => setGalleryImages(prev => prev.filter((_, idx) => idx !== i))
+
+  // 교회 주보 파일 올리기: 파일은 그대로(변환·압축 없이) 저장하고, 날짜·제목과 함께 목록에 추가
+  const handlePaperBulletinFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    if (!uid) { alert('로그인이 필요합니다.'); return }
+    if (!paperDraft.date) { alert('주보 날짜를 먼저 선택해 주세요.'); return }
+    const ext = (file.name.split('.').pop() || '').toLowerCase()
+    if (!PAPER_BULLETIN_ACCEPT.split(',').includes(`.${ext}`)) { alert('한글(HWP)·워드·PDF·사진(JPG/PNG) 파일만 올릴 수 있어요.'); return }
+    if (file.size > 30 * 1024 * 1024) { alert('파일은 30MB까지 올릴 수 있어요.'); return }
+    setUploadingPaper(true)
+    try {
+      const fileRef = storageRef(storage, `churchSiteUploads/${uid}/paper-bulletin-${Date.now()}.${ext}`)
+      await uploadBytes(fileRef, file, { contentType: file.type || undefined, contentDisposition: `inline; filename*=UTF-8''${encodeURIComponent(file.name)}` })
+      const fileUrl = await getDownloadURL(fileRef)
+      const entry: PaperBulletin = {
+        id: `${Date.now()}`, date: paperDraft.date, title: paperDraft.title.trim() || `${paperDraft.date.replace(/-/g, '.')} 주보`,
+        fileUrl, fileName: file.name, fileType: ext,
+      }
+      setPaperBulletins(prev => [...prev, entry].sort((a, z) => z.date.localeCompare(a.date)))
+      setPaperDraft({ date: '', title: '' })
+      if (paperAnalyze) void analyzePaperBulletin(entry)
+    } catch {
+      alert('파일을 올리지 못했습니다. 다시 시도해주세요.')
+    } finally {
+      setUploadingPaper(false)
+    }
+  }
+  const removePaperBulletin = (id: string) => setPaperBulletins(prev => prev.filter(p => p.id !== id))
+
+  // 주보 파일을 AI로 읽기 → 확인 화면. 빌더에 아무것도 바로 넣지 않음
+  const analyzePaperBulletin = async (p: PaperBulletin) => {
+    const path = storagePathFromUrl(p.fileUrl)
+    if (!path || !auth.currentUser) { alert('이 파일은 자동으로 읽을 수 없어요.'); return }
+    setAnalyzingPaperId(p.id)
+    try {
+      const token = await auth.currentUser.getIdToken()
+      const res = await fetch(ANALYZE_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ path }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok || !data.result) { alert(data.error || '주보를 읽지 못했어요. 잠시 후 다시 해 주세요.'); return }
+      const r = data.result as PaperAnalysis
+      const b = r.basic
+      // 기본 정보는 빌더에 아직 비어 있는 칸만 제안(이미 쓴 내용은 덮어쓰지 않음)
+      const basic: Record<string, boolean> = {}
+      if (b.churchName && !form.churchName.trim()) basic.churchName = true
+      if (b.pastorName && !form.pastor.trim()) basic.pastor = true
+      if (b.phone && !form.phone.trim()) basic.phone = true
+      if (b.address && !form.address.trim()) basic.address = true
+      if (b.intro && !form.intro.trim()) basic.intro = true
+      if (b.worshipServices.length && worshipServices.length === 0) basic.worshipServices = true
+      if (b.staff.length && staffMembers.length === 0) basic.staff = true
+      if (!r.sermons.length && !r.news.length && !Object.keys(basic).length) { alert('주보에서 넣을 만한 내용을 찾지 못했어요.'); return }
+      setAnalysisReview({ bulletinId: p.id, result: r, sermons: r.sermons.map(() => true), news: r.news.map(() => true), basic })
+    } catch {
+      alert('주보를 읽지 못했어요. 잠시 후 다시 해 주세요.')
+    } finally {
+      setAnalyzingPaperId(null)
+    }
+  }
+
+  // 확인 화면에서 고른 것만 빌더에 넣기('저장'을 눌러야 홈페이지에 반영)
+  const applyAnalysisReview = () => {
+    if (!analysisReview) return
+    const { bulletinId, result: r, basic } = analysisReview
+    const sermons = r.sermons.filter((_, i) => analysisReview.sermons[i])
+    const news = r.news.filter((_, i) => analysisReview.news[i])
+    setPaperBulletins(prev => prev.map(p => p.id === bulletinId ? { ...p, sermons, news } : p))
+    const b = r.basic
+    setForm(prev => ({
+      ...prev,
+      ...(basic.churchName ? { churchName: b.churchName } : {}),
+      ...(basic.pastor ? { pastor: b.pastorName } : {}),
+      ...(basic.phone ? { phone: b.phone } : {}),
+      ...(basic.address ? { address: b.address } : {}),
+      ...(basic.intro ? { intro: b.intro } : {}),
+    }))
+    if (basic.worshipServices) setWorshipServices(b.worshipServices.map(w => ({ title: w.title, time: w.time, note: '', group: w.group || WORSHIP_DEFAULT_GROUP })))
+    if (basic.staff) setStaffMembers(b.staff.map(m => ({ role: m.role, name: m.name, department: '', phone: '', email: '', photoUrl: '' })))
+    setAnalysisReview(null)
+  }
 
   const handlePastorPhotoFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -384,9 +575,15 @@ export default function BuilderPage({ onBack }: Props) {
     setWorshipServices([])
     setVisionItems([])
     setNewsItems([])
+    setPaperBulletins([])
     setStaffMembers([])
     setLayLeaders([])
     setGalleryImages([])
+    setHeroImages([])
+    setHeroTransition('slide')
+    setDenomination(DEFAULT_DENOMINATION)
+    setDenominationWithLogo(false)
+    setHideLogo(false)
     setSermons([])
     setOnlineWorshipEnabled(true)
     setIntroVideoEnabled(true)
@@ -437,9 +634,15 @@ export default function BuilderPage({ onBack }: Props) {
     )
     setVisionItems(site.visionItems || [])
     setNewsItems(site.newsItems || [])
+    setPaperBulletins(site.paperBulletins || [])
     setStaffMembers((site.staffMembers || []).map(s => ({ ...s, photoUrl: s.photoUrl || '' })))
     setLayLeaders((site.layLeaders || []).map(l => ({ ...l, photoUrl: l.photoUrl || '' })))
     setGalleryImages(site.galleryImages || [])
+    setHeroImages(site.heroImages?.length ? site.heroImages : site.heroImageUrl ? [site.heroImageUrl] : [])
+    setHeroTransition(site.heroTransition === 'fade' ? 'fade' : 'slide')
+    setDenomination(site.denomination || DEFAULT_DENOMINATION)
+    setDenominationWithLogo(site.denominationWithLogo === true)
+    setHideLogo(site.hideLogo === true)
     setSermons((site.sermons || []).map(s => ({
       title: s.title || '',
       speaker: s.speaker || '',
@@ -450,6 +653,7 @@ export default function BuilderPage({ onBack }: Props) {
       views: s.views || '',
     })))
     setOnlineWorshipEnabled(site.onlineWorshipEnabled !== false)
+    setLayoutMode(site.layoutMode === 'onepage' ? 'onepage' : 'multipage')
     setIntroVideoEnabled(site.introVideoEnabled !== false)
     setSermonDisplayMode(site.sermonDisplayMode === 'text' ? 'text' : 'video')
     setMainWorshipGroup(site.mainWorshipGroup || '')
@@ -500,7 +704,12 @@ export default function BuilderPage({ onBack }: Props) {
     locationDetail: form.locationDetail,
     intro: form.intro,
     logoUrl: form.logoUrl,
-    heroImageUrl: form.heroImageUrl,
+    heroImageUrl: heroImages[0] || '',
+    heroImages: heroImages.slice(0, GALLERY_MAX_IMAGES),
+    heroTransition,
+    denomination,
+    denominationWithLogo,
+    hideLogo,
     buildingImageUrl: form.buildingImageUrl,
     metaTitle: form.metaTitle,
     metaDesc: form.metaDesc,
@@ -516,6 +725,7 @@ export default function BuilderPage({ onBack }: Props) {
     worshipServices: worshipServices.filter(s => s.title.trim() || s.time.trim()),
     visionItems: visionItems.filter(v => v.title.trim() || v.desc.trim()),
     newsItems: newsItems.filter(n => n.title.trim() || n.content.trim()),
+    paperBulletins,
     staffMembers: staffMembers.filter(s => s.name.trim() || s.role.trim()),
     layLeaders: layLeaders.filter(l => l.name.trim()),
     galleryImages: galleryImages.slice(0, GALLERY_MAX_IMAGES),
@@ -534,6 +744,7 @@ export default function BuilderPage({ onBack }: Props) {
     mainWorshipGroup,
     primaryColor: selectedColor,
     activeMenus,
+    layoutMode,
   })
 
   const handleSave = async () => {
@@ -558,6 +769,7 @@ export default function BuilderPage({ onBack }: Props) {
         const formatCheck = checkSlugFormat(slug)
         if (!formatCheck.valid) { setSlugError(formatCheck.reason || '주소를 확인해주세요.'); setSaving(false); return }
         if (await isSlugTaken(slug)) { setSlugError('이미 사용 중인 주소입니다.'); setSaving(false); return }
+        if (!confirmPermanentAddress(`${slug}${SITE_DOMAIN_SUFFIX}`)) { setSaving(false); return }
 
         await createChurchSite(slug, form.churchName.trim(), uid)
         const patch = buildSitePatch()
@@ -823,7 +1035,13 @@ export default function BuilderPage({ onBack }: Props) {
                     setWorshipServices([])
                     setVisionItems([])
                     setNewsItems([])
+                    setPaperBulletins([])
                     setGalleryImages([])
+                    setHeroImages([])
+                    setHeroTransition('slide')
+                    setDenomination(DEFAULT_DENOMINATION)
+                    setDenominationWithLogo(false)
+                    setHideLogo(false)
                     setSermons([])
                     setOnlineWorshipEnabled(true)
                     setIntroVideoEnabled(true)
@@ -1014,9 +1232,25 @@ export default function BuilderPage({ onBack }: Props) {
               {activeTab === 'basic' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
                   <div style={{ background: 'white', borderRadius: 16, border: `1px solid ${THEME.border}`, padding: '28px' }}>
+                    <h3 style={{ fontWeight: 700, color: THEME.navy, marginBottom: 6, fontSize: 16 }}>화면 방식</h3>
+                    <p style={{ color: THEME.muted, fontSize: 13, marginBottom: 16 }}>페이지 전환형은 메뉴마다 주소가 따로 있어서 네이버·구글 검색에 더 잘 노출돼요.</p>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                      {([
+                        ['multipage', '페이지 전환형 (추천)', '교회 소개·예배·주보·소식이 각각 다른 페이지로 열려요'],
+                        ['onepage', '원페이지형', '모든 내용을 한 페이지에서 아래로 스크롤해서 봐요'],
+                      ] as const).map(([value, label, desc]) => (
+                        <label key={value} style={{ cursor: 'pointer', padding: '14px 16px', borderRadius: 12, background: layoutMode === value ? THEME.skyLight : '#F9FAFB', border: `2px solid ${layoutMode === value ? THEME.navy : THEME.border}` }}>
+                          <input type="radio" name="layoutMode" checked={layoutMode === value} onChange={() => setLayoutMode(value)} style={{ display: 'none' }} />
+                          <p style={{ fontWeight: 700, color: THEME.navy, fontSize: 14 }}>{label}</p>
+                          <p style={{ color: THEME.muted, fontSize: 12, marginTop: 4 }}>{desc}</p>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                  <div style={{ background: 'white', borderRadius: 16, border: `1px solid ${THEME.border}`, padding: '28px' }}>
                     <h3 style={{ fontWeight: 700, color: THEME.navy, marginBottom: 24, fontSize: 16 }}>교회 기본 정보</h3>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
-                      <Field label="교회 이름 *" placeholder="ex. 새벽교회" value={form.churchName} onChange={v => update('churchName', v)} />
+                      <Field label="교회 이름 *" placeholder="ex. 새벽교회" value={form.churchName} onChange={v => update('churchName', v)} hint={bulletinHint('churchName')} />
                       {!selectedProject && (
                         <div>
                           <label style={{ fontSize: 13, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 6 }}>홈페이지 주소 *</label>
@@ -1032,21 +1266,21 @@ export default function BuilderPage({ onBack }: Props) {
                           {slugError ? (
                             <p style={{ fontSize: 12, color: '#DC2626', marginTop: 4 }}>{slugError}</p>
                           ) : (
-                            <p style={{ fontSize: 12, color: THEME.muted, marginTop: 4 }}>영문 소문자, 숫자, 하이픈만 (3~30자)</p>
+                            <p style={{ fontSize: 12, color: THEME.muted, marginTop: 4 }}>영문 소문자, 숫자, 하이픈만 (3~30자) · <b style={{ color: '#DC2626' }}>한 번 정하면 바꿀 수 없어요</b></p>
                           )}
                         </div>
                       )}
-                      <Field label="대표 전화" placeholder="ex. 02-1234-5678" value={form.phone} onChange={v => update('phone', v)} />
-                      <Field label="이메일" placeholder="ex. church@example.com" value={form.email} onChange={v => update('email', v)} />
+                      <Field label="대표 전화" placeholder="ex. 02-1234-5678" value={form.phone} onChange={v => update('phone', v)} hint={bulletinHint('phone')} />
+                      <Field label="이메일" placeholder="ex. church@example.com" value={form.email} onChange={v => update('email', v)} hint={bulletinHint('email')} />
                       <div style={{ gridColumn: '1 / -1' }}>
-                        <Field label="주소" placeholder="ex. 서울특별시 마포구 ..." value={form.address} onChange={v => update('address', v)} />
+                        <Field label="주소" placeholder="ex. 서울특별시 마포구 ..." value={form.address} onChange={v => update('address', v)} hint={bulletinHint('address')} />
                       </div>
                       <div style={{ gridColumn: '1 / -1' }}>
-                        <Field label="상세 위치 안내" placeholder="ex. 상가 3층, 엘리베이터 옆 계단으로 올라오세요" value={form.locationDetail} onChange={v => update('locationDetail', v)} />
+                        <Field label="상세 위치 안내" placeholder="ex. 상가 3층, 엘리베이터 옆 계단으로 올라오세요" value={form.locationDetail} onChange={v => update('locationDetail', v)} hint={bulletinHint('locationDetail')} />
                         <p style={{ fontSize: 12, color: THEME.muted, marginTop: 4 }}>상가/건물 안에 있는 경우, 처음 오시는 분이 헷갈리지 않도록 입구·층수 등을 적어주세요.</p>
                       </div>
                       <div style={{ gridColumn: '1 / -1' }}>
-                        <TextareaField label="교회 소개" placeholder="교회를 간략하게 소개해 주세요." value={form.intro} onChange={v => update('intro', v)} />
+                        <TextareaField label="교회 소개" placeholder="교회를 간략하게 소개해 주세요." value={form.intro} onChange={v => update('intro', v)} hint={bulletinHint('intro')} />
                       </div>
                     </div>
                   </div>
@@ -1055,8 +1289,8 @@ export default function BuilderPage({ onBack }: Props) {
                     <h3 style={{ fontWeight: 700, color: THEME.navy, marginBottom: 6, fontSize: 16 }}>담임 목사 소개</h3>
                     <p style={{ color: THEME.muted, fontSize: 13, marginBottom: 20 }}>방문자에게 첫인사를 전하는 인사말이에요.</p>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
-                      <Field label="담임 목사 성함 *" placeholder="ex. 홍길동" value={form.pastor} onChange={v => update('pastor', v)} />
-                      <Field label="직분" placeholder="ex. 담임목사" value={form.pastorRole} onChange={v => update('pastorRole', v)} />
+                      <Field label="담임 목사 성함 *" placeholder="ex. 홍길동" value={form.pastor} onChange={v => update('pastor', v)} hint={bulletinHint('pastor')} />
+                      <Field label="직분" placeholder="ex. 담임목사" value={form.pastorRole} onChange={v => update('pastorRole', v)} hint={bulletinHint('pastorRole')} />
                     </div>
                     <div style={{ marginBottom: 20 }}>
                       <TextareaField
@@ -1064,6 +1298,7 @@ export default function BuilderPage({ onBack }: Props) {
                         placeholder="ex. 고난을 말씀으로 해석하고, 삶의 모든 자리에서 십자가의 복음을 살아 내도록 돕습니다."
                         value={form.pastorTagline}
                         onChange={v => update('pastorTagline', v)}
+                        hint={bulletinHint('pastorTagline')}
                       />
                       <p style={{ fontSize: 12, color: THEME.muted, marginTop: 6 }}>목사님 성함 아래 표시되는 한 줄 소개예요. 2~3줄 정도가 적당해요.</p>
                     </div>
@@ -1084,7 +1319,7 @@ export default function BuilderPage({ onBack }: Props) {
                         )}
                       </div>
                     </div>
-                    <TextareaField label="인사말 (MESSAGE)" placeholder="성도님들과 방문객을 환영하는 인사말을 적어주세요." value={form.pastorMessage} onChange={v => update('pastorMessage', v)} />
+                    <TextareaField label="인사말 (MESSAGE)" placeholder="성도님들과 방문객을 환영하는 인사말을 적어주세요." value={form.pastorMessage} onChange={v => update('pastorMessage', v)} hint={bulletinHint('pastorMessage')} />
                     <p style={{ fontSize: 12, color: THEME.muted, marginTop: 6 }}>소개 카드 아래 별도 박스로 크게 표시돼요. 4~5줄 정도로 적어도 좋아요.</p>
                   </div>
                 </div>
@@ -1095,6 +1330,7 @@ export default function BuilderPage({ onBack }: Props) {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
                   <div style={{ background: 'white', borderRadius: 16, border: `1px solid ${THEME.border}`, padding: '28px' }}>
                     <h3 style={{ fontWeight: 700, color: THEME.navy, marginBottom: 6, fontSize: 16 }}>예배 안내</h3>
+                    {listHint(worshipServices.map(w => `${w.title} ${w.time}`), (bulletinDefaults?.worshipServices || []).map(w => `${w.title} ${w.time}`))}
                     <p style={{ color: THEME.muted, fontSize: 13, marginBottom: 20 }}>주일예배, 수요예배, 금요철야처럼 원하는 이름으로 구분을 만들고, 그 안에 1부·2부 같은 세부 예배를 등록하세요. 구분마다 실제 사이트에도 각각의 카드로 나뉘어서 보여져요.</p>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginBottom: 20 }}>
                       {worshipGroupNames.map((group) => (
@@ -1261,8 +1497,62 @@ export default function BuilderPage({ onBack }: Props) {
               {activeTab === 'content' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
                   <div style={{ background: 'white', borderRadius: 16, border: `1px solid ${THEME.border}`, padding: '28px' }}>
+                    <h3 style={{ fontWeight: 700, color: THEME.navy, marginBottom: 6, fontSize: 16 }}>교회 주보 (종이 주보 파일)</h3>
+                    <p style={{ color: THEME.muted, fontSize: 13, marginBottom: 16, lineHeight: 1.6 }}>
+                      교회에서 쓰는 한글(HWP)·워드·PDF·사진 파일을 그대로 올리면 홈페이지 '교회 주보'에 표로 보여요.
+                      PDF·사진은 바로 열리고, 한글·워드는 내려받기로 제공돼요. 온라인 주보는 따로 '온라인 주보'에 자동으로 보여요.
+                    </p>
+                    <div style={{ display: 'grid', gridTemplateColumns: '160px 1fr auto', gap: 10, alignItems: 'end' }}>
+                      <div>
+                        <label style={{ fontSize: 13, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 6 }}>주보 날짜 *</label>
+                        <input type="date" value={paperDraft.date} onChange={e => setPaperDraft(d => ({ ...d, date: e.target.value }))} style={inputStyle} />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: 13, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 6 }}>제목 (선택)</label>
+                        <input value={paperDraft.title} onChange={e => setPaperDraft(d => ({ ...d, title: e.target.value }))} placeholder="비우면 '2026.11.01 주보'로 표시돼요" style={inputStyle} />
+                      </div>
+                      <label style={{ padding: '11px 16px', borderRadius: 8, background: THEME.navy, color: 'white', fontSize: 13, fontWeight: 700, cursor: uploadingPaper ? 'wait' : 'pointer', whiteSpace: 'nowrap', opacity: uploadingPaper ? 0.6 : 1 }}>
+                        {uploadingPaper ? '올리는 중...' : '파일 올리기'}
+                        <input type="file" accept={PAPER_BULLETIN_ACCEPT} onChange={handlePaperBulletinFile} disabled={uploadingPaper} style={{ display: 'none' }} />
+                      </label>
+                    </div>
+                    <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: 12, cursor: 'pointer', fontSize: 13, color: THEME.text }}>
+                      <input type="checkbox" checked={paperAnalyze} onChange={e => setPaperAnalyze(e.target.checked)} style={{ marginTop: 2 }} />
+                      <span>
+                        <b>이 주보로 교회 소식·설교도 채우기</b>
+                        <span style={{ display: 'block', color: THEME.muted, fontSize: 12, marginTop: 2, lineHeight: 1.6 }}>
+                          AI가 주보를 읽고 설교·교회 소식(처음이면 교회 기본 정보도)을 찾아 보여드려요. 확인 화면에서 고른 것만 들어가고,
+                          개인 연락처·계좌번호·헌금자 명단·경조사는 넣지 않아요. 1~2분 걸릴 수 있어요. (예전 워드 .doc 파일은 읽지 못해요)
+                        </span>
+                      </span>
+                    </label>
+                    {paperBulletins.length > 0 && (
+                      <div style={{ marginTop: 16, border: `1px solid ${THEME.border}`, borderRadius: 10, overflow: 'hidden' }}>
+                        {paperBulletins.map((p, i) => (
+                          <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', borderTop: i ? `1px solid ${THEME.border}` : 'none', fontSize: 13 }}>
+                            <span style={{ color: THEME.muted, width: 84, flexShrink: 0 }}>{p.date.replace(/-/g, '.')}</span>
+                            <span style={{ flex: 1, fontWeight: 600, color: THEME.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.title}</span>
+                            <span style={{ fontSize: 11, fontWeight: 700, color: THEME.navy, background: THEME.skyLight, borderRadius: 6, padding: '2px 8px', textTransform: 'uppercase' }}>{p.fileType}</span>
+                            {(p.sermons?.length || p.news?.length) ? (
+                              <span style={{ fontSize: 11, color: THEME.muted, whiteSpace: 'nowrap' }}>설교 {p.sermons?.length || 0} · 소식 {p.news?.length || 0}</span>
+                            ) : null}
+                            {p.fileType !== 'doc' && (
+                              <button type="button" onClick={() => analyzePaperBulletin(p)} disabled={!!analyzingPaperId}
+                                style={{ fontSize: 12, color: THEME.navy, background: 'none', border: 'none', cursor: analyzingPaperId ? 'wait' : 'pointer', whiteSpace: 'nowrap' }}>
+                                {analyzingPaperId === p.id ? '읽는 중...' : '내용 읽기'}
+                              </button>
+                            )}
+                            <a href={p.fileUrl} target="_blank" rel="noopener noreferrer" style={{ color: THEME.sky, fontSize: 12 }}>열기</a>
+                            <button type="button" onClick={() => removePaperBulletin(p.id)} style={{ fontSize: 12, color: '#DC2626', background: 'none', border: 'none', cursor: 'pointer' }}>삭제</button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <p style={{ fontSize: 12, color: THEME.muted, marginTop: 10 }}>파일을 올리거나 지운 뒤 '저장'을 눌러야 홈페이지에 반영돼요.</p>
+                  </div>
+                  <div style={{ background: 'white', borderRadius: 16, border: `1px solid ${THEME.border}`, padding: '28px' }}>
                     <h3 style={{ fontWeight: 700, color: THEME.navy, marginBottom: 6, fontSize: 16 }}>교회 전경 사진</h3>
-                    <p style={{ color: THEME.muted, fontSize: 13, marginBottom: 16, lineHeight: 1.6 }}>교회 소개 섹션 상단에 표시될 건물 외관 사진이에요. 방문객이 실제 건물을 미리 알아볼 수 있게 도와줍니다.</p>
+                    <p style={{ color: THEME.muted, fontSize: 13, marginBottom: 16, lineHeight: 1.6 }}>교회 소개 페이지 맨 위에 표시될 건물 외관 사진이에요. 방문객이 실제 건물을 미리 알아볼 수 있게 도와줍니다.</p>
                     {form.buildingImageUrl && (
                       <img src={form.buildingImageUrl} alt="교회 전경 미리보기" style={{ width: '100%', aspectRatio: '16 / 9', objectFit: 'cover', borderRadius: 10, marginBottom: 12, border: `1px solid ${THEME.border}` }} />
                     )}
@@ -1358,6 +1648,7 @@ export default function BuilderPage({ onBack }: Props) {
 
                   <div style={{ background: 'white', borderRadius: 16, border: `1px solid ${THEME.border}`, padding: '28px' }}>
                     <h3 style={{ fontWeight: 700, color: THEME.navy, marginBottom: 6, fontSize: 16 }}>섬기는 사람들</h3>
+                    {listHint(staffMembers.map(m => `${m.role} ${m.name}`), (bulletinDefaults?.staffMembers || []).map(m => `${m.role} ${m.name}`))}
                     <p style={{ color: THEME.muted, fontSize: 13, marginBottom: 20 }}>부목사·전도사 등 함께 섬기는 사역자를 소개해보세요. 숫자 제한 없이 추가할 수 있어요.</p>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                       {staffMembers.map((s, i) => (
@@ -1399,6 +1690,7 @@ export default function BuilderPage({ onBack }: Props) {
 
                   <div style={{ background: 'white', borderRadius: 16, border: `1px solid ${THEME.border}`, padding: '28px' }}>
                     <h3 style={{ fontWeight: 700, color: THEME.navy, marginBottom: 6, fontSize: 16 }}>중직자 (장로·권사)</h3>
+                    {listHint(layLeaders.map(m => `${m.role} ${m.name}`), (bulletinDefaults?.layLeaders || []).map(m => `${m.role} ${m.name}`))}
                     <p style={{ color: THEME.muted, fontSize: 13, marginBottom: 20 }}>장로님·권사님을 소개해보세요. 시무장로 → 원로장로 → 은퇴장로 → 권사 순으로 자동 정렬되어 표시돼요. 숫자 제한 없이 추가할 수 있어요.</p>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                       {layLeaders.map((l, i) => (
@@ -1478,8 +1770,8 @@ export default function BuilderPage({ onBack }: Props) {
                     <h3 style={{ fontWeight: 700, color: THEME.navy, marginBottom: 20, fontSize: 16 }}>채널 연동</h3>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                       <Field label="카카오채널 링크" placeholder="https://pf.kakao.com/..." value={form.kakaoLink} onChange={v => update('kakaoLink', v)} />
-                      <Field label="유튜브 채널 링크" placeholder="https://youtube.com/@..." value={form.youtubeLink} onChange={v => update('youtubeLink', v)} />
-                      <Field label="인스타그램 링크" placeholder="https://instagram.com/..." value={form.instagramLink} onChange={v => update('instagramLink', v)} />
+                      <Field label="유튜브 채널 링크" placeholder="https://youtube.com/@..." value={form.youtubeLink} onChange={v => update('youtubeLink', v)} hint={bulletinHint('youtubeLink')} />
+                      <Field label="인스타그램 링크" placeholder="https://instagram.com/..." value={form.instagramLink} onChange={v => update('instagramLink', v)} hint={bulletinHint('instagramLink')} />
                     </div>
                   </div>
                 </div>
@@ -1511,8 +1803,33 @@ export default function BuilderPage({ onBack }: Props) {
                       ))}
                     </div>
                   </div>
+                  <div style={{ marginBottom: 24 }}>
+                    <label style={{ fontSize: 13, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 4 }}>교단 마크</label>
+                    <p style={{ fontSize: 12, color: THEME.muted, marginBottom: 10, lineHeight: 1.6 }}>사이트 맨 위 교회 이름 옆에 표시돼요. 아래 '로고 이미지'를 직접 올리면 그 로고가 대신 보여요.</p>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                      <div style={{ height: 44, width: 44, borderRadius: 8, border: `1px solid ${THEME.border}`, background: '#F9FAFB', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                        {denomination !== NO_DENOMINATION
+                          ? <img key={denomination} src={denominationLogoSrc(denomination)} alt="" style={{ height: 34, width: 34, objectFit: 'contain' }} onError={e => { e.currentTarget.style.display = 'none' }} />
+                          : <span style={{ fontSize: 11, color: THEME.muted }}>없음</span>}
+                      </div>
+                      <select value={denomination} onChange={e => setDenomination(e.target.value)}
+                        style={{ flex: 1, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: '10px 12px', fontSize: 14, fontFamily: 'inherit', background: 'white', color: THEME.text }}>
+                        {DENOMINATIONS.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                        <option value={NO_DENOMINATION}>사용 안 함</option>
+                      </select>
+                    </div>
+                    {denomination !== NO_DENOMINATION && (
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, cursor: 'pointer', fontSize: 13, color: THEME.text }}>
+                        <input type="checkbox" checked={denominationWithLogo} onChange={e => setDenominationWithLogo(e.target.checked)} style={{ width: 16, height: 16, accentColor: THEME.navy }} />
+                        로고 이미지가 있어도 교단 마크를 옆에 같이 표시
+                      </label>
+                    )}
+                  </div>
                   <div style={{ marginBottom: 28 }}>
-                    <label style={{ fontSize: 13, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 10 }}>로고 이미지</label>
+                    <label style={{ fontSize: 13, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 10 }}>로고 이미지 <span style={{ fontWeight: 400, color: THEME.muted }}>(선택 · 직접 올리면 교단 마크 대신 표시)</span></label>
+                    {bulletinDefaults?.text.logoUrl && form.logoUrl === bulletinDefaults.text.logoUrl && (
+                      <p style={{ fontSize: 12, color: THEME.muted, marginTop: -4, marginBottom: 10 }}>주보 관리자 화면에 등록된 교회 로고를 불러왔어요.</p>
+                    )}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                       {form.logoUrl ? (
                         <img src={form.logoUrl} alt="로고 미리보기" style={{ height: 44, maxWidth: 120, objectFit: 'contain', borderRadius: 8, border: `1px solid ${THEME.border}`, background: '#F9FAFB', padding: 4 }} />
@@ -1527,22 +1844,64 @@ export default function BuilderPage({ onBack }: Props) {
                         <button type="button" onClick={() => update('logoUrl', '')} style={{ fontSize: 12, color: THEME.muted, background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>삭제</button>
                       )}
                     </div>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, cursor: 'pointer', fontSize: 13, color: THEME.text }}>
+                      <input type="checkbox" checked={hideLogo} onChange={e => setHideLogo(e.target.checked)} style={{ width: 16, height: 16, accentColor: THEME.navy }} />
+                      홈페이지에서는 로고 이미지 안 쓸게요
+                    </label>
+                    {hideLogo && <p style={{ fontSize: 12, color: THEME.muted, marginTop: 4, marginLeft: 24 }}>홈페이지 맨 위에는 교단 마크와 교회 이름이 표시돼요. 주보의 로고는 그대로예요.</p>}
                   </div>
                   <div style={{ marginBottom: 28 }}>
-                    <label style={{ fontSize: 13, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 4 }}>히어로 배경 사진 <span style={{ fontWeight: 400, color: THEME.muted }}>(선택)</span></label>
-                    <p style={{ fontSize: 12, color: THEME.muted, marginBottom: 10, lineHeight: 1.6 }}>메인 화면 상단에 교회 사진을 배경으로 넣을 수 있어요. 넣지 않으면 선택하신 색상의 그라데이션이 표시됩니다.</p>
-                    {form.heroImageUrl && (
-                      <img src={form.heroImageUrl} alt="히어로 배경 미리보기" style={{ width: '100%', maxHeight: 160, objectFit: 'cover', borderRadius: 10, marginBottom: 10, border: `1px solid ${THEME.border}` }} />
-                    )}
-                    <div style={{ display: 'flex', gap: 10 }}>
-                      <label style={{ padding: '9px 16px', borderRadius: 8, border: `1px solid ${THEME.border}`, background: 'white', fontSize: 13, fontWeight: 600, color: THEME.text, cursor: 'pointer' }}>
-                        {uploadingHero ? '업로드 중...' : '사진 선택'}
-                        <input type="file" accept="image/*" onChange={handleHeroFileChange} disabled={uploadingHero} style={{ display: 'none' }} />
-                      </label>
-                      {form.heroImageUrl && (
-                        <button type="button" onClick={() => update('heroImageUrl', '')} style={{ fontSize: 12, color: THEME.muted, background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>삭제</button>
-                      )}
+                    <label style={{ fontSize: 13, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 4 }}>히어로 배경 사진 <span style={{ fontWeight: 400, color: THEME.muted }}>(선택 · 최대 {GALLERY_MAX_IMAGES}장)</span></label>
+                    <p style={{ fontSize: 12, color: THEME.muted, marginBottom: 8, lineHeight: 1.6 }}>메인 화면 상단에 교회 사진을 배경으로 넣을 수 있어요. 넣지 않으면 선택하신 색상의 그라데이션이 표시됩니다.</p>
+                    {/* 권장 크기: 배너는 PC에선 가로로 넓게, 모바일에선 세로로 잘려 보여서(MultiPageSite 첫 화면, object-cover)
+                        가로 사진 + 중요한 부분은 가운데에 두는 게 가장 안전함 */}
+                    <div style={{ fontSize: 12, color: '#1E40AF', background: THEME.skyLight, border: '1px solid #BFDBFE', borderRadius: 8, padding: '10px 12px', marginBottom: 12, lineHeight: 1.7 }}>
+                      <b>권장 크기: 가로 1920 × 세로 1080px (16:9 가로 사진)</b><br />
+                      화면 높이에 따라 PC에서는 위아래가 각각 최대 약 12%(130px 정도), 모바일에서는 양옆이 잘려요. 십자가 꼭대기는 사진 위에서 150px 이상 아래에 두고, 꼭 보여야 하는 부분은 가운데에 오게 해 주세요.
                     </div>
+                    {heroImages.length > 0 && (
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 10, marginBottom: 14 }}>
+                        {heroImages.map((url, i) => (
+                          <div key={url} style={{ position: 'relative', aspectRatio: '16 / 9' }}>
+                            <img src={url} alt={`히어로 사진 ${i + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 10, border: `1px solid ${THEME.border}` }} />
+                            <span style={{ position: 'absolute', top: 6, left: 6, padding: '2px 8px', borderRadius: 999, background: i === 0 ? THEME.navy : 'rgba(0,0,0,0.55)', color: 'white', fontSize: 11, fontWeight: 700 }}>
+                              {i === 0 ? '대표' : i + 1}
+                            </span>
+                            <button type="button" onClick={() => removeHeroImage(i)} aria-label="삭제"
+                              style={{ position: 'absolute', top: 6, right: 6, width: 22, height: 22, borderRadius: '50%', background: 'rgba(0,0,0,0.6)', color: 'white', border: 'none', cursor: 'pointer', fontSize: 13, lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
+                            {heroImages.length > 1 && (
+                              <div style={{ position: 'absolute', bottom: 6, right: 6, display: 'flex', gap: 4 }}>
+                                {([[-1, '◀'], [1, '▶']] as const).map(([dir, label]) => (
+                                  <button key={dir} type="button" onClick={() => moveHeroImage(i, dir)} disabled={(dir === -1 && i === 0) || (dir === 1 && i === heroImages.length - 1)}
+                                    style={{ width: 24, height: 22, borderRadius: 6, background: 'rgba(0,0,0,0.6)', color: 'white', border: 'none', cursor: 'pointer', fontSize: 10, opacity: (dir === -1 && i === 0) || (dir === 1 && i === heroImages.length - 1) ? 0.3 : 1 }}>{label}</button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <label style={{ padding: '9px 16px', borderRadius: 8, border: `1px solid ${THEME.border}`, background: 'white', fontSize: 13, fontWeight: 600, color: THEME.text, cursor: heroImages.length >= GALLERY_MAX_IMAGES ? 'not-allowed' : 'pointer', opacity: heroImages.length >= GALLERY_MAX_IMAGES ? 0.5 : 1 }}>
+                        {uploadingHero ? '업로드 중...' : '사진 추가'}
+                        <input type="file" accept="image/*" multiple onChange={handleHeroFileChange} disabled={uploadingHero || heroImages.length >= GALLERY_MAX_IMAGES} style={{ display: 'none' }} />
+                      </label>
+                      <span style={{ fontSize: 12, color: THEME.muted }}>{heroImages.length}/{GALLERY_MAX_IMAGES}장 · ◀ ▶ 로 순서를 바꿀 수 있어요</span>
+                    </div>
+                    {heroImages.length > 1 && (
+                      <div style={{ marginTop: 16 }}>
+                        <p style={{ fontSize: 13, fontWeight: 600, color: '#374151', marginBottom: 8 }}>사진 넘김 방식 <span style={{ fontWeight: 400, color: THEME.muted }}>(5초마다 자동으로 바뀌어요)</span></p>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                          {([['slide', '슬라이드', '옆으로 밀리면서 다음 사진으로 넘어가요'], ['fade', '디졸브', '사진이 부드럽게 겹쳐지며 바뀌어요']] as const).map(([value, label, desc]) => (
+                            <label key={value} style={{ cursor: 'pointer', padding: '12px 14px', borderRadius: 12, background: heroTransition === value ? THEME.skyLight : '#F9FAFB', border: `2px solid ${heroTransition === value ? THEME.navy : THEME.border}` }}>
+                              <input type="radio" name="heroTransition" checked={heroTransition === value} onChange={() => setHeroTransition(value)} style={{ display: 'none' }} />
+                              <p style={{ fontWeight: 700, color: THEME.navy, fontSize: 14 }}>{label}</p>
+                              <p style={{ color: THEME.muted, fontSize: 12, marginTop: 2 }}>{desc}</p>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                   <div style={{
                     background: THEME.skyLight,
@@ -1697,6 +2056,58 @@ export default function BuilderPage({ onBack }: Props) {
           </div>
 
           {/* 결제 플랜 선택 모달 */}
+          {analysisReview && (() => {
+            const r = analysisReview.result
+            const b = r.basic
+            const toggle = (key: 'sermons' | 'news', i: number) => setAnalysisReview(v => v && { ...v, [key]: v[key].map((x, idx) => idx === i ? !x : x) })
+            const toggleBasic = (k: string) => setAnalysisReview(v => v && { ...v, basic: { ...v.basic, [k]: !v.basic[k] } })
+            const basicRows: { key: string; label: string; value: string }[] = [
+              { key: 'churchName', label: '교회 이름', value: b.churchName },
+              { key: 'pastor', label: '담임목사', value: b.pastorName },
+              { key: 'phone', label: '교회 전화', value: b.phone },
+              { key: 'address', label: '주소', value: b.address },
+              { key: 'intro', label: '교회 소개', value: b.intro },
+              { key: 'worshipServices', label: '예배 시간', value: b.worshipServices.map(w => `${w.title} ${w.time}`).join(', ') },
+              { key: 'staff', label: '섬기는 사람들', value: b.staff.map(m => `${m.role} ${m.name}`).join(', ') },
+            ].filter(x => x.key in analysisReview.basic)
+            const row = (checked: boolean, onChange: () => void, title: string, sub: string, key: string) => (
+              <label key={key} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '10px 12px', borderTop: `1px solid ${THEME.border}`, cursor: 'pointer' }}>
+                <input type="checkbox" checked={checked} onChange={onChange} style={{ marginTop: 3 }} />
+                <span style={{ fontSize: 13, lineHeight: 1.6, minWidth: 0 }}>
+                  <b style={{ color: THEME.text }}>{title}</b>
+                  {sub && <span style={{ display: 'block', color: THEME.muted, whiteSpace: 'pre-wrap', wordBreak: 'keep-all' }}>{sub}</span>}
+                </span>
+              </label>
+            )
+            const section = (label: string, children: React.ReactNode[]) => children.length > 0 && (
+              <div style={{ border: `1px solid ${THEME.border}`, borderRadius: 10, overflow: 'hidden', marginBottom: 14 }}>
+                <p style={{ background: '#F9FAFB', padding: '9px 12px', fontSize: 13, fontWeight: 700, color: THEME.navy }}>{label}</p>
+                {children}
+              </div>
+            )
+            return (
+              <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+                <div style={{ background: 'white', borderRadius: 16, width: '100%', maxWidth: 640, maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
+                  <div style={{ padding: '20px 24px 12px' }}>
+                    <h3 style={{ fontWeight: 700, color: THEME.navy, fontSize: 17 }}>주보에서 찾은 내용</h3>
+                    <p style={{ color: THEME.muted, fontSize: 13, marginTop: 4, lineHeight: 1.6 }}>
+                      홈페이지에 넣을 것만 체크해 주세요. AI가 읽은 내용이라 틀린 곳이 있을 수 있어요. 넣은 뒤에도 빌더에서 고칠 수 있고, '저장'을 눌러야 홈페이지에 반영돼요.
+                    </p>
+                  </div>
+                  <div style={{ padding: '0 24px', overflowY: 'auto', flex: 1 }}>
+                    {section('설교', r.sermons.map((x, i) => row(analysisReview.sermons[i], () => toggle('sermons', i), x.title || '말씀', [x.service, x.scripture, x.preacher].filter(Boolean).join(' · '), `s${i}`)))}
+                    {section('교회 소식', r.news.map((x, i) => row(analysisReview.news[i], () => toggle('news', i), x.title || '교회 소식', x.content, `n${i}`)))}
+                    {section('기본 정보 (빌더에 비어 있는 칸만)', basicRows.map(x => row(!!analysisReview.basic[x.key], () => toggleBasic(x.key), x.label, x.value, x.key)))}
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, padding: '14px 24px', borderTop: `1px solid ${THEME.border}` }}>
+                    <button type="button" onClick={() => setAnalysisReview(null)} style={{ padding: '10px 18px', borderRadius: 8, border: `1px solid ${THEME.border}`, background: 'white', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>취소</button>
+                    <button type="button" onClick={applyAnalysisReview} style={{ padding: '10px 18px', borderRadius: 8, border: 'none', background: THEME.navy, color: 'white', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>선택한 내용 넣기</button>
+                  </div>
+                </div>
+              </div>
+            )
+          })()}
+
           {showPaymentModal && selectedProject && (
             <div
               style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000, padding: 20 }}
@@ -1824,8 +2235,8 @@ const removeLinkStyle: React.CSSProperties = {
   color: '#DC2626', fontSize: 12, fontWeight: 600, marginTop: 10, padding: 0,
 }
 
-function Field({ label, placeholder, value, onChange }: {
-  label: string; placeholder: string; value: string; onChange: (v: string) => void
+function Field({ label, placeholder, value, onChange, hint }: {
+  label: string; placeholder: string; value: string; onChange: (v: string) => void; hint?: React.ReactNode
 }) {
   return (
     <div>
@@ -1838,12 +2249,13 @@ function Field({ label, placeholder, value, onChange }: {
         onFocus={e => { e.currentTarget.style.borderColor = THEME.sky }}
         onBlur={e => { e.currentTarget.style.borderColor = '#D1D5DB' }}
       />
+      {hint}
     </div>
   )
 }
 
-function TextareaField({ label, placeholder, value, onChange }: {
-  label: string; placeholder: string; value: string; onChange: (v: string) => void
+function TextareaField({ label, placeholder, value, onChange, hint }: {
+  label: string; placeholder: string; value: string; onChange: (v: string) => void; hint?: React.ReactNode
 }) {
   return (
     <div>
@@ -1857,6 +2269,20 @@ function TextareaField({ label, placeholder, value, onChange }: {
         onFocus={e => { e.currentTarget.style.borderColor = THEME.sky }}
         onBlur={e => { e.currentTarget.style.borderColor = '#D1D5DB' }}
       />
+      {hint}
     </div>
+  )
+}
+
+// 온라인 주보와 내용이 다를 때 입력칸 아래에 보이는 약한 안내(아무 동작도 하지 않음)
+function BulletinDiffHint({ builderWins }: { builderWins: boolean }) {
+  return (
+    <p style={{ display: 'flex', gap: 6, alignItems: 'flex-start', fontSize: 12, color: '#6B7280', marginTop: 6, lineHeight: 1.6 }}>
+      <span aria-hidden style={{ flexShrink: 0 }}>ⓘ</span>
+      <span>
+        온라인 주보를 사용 중이시네요. 이 내용은 주보에 입력된 내용과 달라요.
+        {builderWins ? ' 홈페이지에는 지금 입력한 내용이 표시돼요.' : ' 홈페이지에는 주보 내용이 먼저 표시돼요.'}
+      </span>
+    </p>
   )
 }

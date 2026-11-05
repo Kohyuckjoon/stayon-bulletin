@@ -1,5 +1,8 @@
 User-agent: *
 Allow: /
+# 운영자(/super)·교회 관리자(/admin) 화면은 검색엔진 수집 금지
+Disallow: /super
+Disallow: /admin
 
 # 지도의 위치를 알려줍니다.
 Sitemap: https://bulletin.stayon-platform.com/sitemap.xml

@@ -34,7 +34,7 @@ export function Pricing() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { requestPayment } = usePayment();
   const { requestWebsitePayment } = useWebsitePayment();
-  const { requestIssueBillingKey } = useBillingKey();
+  const { requestIssueBillingKey, startRecurringWithSavedCard } = useBillingKey();
 
   const [showTrialDialog, setShowTrialDialog] = useState(false);
   const [showLoginGuardDialog, setShowLoginGuardDialog] = useState(false);
@@ -54,6 +54,8 @@ export function Pricing() {
   const [selectedFeaturePlan, setSelectedFeaturePlan] = useState<FeaturePlanKey>("basic");
   const [currentUserInfo, setCurrentUserInfo] = useState<{
     email: string; churchName: string; status: string; uid: string; congregationSize: string;
+    hasBillingKey: boolean; // 결제 관리에서 이미 등록한 정기결제 카드가 있는지
+    recurringActive: boolean; // 이미 정기결제 중인지(요금제·금액까지 걸려 있음)
   } | null>(null);
 
   // 홈페이지 제작 탭 전용: 로그인한 회원이 소유한 교회 사이트(있어야 결제로 이용 기간을 연장할 수 있음)
@@ -133,7 +135,9 @@ export function Pricing() {
             churchName: data.churchName || "정보 없음",
             status: data.status || "active",
             uid: user.uid,
-            congregationSize: data.congregationSize || ""
+            congregationSize: data.congregationSize || "",
+            hasBillingKey: !!data.billingKey,
+            recurringActive: !!data.billingKey && data.subscriptionActive === true && !!data.billingAmount,
           });
         }
       } else {
@@ -253,6 +257,7 @@ export function Pricing() {
       price: amount.toLocaleString(),
       period: duration === "monthly" ? "월" : "3개월",
       status: "active",
+      featurePlan: featureKey, // 결제한 요금제 등급 — 결제 성공 시 users.status로 저장
     };
   };
 
@@ -278,6 +283,7 @@ export function Pricing() {
     await requestPayment({
       planName: targetPlan.name,
       amount: numericAmount,
+      planTier: targetPlan.featurePlan,
       buyerEmail: currentUserInfo?.email || "",
       buyerName: currentUserInfo?.churchName || "교회담당자"
     });
@@ -294,6 +300,10 @@ export function Pricing() {
       setShowLoginGuardDialog(true);
       return;
     }
+    if (currentUserInfo.recurringActive) {
+      toast.info("이미 정기결제 중이에요. 결제 관리에서 확인할 수 있어요.");
+      return;
+    }
     setRecurringAgreed(false);
     setShowRecurringDialog(true);
   };
@@ -301,17 +311,26 @@ export function Pricing() {
   // 정기결제 동의 다이얼로그에서 "동의하고 카드 등록하기" 클릭 시 실제로
   // 포트원 카드 등록 창을 연다 — useBillingKey.ts 쪽으로만 요청이 가고,
   // usePayment.ts(1회성 결제)는 이 흐름에서 전혀 호출되지 않는다.
-  const handleConfirmRecurring = async () => {
+  // useSavedCard: 결제 관리에서 등록해 둔 카드로 바로 결제(카드 번호 다시 입력 안 함).
+  // false면 카드 등록 창을 띄워 새 카드를 등록한 뒤 결제. 어느 쪽이든 첫 달은 바로 결제됨
+  const handleConfirmRecurring = async (useSavedCard: boolean) => {
     const recurringAmount = PRICING_MATRIX[featuredTier.value]?.[selectedFeaturePlan]?.monthly;
     if (!recurringAgreed || recurringAmount === null || recurringAmount === undefined) return;
+    const plan = {
+      planName: `${featuredTier.value} ${FEATURE_PLAN_LABELS[selectedFeaturePlan]} 정기결제 플랜`,
+      tierValue: featuredTier.value,
+      amount: recurringAmount,
+      featurePlan: selectedFeaturePlan,
+    };
     setRegisteringRecurring(true);
     try {
-      await requestIssueBillingKey({
-        planName: `${featuredTier.value} ${FEATURE_PLAN_LABELS[selectedFeaturePlan]} 정기결제 플랜`,
-        tierValue: featuredTier.value,
-        amount: recurringAmount,
-      });
-      setShowRecurringDialog(false);
+      const ok = useSavedCard
+        ? await startRecurringWithSavedCard(plan)
+        : await requestIssueBillingKey(plan);
+      if (ok) {
+        setShowRecurringDialog(false);
+        setCurrentUserInfo((u) => u && { ...u, hasBillingKey: true, recurringActive: true });
+      }
     } finally {
       setRegisteringRecurring(false);
     }
@@ -448,9 +467,11 @@ export function Pricing() {
             <div className="flex gap-3 overflow-x-auto snap-x snap-mandatory pb-2 -mx-4 px-4 sm:mx-0 sm:px-0 sm:pb-0 sm:grid sm:grid-cols-2 lg:grid-cols-4 sm:gap-5 sm:overflow-visible">
               {UPCOMING_FEATURE_TIERS.map((tier) => {
                 // 베이직/스탠다드는 구현이 끝나서 공개, 프로/올인원은 아직 확정되지 않은
-                // 세부 기능 로드맵이라 경쟁사 등에 노출되지 않도록 블러 처리한다.
-                // const isLocked = false; // 전체 공개 테스트 기간에 잠시 풀어뒀던 상태 — 복구 시 위 줄로 되돌리면 됨
-                const isLocked = tier.name === "프로" || tier.name === "올인원";
+                // 세부 기능 로드맵이라 원래는 경쟁사 등에 노출되지 않도록 블러 처리해야
+                // 하지만, 지금은 요금제 구조 재검토 중이라 잠시 풀어둔 상태 — 다시 잠글 때
+                // 아래 줄로 되돌리면 됨.
+                // const isLocked = tier.name === "프로" || tier.name === "올인원";
+                const isLocked = false;
                 const price = PRICING_MATRIX[featuredTier.value]?.[tier.key];
                 const isEnterprisePrice = !price || price.monthly === null;
                 return (
@@ -592,7 +613,10 @@ export function Pricing() {
                 기능 리스트도 똑같이 블러+자물쇠 처리한다. 가격/결제 버튼은 그대로 둔다 —
                 요청받은 건 "기능만" 가리는 것이라, 결제 자체를 막는 판단은 하지 않는다. */}
             {(() => {
-              const isFeatureLocked = selectedFeaturePlan === "pro" || selectedFeaturePlan === "allinone";
+              // 위 미리보기 카드와 동일하게, 요금제 구조 재검토 중이라 잠시 풀어둔 상태 —
+              // 다시 잠글 때 아래 줄로 되돌리면 됨.
+              // const isFeatureLocked = selectedFeaturePlan === "pro" || selectedFeaturePlan === "allinone";
+              const isFeatureLocked = false;
               return (
             <>
             {/* 모바일: 가로 스크롤 캐러셀(월/3개월/정기결제 3장) / sm 이상: 기존 그리드 */}
@@ -925,7 +949,7 @@ export function Pricing() {
                 </div>
               </div>
               <p className="text-slate-500 text-[13px] font-medium leading-relaxed break-keep">
-                매월 결제일에 등록된 카드로 {PRICING_MATRIX[featuredTier.value]?.[selectedFeaturePlan]?.monthly?.toLocaleString()}원이 자동 결제됩니다. 마이페이지(관리자 홈 &gt; 결제 관리)에서 언제든 해지할 수 있으며, 해지 시 다음 결제일부터 청구되지 않습니다.
+                카드를 등록하면 첫 달 {PRICING_MATRIX[featuredTier.value]?.[selectedFeaturePlan]?.monthly?.toLocaleString()}원이 바로 결제되고, 이후 매월 결제일에 등록된 카드로 자동 결제됩니다. 마이페이지(관리자 홈 &gt; 결제 관리)에서 언제든 해지할 수 있으며, 해지 시 다음 결제일부터 청구되지 않습니다.
               </p>
               <label className="flex items-start gap-2.5 cursor-pointer">
                 <Checkbox
@@ -953,13 +977,23 @@ export function Pricing() {
           <div className="flex gap-3 mt-8">
             <Button variant="outline" onClick={() => setShowRecurringDialog(false)} className="flex-1 rounded-[1.2rem] h-14 border-slate-200 text-slate-500 font-bold">취소</Button>
             <Button
-              onClick={handleConfirmRecurring}
+              onClick={() => handleConfirmRecurring(!!currentUserInfo?.hasBillingKey)}
               disabled={!recurringAgreed || registeringRecurring}
               className="flex-1 rounded-[1.2rem] h-14 bg-emerald-600 hover:bg-emerald-700 border-none font-black text-white shadow-xl shadow-emerald-100 disabled:opacity-50"
             >
-              {registeringRecurring ? "처리 중..." : "동의하고 카드 등록하기"}
+              {registeringRecurring ? "처리 중..." : currentUserInfo?.hasBillingKey ? "동의하고 등록된 카드로 결제" : "동의하고 카드 등록하기"}
             </Button>
           </div>
+          {currentUserInfo?.hasBillingKey && (
+            <button
+              type="button"
+              onClick={() => handleConfirmRecurring(false)}
+              disabled={!recurringAgreed || registeringRecurring}
+              className="mt-3 w-full text-center text-[13px] font-bold text-slate-400 underline underline-offset-2 disabled:opacity-50"
+            >
+              다른 카드로 결제하기
+            </button>
+          )}
         </DialogContent>
       </Dialog>
 

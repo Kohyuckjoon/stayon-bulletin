@@ -62,7 +62,9 @@ export function Billing() {
   const expiry = userData ? getExpiryInfo(userData) : null;
 
   const hasBillingKey = !!userData?.billingKey;
-  const subscriptionActive = hasBillingKey && userData?.subscriptionActive !== false;
+  // 정기결제 중 = 카드 + 요금제·금액이 걸려 있고 해지 안 됨. 카드만 등록한 상태는 결제가 일어나지 않음
+  const subscriptionActive = hasBillingKey && userData?.subscriptionActive === true && !!userData?.billingAmount;
+  const nextBillingDate: Date | null = userData?.nextBillingDate?.toDate ? userData.nextBillingDate.toDate() : null;
 
   const handleRegisterCard = async () => {
     const uid = auth.currentUser?.uid;
@@ -166,7 +168,7 @@ export function Billing() {
             </div>
           )}
           <div className={PREVIEW_UNLOCKED ? "" : "opacity-50 grayscale-[0.6] pointer-events-none select-none"}>
-            <h2 className="text-sm font-bold text-slate-400 mb-3">정기결제 카드</h2>
+            <h2 className="text-sm font-bold text-slate-400 mb-3">정기결제</h2>
 
             {hasBillingKey ? (
               <div className="space-y-4">
@@ -179,28 +181,57 @@ export function Billing() {
                       {userData?.billingCardName || "등록된 카드"} •••• {userData?.billingCardLast4 || "••••"}
                     </p>
                     <p className="text-xs text-slate-400 font-medium">
-                      {subscriptionActive ? "매달 자동으로 결제돼요" : "정기결제가 해지된 카드예요"}
+                      {subscriptionActive ? "이 카드로 매달 자동 결제돼요" : "정기결제에 쓰이고 있지 않은 카드예요"}
                     </p>
                   </div>
                 </div>
 
-                {subscriptionActive && (
-                  <Button
-                    variant="outline"
-                    onClick={handleCancelSubscription}
-                    disabled={!PREVIEW_UNLOCKED || cancelling}
-                    className="w-full rounded-xl font-bold text-red-500 border-red-200 hover:bg-red-50 flex items-center gap-2"
-                  >
-                    <Trash2 className="w-4 h-4" /> {cancelling ? "처리 중..." : "정기결제 해지"}
-                  </Button>
+                {subscriptionActive ? (
+                  <div className="rounded-2xl border border-slate-100 p-4 space-y-2 text-sm">
+                    <div className="flex justify-between gap-3"><span className="text-slate-400 font-medium">요금제</span><span className="font-bold text-slate-800 text-right">{userData?.billingPlanName || "정기결제"}</span></div>
+                    <div className="flex justify-between gap-3"><span className="text-slate-400 font-medium">결제 금액</span><span className="font-bold text-slate-800">{Number(userData?.billingAmount).toLocaleString()}원 / 월</span></div>
+                    {nextBillingDate && (
+                      <div className="flex justify-between gap-3"><span className="text-slate-400 font-medium">다음 결제일</span><span className="font-bold text-slate-800">{nextBillingDate.toLocaleDateString()}</span></div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="rounded-2xl bg-blue-50 p-4 text-sm text-blue-900">
+                    <p className="font-bold">아직 정기결제를 시작하지 않았어요.</p>
+                    <p className="mt-1 text-blue-800/80 text-[13px]">요금제를 고르면 이 카드로 첫 달이 바로 결제되고, 다음 달부터 매달 자동으로 결제돼요.</p>
+                    <Button onClick={() => navigate("/admin/pricing")} className="mt-3 w-full rounded-xl font-bold bg-blue-600 hover:bg-blue-700">요금제 고르고 정기결제 시작</Button>
+                  </div>
                 )}
+
+                {/* 카드 변경 · 정기결제 해지 — 한 줄에 양쪽으로. 머티리얼 느낌의 채워진 버튼(그림자 + 누르면 눌림) */}
+                <div className={`grid gap-3 ${subscriptionActive ? "grid-cols-2" : "grid-cols-1"}`}>
+                  <button
+                    type="button"
+                    onClick={handleRegisterCard}
+                    disabled={!PREVIEW_UNLOCKED || registering}
+                    className="h-12 rounded-xl bg-blue-600 text-white text-sm font-bold flex items-center justify-center gap-2 shadow-md shadow-blue-600/25 transition-all duration-150 hover:bg-blue-700 hover:shadow-lg active:scale-[0.97] active:shadow-sm disabled:opacity-50 disabled:pointer-events-none"
+                  >
+                    <CreditCard className="w-4 h-4" /> {registering ? "처리 중..." : "카드 변경"}
+                  </button>
+
+                  {subscriptionActive && (
+                    <button
+                      type="button"
+                      onClick={handleCancelSubscription}
+                      disabled={!PREVIEW_UNLOCKED || cancelling}
+                      className="h-12 rounded-xl bg-red-50 text-red-600 text-sm font-bold flex items-center justify-center gap-2 shadow-md shadow-red-500/10 ring-1 ring-red-100 transition-all duration-150 hover:bg-red-100 hover:shadow-lg active:scale-[0.97] active:shadow-sm disabled:opacity-50 disabled:pointer-events-none"
+                    >
+                      <Trash2 className="w-4 h-4" /> {cancelling ? "처리 중..." : "정기결제 해지"}
+                    </button>
+                  )}
+                </div>
               </div>
             ) : (
               <div className="text-center py-6">
                 <div className="w-12 h-12 mx-auto rounded-2xl bg-slate-100 flex items-center justify-center text-slate-400 mb-3">
                   <CreditCard className="w-6 h-6" />
                 </div>
-                <p className="text-sm text-slate-500 font-medium mb-5">등록된 카드가 없어요.</p>
+                <p className="text-sm text-slate-500 font-medium mb-1">등록된 카드가 없어요.</p>
+                <p className="text-xs text-slate-400 font-medium mb-5">카드를 등록해 두면 요금제를 고를 때 카드 번호를 다시 입력하지 않아도 돼요.</p>
                 <Button
                   onClick={handleRegisterCard}
                   disabled={!PREVIEW_UNLOCKED || registering}
@@ -220,7 +251,7 @@ export function Billing() {
 
         <div className="flex items-start gap-2 text-xs text-slate-400 font-medium px-1">
           <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-          정기결제는 현재 준비 중인 기능이에요. 지금은 /admin/pricing에서 1회 결제로만 이용하실 수 있어요.
+          정기결제는 요금제 화면에서 시작해요. 시작하는 날 첫 달이 바로 결제되고, 다음 달부터 같은 날 자동으로 결제돼요. 카드 변경·해지는 이 화면에서 할 수 있어요.
         </div>
       </div>
     </div>

@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router";
 import { getAuth, onAuthStateChanged } from "firebase/auth";
-import { checkSlugFormat, isSlugTaken } from "../../../utils/slugValidation";
+import { checkSlugFormat, isSlugTaken, confirmPermanentAddress } from "../../../utils/slugValidation";
 import { createChurchSite, getChurchSiteByOwner } from "../../../utils/churchSite";
 
 export function WebsiteCreate() {
@@ -47,6 +47,10 @@ export function WebsiteCreate() {
         setLoading(false);
         return;
       }
+      if (!confirmPermanentAddress(`${slug}.stayon-platform.com`)) {
+        setLoading(false);
+        return;
+      }
       await createChurchSite(slug, churchName.trim(), user.uid);
       navigate("/website-builder");
     } catch {
@@ -74,7 +78,8 @@ export function WebsiteCreate() {
           value={slug} onChange={(e) => handleSlugChange(e.target.value)} />
         <span className="text-gray-400 text-sm whitespace-nowrap">.stayon-platform.com</span>
       </div>
-      <p className="text-xs text-gray-400 mb-4">영문 소문자, 숫자, 하이픈만 사용 가능 (3~30자)</p>
+      <p className="text-xs text-gray-400 mb-1">영문 소문자, 숫자, 하이픈만 사용 가능 (3~30자)</p>
+      <p className="text-xs font-bold text-red-500 mb-4">주소는 한 번 정하면 바꿀 수 없으니 신중하게 정해 주세요.</p>
 
       {error && <p className="text-red-500 text-sm mb-4">{error}</p>}
 

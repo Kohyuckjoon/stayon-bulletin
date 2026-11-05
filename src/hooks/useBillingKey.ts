@@ -17,6 +17,8 @@ declare global {
 // 발급된 채널키로 교체 완료(기존엔 단건결제용 채널키를 임시로 재사용 중이었음).
 const BILLING_STORE_ID = "store-cee37831-993c-4f67-a317-143a42ebd82b";
 const BILLING_CHANNEL_KEY = "channel-key-608b0f0e-f450-43cb-a1af-5f4e9e9ace32";
+// 카드 등록 직후 첫 달 결제를 처리하는 서버 함수(functions/src/index.ts chargeFirstRecurring)
+const FIRST_CHARGE_URL = "https://asia-northeast3-stayonsbplatform.cloudfunctions.net/chargeFirstRecurring";
 
 // 다음 결제일 계산. "해당 일자가 없는 달은 말일에 결제"라는 정책(정기결제
 // 정책 섹션) 그대로 반영 — 예: 1/31 등록이면 다음 결제일은 2/28(또는 29).
@@ -30,23 +32,70 @@ export function addMonthsClamped(date: Date, months: number): Date {
   return d;
 }
 
+// featurePlan: 결제한 요금제 등급(basic/standard/pro/allinone) — 결제 성공 시 users.status로 들어감
+export type RecurringPlan = { planName: string; tierValue: string; amount: number; featurePlan: string };
+
+// 정기결제 시작: 요금제·금액을 저장하고 서버(chargeFirstRecurring)가 첫 달을 바로
+// 결제 → 성공하면 다음 결제일이 한 달 뒤로 잡히고, 이후 매달 스케줄 함수가 결제.
+// nextBillingDate를 "지금"으로 두는 건, 창을 닫는 등으로 서버 요청이 못 닿았을 때
+// 매일 도는 스케줄 함수가 대신 첫 결제를 처리하게 하기 위한 안전장치
+// (firstChargePending은 어느 쪽이든 결제 성공 시 꺼져서 두 번 결제되지 않음).
+async function startRecurring(plan: RecurringPlan): Promise<boolean> {
+  const user = auth.currentUser;
+  if (!user) return false;
+  await updateDoc(doc(db, "users", user.uid), {
+    billingPlanName: plan.planName,
+    billingTierValue: plan.tierValue,
+    billingFeaturePlan: plan.featurePlan,
+    billingAmount: plan.amount,
+    subscriptionActive: true,
+    nextBillingDate: new Date(),
+    billingFailCount: 0,
+    firstChargePending: true,
+  });
+  const token = await user.getIdToken();
+  let res: Response;
+  try {
+    res = await fetch(FIRST_CHARGE_URL, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  } catch {
+    // 서버에 요청 자체가 닿지 않음(네트워크·함수 미배포 등) — 결제가 안 됐으니 정기결제를
+    // 다시 꺼서, 다음 날 오전 9시 스케줄 함수가 교회 모르게 결제하지 않게 함
+    await updateDoc(doc(db, "users", user.uid), { subscriptionActive: false, firstChargePending: false });
+    toast.error("결제 서버에 연결하지 못해 결제되지 않았어요. 잠시 후 다시 시도해주세요.");
+    return false;
+  }
+  const body = await res.json().catch(() => ({}));
+  if (res.ok) {
+    toast.success(`${plan.amount.toLocaleString()}원이 결제됐어요. 다음 달부터 같은 날 자동으로 결제돼요.`);
+    return true;
+  }
+  // 409(이미 처리됨) 말고는 결제가 안 된 것이므로 정기결제를 꺼 둠(다음 날 자동 결제 방지)
+  if (res.status !== 409) {
+    await updateDoc(doc(db, "users", user.uid), { subscriptionActive: false, firstChargePending: false }).catch(() => {});
+  }
+  toast.error(`결제에 실패했어요: ${body.error || "잠시 후 다시 시도해주세요."}`);
+  return false;
+}
+
 export const useBillingKey = () => {
-  const requestIssueBillingKey = useCallback(async (plan?: {
-    planName: string;
-    tierValue: string;
-    amount: number;
-  }) => {
+  // 카드 등록(빌링키 발급). plan이 있으면(= /pricing에서 정기결제 시작) 등록 직후
+  // 바로 첫 결제까지 진행. plan이 없으면(= 결제 관리에서 카드 등록·변경) 카드만
+  // 바꾸고 정기결제 상태·요금제는 그대로 둠 — 정기결제 중이면 다음 결제부터 새 카드로.
+  const requestIssueBillingKey = useCallback(async (plan?: RecurringPlan): Promise<boolean> => {
     const { PortOne } = window;
     const user = auth.currentUser;
 
     if (!user) {
       toast.error("로그인이 필요한 서비스입니다.");
-      return;
+      return false;
     }
 
     if (typeof PortOne === "undefined") {
       toast.error("결제 모듈이 로드되지 않았습니다. 잠시 후 다시 시도해주세요.");
-      return;
+      return false;
     }
 
     try {
@@ -68,39 +117,40 @@ export const useBillingKey = () => {
       });
 
       if (result.code) {
-        if (result.code === "FAILURE_TYPE_CANCEL") return;
+        if (result.code === "FAILURE_TYPE_CANCEL") return false;
         toast.error(`카드 등록 실패: ${result.message}`);
-        return;
+        return false;
       }
 
       // 성공 — 빌링키만 저장. 카드 원본 정보는 저장하지 않음(포트원/KCP가 보관).
-      // plan이 넘어온 경우(= /pricing에서 특정 요금제로 정기결제 등록한 경우)
-      // 매달 서버가 얼마를 긁어야 하는지 알아야 하므로 금액/다음 결제일도 같이 저장한다.
-      const now = new Date();
       await updateDoc(doc(db, "users", user.uid), {
         billingKey: result.billingKey,
         // TODO: 카드사명/뒷자리는 포트원 응답 필드 확인 후 정확한 경로로 교체
         billingCardName: result.card?.issuerName ?? "",
         billingCardLast4: result.card?.number?.slice(-4) ?? "",
         billingKeyRegisteredAt: serverTimestamp(),
-        subscriptionActive: true,
-        ...(plan ? {
-          billingPlanName: plan.planName,
-          billingTierValue: plan.tierValue,
-          billingAmount: plan.amount,
-          // 다음 결제일을 "지금"으로 잡아서, 서버 스케줄 함수(매일 실행)가
-          // 바로 다음 실행 때 첫 결제를 시도하도록 한다 — 카드 등록과 동시에
-          // 즉시 결제되는 게 아니라, 서버 쪽 정기결제 처리 함수가 picked up함.
-          // 이후 결제 성공마다 +1개월씩 밀려난다(functions/src/index.ts 참고).
-          nextBillingDate: now,
-          billingFailCount: 0, // 결제 실패 재시도 횟수 — 성공 시 0으로 리셋
-        } : {}),
       });
 
-      toast.success("카드가 등록됐어요. 다음 결제일에 자동으로 결제돼요.");
+      if (!plan) {
+        toast.success("카드가 등록됐어요.");
+        return true;
+      }
+      return await startRecurring(plan);
     } catch (error) {
       console.error("빌링키 발급 오류:", error);
       toast.error("카드 등록 중 오류가 발생했습니다.");
+      return false;
+    }
+  }, []);
+
+  // 이미 등록된 카드로 정기결제 시작(카드 번호 다시 입력 안 함) — 바로 첫 결제
+  const startRecurringWithSavedCard = useCallback(async (plan: RecurringPlan): Promise<boolean> => {
+    try {
+      return await startRecurring(plan);
+    } catch (error) {
+      console.error("정기결제 시작 오류:", error);
+      toast.error("결제 중 오류가 발생했습니다.");
+      return false;
     }
   }, []);
 
@@ -120,5 +170,5 @@ export const useBillingKey = () => {
     }
   }, []);
 
-  return { requestIssueBillingKey, cancelSubscription };
+  return { requestIssueBillingKey, startRecurringWithSavedCard, cancelSubscription };
 };

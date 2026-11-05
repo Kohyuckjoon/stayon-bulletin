@@ -149,6 +149,17 @@ const RootLayout = () => {
 };
 
 const getChurchSubdomain = (): string | null => {
+  // 개발 서버(npm run dev) 전용: http://localhost:5174/?church=stay 처럼 열면 그 교회 홈페이지로 보여줌.
+  // 한 번 열면 탭을 닫기 전까지 유지되고, ?church= (빈 값)으로 열면 해제. 빌드(실제 사이트)에는 포함되지 않음
+  if (import.meta.env.DEV) {
+    const q = new URLSearchParams(window.location.search).get("church");
+    if (q !== null) {
+      if (q) sessionStorage.setItem("devChurch", q);
+      else sessionStorage.removeItem("devChurch");
+    }
+    const devChurch = sessionStorage.getItem("devChurch");
+    if (devChurch) return devChurch;
+  }
   const hostname = window.location.hostname;
   const knownSubdomains = ["www", "bulletin", "place", "stayonsbplatform"];
   const parts = hostname.replace(".stayon-platform.com", "").split(".");
@@ -168,7 +179,8 @@ const getChurchSubdomain = (): string | null => {
 // getChurchSubdomain()이 null을 반환해 랜딩으로 대체되므로 주보 라우트와는 무관, 영향 없음
 const churchSectionRoute = (section: "home" | "worship" | "community" | "news" | "location" | "online-worship") => () => {
   const subdomain = getChurchSubdomain();
-  return subdomain ? <WebsiteRenderer slug={subdomain} section={section} /> : <Landing />;
+  const location = useLocation(); // 페이지 전환형 교회 사이트가 지금 주소(/about 등)를 알아야 함
+  return subdomain ? <WebsiteRenderer slug={subdomain} section={section} pathname={location.pathname} /> : <Landing />;
 };
 
 const HostRouter = churchSectionRoute("home");
@@ -177,6 +189,14 @@ const ChurchCommunityRoute = churchSectionRoute("community");
 const ChurchNewsRoute = churchSectionRoute("news");
 const ChurchLocationRoute = churchSectionRoute("location");
 const ChurchOnlineWorshipRoute = churchSectionRoute("online-worship");
+// 페이지 전환형 교회 사이트의 나머지 메뉴(교회 소개/설교/주보/칼럼/중보기도 등).
+// 교회 서브도메인이 아니면(bulletin 등) 위 라우트들과 똑같이 랜딩으로 대체되어 주보 플랫폼엔 영향 없음
+const ChurchPageRoute = churchSectionRoute("home");
+const CHURCH_PAGE_PATHS = [
+  "about", "about/pastor", "about/history", "about/staff", "worship/online", "sermons",
+  "bulletins", "bulletins/:pageId", "jubo", "news/:pageId", "column", "column/:pageId",
+  "prayer", "prayer/:pageId",
+];
 
 
 // const SuperLayout = () => (
@@ -209,6 +229,7 @@ export const router = createBrowserRouter([
       { path: "news", Component: ChurchNewsRoute },           // 교회 사이트 "소식" 하위 페이지
       { path: "location", Component: ChurchLocationRoute },   // 교회 사이트 "오시는 길" 하위 페이지
       { path: "online-worship", Component: ChurchOnlineWorshipRoute }, // 교회 사이트 "온라인 예배" 하위 페이지
+      ...CHURCH_PAGE_PATHS.map((path) => ({ path, Component: ChurchPageRoute })), // 교회 사이트 페이지 전환형 메뉴
       { path: "bulletin", Component: BulletinView },
       { path: "view/:id", Component: BulletinView },
       { path: "view/:id/about", Component: AboutPage }, // 성도 화면 메뉴 > 교회 소개

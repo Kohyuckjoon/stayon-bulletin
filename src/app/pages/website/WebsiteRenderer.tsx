@@ -4,6 +4,7 @@ import { HomeSection } from "./sections/HomeSection";
 import { CommunitySection } from "./sections/CommunitySection";
 import { NewsSection } from "./sections/NewsSection";
 import { LocationSection } from "./sections/LocationSection";
+import { MultiPageSite } from "./MultiPageSite";
 
 interface Props {
     slug?: string;        // 배포된 실제 페이지 / /website-preview에서 씀 (Firestore 조회)
@@ -11,6 +12,8 @@ interface Props {
     // 실제 배포된 서브도메인(/worship 등)으로 들어왔을 때만 넘어옴 — 어느 섹션까지 스크롤해서
     // 보여줄지 결정하는 용도. 그 외(홈, 미리보기)는 항상 맨 위부터 시작
     section?: "home" | "worship" | "community" | "news" | "location" | "online-worship";
+    // 페이지 전환형에서 지금 보여줄 주소(/about 등). 실제 배포 사이트에서만 넘어옴
+    pathname?: string;
 }
 
 // 이 파일은 상단 네비게이션 + 푸터만 담당하는 얇은 껍데기(shell)임. 화면별 실제 내용은
@@ -19,11 +22,22 @@ interface Props {
 // 보여주고, 메뉴를 누르면 페이지 이동 없이 그 위치로 스크롤됨(원페이지 사이트).
 // /worship, /community 같은 개별 주소는 아직 검색엔진에 걸려있거나 공유된 링크가 있을 수 있어
 // 계속 살려두되, 이제는 "전체 페이지를 열고 그 위치까지 스크롤해서 보여주는" 진입점 역할만 함.
-export function WebsiteRenderer({ slug, site: liveSite, section }: Props) {
-    const [fetchedSite, setFetchedSite] = useState<ChurchSite | null>(null);
+// 메뉴를 옮길 때마다 화면이 새로 만들어져도 다시 빈 화면부터 시작하지 않도록, 한 번 불러온
+// 교회 사이트 데이터는 기억해 뒀다가 바로 보여주고 최신 내용은 뒤에서 다시 받아옴(깜빡임 방지)
+const siteCache = new Map<string, ChurchSite>();
+
+export function WebsiteRenderer({ slug, site: liveSite, section, pathname }: Props) {
+    const [fetchedSite, setFetchedSite] = useState<ChurchSite | null>(() => (slug ? siteCache.get(slug) ?? null : null));
 
     useEffect(() => {
-        if (slug && !liveSite) getChurchSite(slug).then(setFetchedSite);
+        if (!slug || liveSite) return;
+        let cancelled = false;
+        getChurchSite(slug).then((s) => {
+            if (cancelled || !s) return;
+            siteCache.set(slug, s);
+            setFetchedSite(s);
+        });
+        return () => { cancelled = true; };
     }, [slug, liveSite]);
 
     const site = liveSite ?? fetchedSite;
@@ -40,10 +54,16 @@ export function WebsiteRenderer({ slug, site: liveSite, section }: Props) {
     // 교회 사이트 홈도 주보 플랫폼 랜딩과 똑같이 "/"라서 구분을 못 함 — SEOManager는 그대로 두고,
     // 여기서 데이터 로딩이 끝난 뒤 한 번 더 덮어써서 해결(주보 플랫폼 쪽 코드는 전혀 안 건드림)
     useEffect(() => {
-        if (site) document.title = site.metaTitle || `${site.churchName} | STAYON`;
+        // 페이지 전환형은 MultiPageSite가 페이지마다 제목을 따로 정함
+        if (site && site.layoutMode === "onepage") document.title = site.metaTitle || `${site.churchName} | STAYON`;
     }, [site]);
 
     if (!site) return null;
+
+    // 페이지 전환형(기본). 원페이지를 고른 교회만 아래 기존 한 페이지 화면을 그대로 씀
+    if (site.layoutMode !== "onepage") {
+        return <MultiPageSite site={site} pathname={pathname || "/"} preview={!!liveSite} />;
+    }
 
     const primaryColor = site.primaryColor || "#1B3A6B";
     const activeMenus = site.activeMenus?.length ? site.activeMenus : ["home", "worship", "community", "news", "online-worship", "location"];
@@ -114,7 +134,7 @@ export function WebsiteRenderer({ slug, site: liveSite, section }: Props) {
     };
 
     return (
-        <div className="min-h-screen w-full bg-white" style={{ scrollBehavior: "smooth" }}>
+        <div className="min-h-screen w-full flex flex-col bg-white" style={{ scrollBehavior: "smooth" }}>
             {/* 상단 네비게이션 - 배경은 화면 전체 폭, 내부 콘텐츠만 넓은 컨테이너로 정렬 */}
             <div className="sticky top-0 z-40 w-full shadow-sm" style={{ background: primaryColor }}>
                 <div className="max-w-6xl mx-auto flex items-center justify-between gap-3 px-4 sm:px-8 py-3 sm:py-4">
@@ -219,7 +239,8 @@ export function WebsiteRenderer({ slug, site: liveSite, section }: Props) {
             )} */}
 
             {/* 푸터 - 화면 전체 폭 배경 */}
-            <footer className="w-full px-4 sm:px-8 py-10 sm:py-14" style={{ background: primaryColor }}>
+            {/* mt-auto: 내용이 짧아도 하단이 항상 화면 맨 아래에 붙음 */}
+            <footer className="mt-auto w-full px-4 sm:px-8 py-10 sm:py-14" style={{ background: primaryColor }}>
                 <div className="max-w-6xl mx-auto flex flex-col sm:flex-row items-center sm:items-end justify-between gap-4">
                     <div className="text-center sm:text-left">
                         <p className="text-white font-bold text-base mb-1">{site.churchName}</p>

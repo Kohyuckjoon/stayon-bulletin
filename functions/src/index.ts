@@ -10,6 +10,12 @@ import {google} from "googleapis";
 import {sendMailNotification, sendCustomerEmail} from "./utils/adminNotify";
 import * as path from "path";
 import * as fs from "fs";
+import {
+  resolveCtx, buildSeoPage, buildRss, sitemapEntries, SeoPage,
+  juboSiteBase, churchVerificationMetas, JUBO_HOST_SUFFIX, BULLETIN_SLUG_REGEX,
+  verificationCode,
+} from "./bulletinSeo";
+import {churchSitePage, churchSitePaths, churchSiteRss} from "./churchSiteSeo";
 
 admin.initializeApp();
 
@@ -292,6 +298,80 @@ async function chargeBillingKeyPayment(
   }
 }
 
+const PLAN_TIERS = ["basic", "standard", "pro", "allinone"];
+const PLAN_LABELS: Record<string, string> = {
+  "베이직": "basic", "스탠다드": "standard", "프로": "pro", "올인원": "allinone",
+};
+
+/**
+ * 정기결제로 결제한 요금제 등급(users.status 값).
+ * billingFeaturePlan이 없던 예전 등록은 요금제 이름(예: "개척 베이직 정기결제
+ * 플랜")에서 찾고, 그래도 모르면 예전 동작대로 올인원.
+ * @param {FirebaseFirestore.DocumentData} data users/{uid} 문서 데이터
+ * @return {string} basic | standard | pro | allinone
+ */
+function recurringPlanTier(data: FirebaseFirestore.DocumentData): string {
+  const key = String(data.billingFeaturePlan || "");
+  if (PLAN_TIERS.includes(key)) return key;
+  const name = String(data.billingPlanName || "");
+  const label = Object.keys(PLAN_LABELS).find((l) => name.includes(l));
+  return label ? PLAN_LABELS[label] : "allinone";
+}
+
+// 결제 성공 후 처리(이용 기간 연장·다음 결제일·성공 메일). 매일 도는 결제와
+// 카드 등록 직후 첫 결제(chargeFirstRecurring)가 공통으로 쓴다.
+/**
+ * @param {string} uid 사용자(교회) uid
+ * @param {FirebaseFirestore.DocumentData} data users/{uid} 문서 데이터
+ * @param {Date} scheduledDue 이번 결제의 기준 결제일(다음 결제일 = +1개월)
+ * @return {Promise<void>}
+ */
+async function applyRecurringSuccess(
+  uid: string,
+  data: FirebaseFirestore.DocumentData,
+  scheduledDue: Date
+): Promise<void> {
+  const amount = data.billingAmount as number;
+  const planName = (data.billingPlanName as string) || "정기결제";
+  const email = (data.email as string) || "";
+  const churchName = (data.churchName as string) || "교회담당자";
+  const now = new Date();
+  let baseDate = now;
+  const current = data.lastPaymentDate as
+    FirebaseFirestore.Timestamp | undefined;
+  if (current?.toDate && current.toDate() > now) {
+    baseDate = current.toDate();
+  }
+  const newExpiration = addMonthsClamped(baseDate, 1);
+
+  await db.collection("users").doc(uid).update({
+    status: recurringPlanTier(data), // 결제한 요금제 등급 그대로(/super 상태값)
+    isPaidUser: true,
+    currentPlan: planName,
+    lastPaymentDate: admin.firestore.Timestamp.fromDate(newExpiration),
+    nextBillingDate:
+      admin.firestore.Timestamp.fromDate(addMonthsClamped(scheduledDue, 1)),
+    billingFailCount: 0,
+    // 첫 결제가 끝났다는 표시(스케줄 함수가 먼저 처리한 경우에도 꺼서,
+    // chargeFirstRecurring이 같은 첫 결제를 한 번 더 긁지 못하게 함)
+    firstChargePending: false,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  try {
+    await sendMailNotification("PAYMENT", {
+      buyerName: churchName,
+      buyerEmail: email,
+      planName,
+      amount: amount.toLocaleString(),
+      date: new Date().toLocaleString("ko-KR", {timeZone: "Asia/Seoul"}),
+    });
+  } catch (e) {
+    console.error("[정기결제] 성공 알림 메일 실패:", e);
+  }
+  console.log(`[정기결제 성공] ${uid} / ${amount}원`);
+}
+
 // 교회 한 곳의 정기결제를 처리하는 핵심 로직. 매일 도는 스케줄 함수와
 // 운영자 수동 테스트 함수가 공통으로 쓴다 — 여기 한 곳만 고치면 둘 다
 // 같이 바뀐다.
@@ -320,45 +400,13 @@ async function processOneRecurringUser(
   );
 
   if (result.success) {
-    const now = new Date();
-    let baseDate = now;
-    const current = data.lastPaymentDate as
-      FirebaseFirestore.Timestamp | undefined;
-    if (current?.toDate && current.toDate() > now) {
-      baseDate = current.toDate();
-    }
-    const newExpiration = addMonthsClamped(baseDate, 1);
-
     // 다음 결제일은 "지금"이 아니라 "원래 예정됐던 결제일"을 기준으로
     // +1개월 해야 "매월 같은 날 결제" 약속이 지켜진다. 실패 후 재시도로
     // 처리 시각이 며칠 늦어져도(now 기준으로 계산하면) 결제일이 그 늦어진
     // 날로 영구히 밀려버리는 버그가 있었음 — scheduledDue를 기준으로 고침.
     const scheduledDue = (data.nextBillingDate as
-      FirebaseFirestore.Timestamp | undefined)?.toDate() || now;
-
-    await db.collection("users").doc(uid).update({
-      status: "allinone",
-      isPaidUser: true,
-      currentPlan: planName,
-      lastPaymentDate: admin.firestore.Timestamp.fromDate(newExpiration),
-      nextBillingDate:
-        admin.firestore.Timestamp.fromDate(addMonthsClamped(scheduledDue, 1)),
-      billingFailCount: 0,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
-
-    try {
-      await sendMailNotification("PAYMENT", {
-        buyerName: churchName,
-        buyerEmail: email,
-        planName,
-        amount: amount.toLocaleString(),
-        date: new Date().toLocaleString("ko-KR", {timeZone: "Asia/Seoul"}),
-      });
-    } catch (e) {
-      console.error("[정기결제] 성공 알림 메일 실패:", e);
-    }
-    console.log(`[정기결제 성공] ${uid} / ${amount}원`);
+      FirebaseFirestore.Timestamp | undefined)?.toDate() || new Date();
+    await applyRecurringSuccess(uid, data, scheduledDue);
     return;
   }
 
@@ -496,6 +544,60 @@ export const testRecurringBillingNow = functions.https.onRequest(
   }
 );
 
+// 카드 등록 직후 첫 결제. /pricing에서 정기결제 카드를 등록하면 프론트
+// (useBillingKey.ts)가 바로 이 함수를 불러 그 자리에서 첫 달 금액을 결제하고,
+// 다음 결제일을 한 달 뒤로 잡는다. firstChargePending이 켜진 계정만, 한 번만
+// 결제(버튼 연타·새로고침으로 두 번 긁히지 않게 트랜잭션으로 먼저 끔).
+// POST, 헤더 Authorization: Bearer <Firebase ID 토큰>
+export const chargeFirstRecurring = functions.https.onRequest(
+  {secrets: ["PORTONE_API_SECRET"], cors: true},
+  async (req, res) => {
+    if (req.method !== "POST") {
+      res.status(405).json({error: "POST만 받아요."});
+      return;
+    }
+    let uid = "";
+    try {
+      const token = String(req.headers.authorization || "")
+        .replace(/^Bearer\s+/i, "");
+      uid = (await admin.auth().verifyIdToken(token)).uid;
+    } catch {
+      res.status(401).json({error: "로그인이 필요합니다."});
+      return;
+    }
+    const ref = db.collection("users").doc(uid);
+    const data = await db.runTransaction(async (tx) => {
+      const d = (await tx.get(ref)).data();
+      if (!d || d.firstChargePending !== true || !d.billingKey ||
+        !d.billingAmount || d.subscriptionActive !== true) return null;
+      tx.update(ref, {firstChargePending: false});
+      return d;
+    });
+    if (!data) {
+      res.status(409).json({error: "이미 처리됐거나 결제할 정기결제가 없어요."});
+      return;
+    }
+    const result = await chargeBillingKeyPayment(
+      data.billingKey as string, data.billingAmount as number,
+      (data.billingPlanName as string) || "정기결제", uid
+    );
+    if (result.success) {
+      // 다음 결제일 = 오늘 + 1개월
+      await applyRecurringSuccess(uid, data, new Date());
+      res.json({ok: true});
+      return;
+    }
+    // 첫 결제 실패: 정기결제를 꺼서 다음 날 자동으로 긁히지 않게 하고,
+    // 교회가 화면에서 바로 사유를 보고 카드를 다시 등록하게 함
+    await ref.update({
+      subscriptionActive: false,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    console.log(`[정기결제 첫 결제 실패] ${uid} — ${result.message}`);
+    res.status(402).json({error: result.message || "결제에 실패했어요."});
+  }
+);
+
 // 유튜브 채널 링크의 채널명을 대신 가져와준다. 유튜브 공식 oEmbed는 영상(watch) URL만
 // 지원하고 채널 URL은 지원하지 않아서(404), 채널 페이지 HTML의 og:title 메타태그를
 // 직접 읽는 방식으로 우회한다. 브라우저에서 바로 채널 페이지를 fetch하면 CORS로 막히기
@@ -533,11 +635,81 @@ const BOT_AGENT_REGEX =
 // 검색봇 전용 판별 정규식. BOT_AGENT_REGEX(메신저 링크 미리보기 봇)와는 완전히
 // 별개 — 교회가 "검색엔진 노출"을 켠 주보(users/{uid}.bulletinSearchable===true)만
 // 이 분기에서 실제 내용을 내려주고, 안 켠 교회는 noindex를 명시해 색인에서 제외한다.
-const SEARCH_BOT_REGEX = /googlebot|bingbot|google-inspectiontool|yeti/i;
+// google-firebase: Firebase Hosting이 rewrite로 함수에 넘길 때 UA의 "Googlebot"을
+// "Google-Firebase"로 바꿔서 전달함(로그로 확인). 이게 없으면 구글봇이 이 분기를
+// 못 타고 빈 SPA(index.html)만 받아가서 모든 주보가 메인 페이지 중복으로 처리됨.
+const SEARCH_BOT_REGEX =
+  /googlebot|google-firebase|bingbot|google-inspectiontool|yeti/i;
+
+// 빌드 후 scripts/prerender.mjs가 메인(index.html)·pricing.html·website.html을
+// 내용이 다 그려진 HTML로 만들고, 원래의 빈 SPA 껍데기는 app.html로 옮긴다.
+// 주보(/view)·교회 사이트처럼 함수가 내려주는 화면은 계속 빈 껍데기를 써야
+// 하므로 app.html을 읽는다(없으면 예전처럼 index.html)
+const distFile = (name: string) => path.join(__dirname, "../dist", name);
+const SHELL_HTML_PATH = fs.existsSync(distFile("app.html")) ?
+  distFile("app.html") :
+  distFile("index.html");
+const WEBSITE_HTML_PATH = fs.existsSync(distFile("website.html")) ?
+  distFile("website.html") :
+  SHELL_HTML_PATH;
 
 export const bulletinOG = functions.https.onRequest(async (req, res) => {
   const userAgent = req.headers["user-agent"] || "";
   console.log("[UA 확인]", userAgent); // ← 이 줄 추가
+
+  // /view/{id}[/{하위 메뉴}[/{상세 id}]] — 성도 화면 라우트(routes.tsx)와 같은 구조
+  const segs = req.path.split("/").filter(Boolean);
+  const viewId = segs[0] === "view" ? segs[1] || "" : "";
+  const viewSub = segs[0] === "view" ? segs[2] || "" : "";
+  const viewSubId = segs[0] === "view" ? segs[3] || "" : "";
+
+  // 교회별 RSS(/view/{uid}/rss.xml) — 검색엔진 노출을 켠 교회만
+  if (viewId && viewSub === "rss.xml") {
+    try {
+      const ctx = await resolveCtx(viewId);
+      if (ctx && ctx.searchable) {
+        res.setHeader("Content-Type", "application/rss+xml; charset=utf-8");
+        res.status(200).send(buildRss(ctx));
+        return;
+      }
+    } catch (error) {
+      console.error("RSS 생성 에러:", error);
+    }
+    res.status(404).send("Not Found");
+    return;
+  }
+
+  // 검색봇(구글/빙/네이버): 교회가 "검색엔진 노출"을 켰으면 bulletinSeo.ts가
+  // 만든 완성된 HTML(주보 본문 + 하위 메뉴 페이지)을, 안 켰거나 성도 화면에 없는
+  // 페이지면 noindex를 붙인 SPA를 준다. 스크립트 없는 정적 HTML을 주는 이유:
+  // SPA를 주면 구글 2차 렌더링 때 Firestore 로딩 전 "불러오는 중..." 화면에서
+  // 캡처가 끝나버리는 문제가 실제로 확인됨(서치콘솔 실시간 테스트로 재현).
+  if (SEARCH_BOT_REGEX.test(userAgent)) {
+    let page: SeoPage | null = null;
+    try {
+      const ctx = viewId ? await resolveCtx(viewId) : null;
+      if (ctx && ctx.searchable) page = buildSeoPage(ctx, viewSub, viewSubId);
+    } catch (error) {
+      console.error("검색봇 페이지 생성 에러:", error);
+    }
+    if (page) {
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.status(200).send(page.html);
+      return;
+    }
+    const indexPath = SHELL_HTML_PATH;
+    if (fs.existsSync(indexPath)) {
+      const indexHtml = fs.readFileSync(indexPath, "utf8");
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.status(200).send(indexHtml.replace(
+        "</head>",
+        "  <meta name=\"robots\" content=\"noindex, nofollow\" />\n  </head>"
+      ));
+      return;
+    }
+    res.status(404).send("Not Found");
+    return;
+  }
 
   const pathSegments = req.path.split("/");
   const bulletinId = pathSegments[pathSegments.length - 1];
@@ -546,16 +718,7 @@ export const bulletinOG = functions.https.onRequest(async (req, res) => {
   let description = "스마트 모바일 주보를 확인해보세요.";
   let imageUrl =
     "https://bulletin.stayon-platform.com/stayon_jubo_kakao_cover.png";
-    // 교회가 "검색엔진 노출"을 켰는지(users/{uid}.bulletinSearchable). 기본값은
-    // false(opt-in) — AdminEditor.tsx "검색엔진 노출" 토글에서 켠 교회만 true
-  let bulletinSearchable = false;
-  // 검색봇 노출용 본문을 제목·설명 한 줄보다 풍성하게 채우기 위한 추가 문단
-  // (날짜·본문 구절·설교자). 구글이 "내용이 거의 없는 템플릿 페이지"로 보고
-  // 색인을 꺼릴 수 있어서, 실제 주보 정보를 조금 더 넣어준다.
-  let extraBody = "";
-  // 경쟁사(주보플러스)처럼 article:published_time·구조화 데이터의 datePublished에
-  // 쓸 ISO 8601 날짜 - 주보 날짜가 "YYYY-MM-DD" 형식일 때만 채워진다.
-  let bulletinDateIso = "";
+  let authorUid: string | null = null;
 
   if (bulletinId && bulletinId !== "view") {
     try {
@@ -563,7 +726,6 @@ export const bulletinOG = functions.https.onRequest(async (req, res) => {
 
       let userData: Record<string, unknown> | null = null;
       let bulletinData: Record<string, unknown> | null = null;
-      let authorUid: string | null = null;
 
       if (userDocRef.exists) {
         // ① /view/{교회 UID}
@@ -629,9 +791,6 @@ export const bulletinOG = functions.https.onRequest(async (req, res) => {
         if (typeof userData.coverImage === "string" && userData.coverImage) {
           imageUrl = userData.coverImage;
         }
-        if (userData.bulletinSearchable === true) {
-          bulletinSearchable = true;
-        }
       }
 
       // 설명은 이 주보의 설교 제목이 있으면 그걸로 더 풍성하게
@@ -640,32 +799,6 @@ export const bulletinOG = functions.https.onRequest(async (req, res) => {
           (typeof bulletinData.title === "string" && bulletinData.title) ||
           (typeof bulletinData.subtitle === "string" && bulletinData.subtitle);
         if (sermon) description = `이번 주 말씀 — ${sermon}`;
-
-        const bits: string[] = [];
-        if (typeof bulletinData.date === "string" && bulletinData.date) {
-          bits.push(`날짜: ${bulletinData.date}`);
-        }
-        if (
-          typeof bulletinData.scripture === "string" && bulletinData.scripture
-        ) {
-          bits.push(`본문 구절: ${bulletinData.scripture}`);
-        }
-        if (
-          typeof bulletinData.preacher === "string" && bulletinData.preacher
-        ) {
-          bits.push(`설교자: ${bulletinData.preacher}`);
-        }
-        extraBody = bits.join(" · ");
-
-        // 경쟁사(주보플러스)의 개별 주보 페이지는 article:published_time을
-        // 명시해서 구글한테 "이 글은 특정 날짜의 콘텐츠"라고 알려준다 - 날짜
-        // 형식이 "YYYY-MM-DD"일 때만 ISO 8601(+09:00)로 변환해서 채운다.
-        if (
-          typeof bulletinData.date === "string" &&
-          /^\d{4}-\d{2}-\d{2}$/.test(bulletinData.date)
-        ) {
-          bulletinDateIso = `${bulletinData.date}T00:00:00+09:00`;
-        }
       }
     } catch (error) {
       console.error("Firestore 조회 에러:", error);
@@ -699,163 +832,34 @@ export const bulletinOG = functions.https.onRequest(async (req, res) => {
     return;
   }
 
-  // 2. 검색봇(구글/빙/네이버)인 경우: 교회가 "검색엔진 노출"을 켠 주보만 실제
-  //    내용을 채워서 내려주고, 안 켠 주보는 noindex를 명시해 혹시라도 이
-  //    URL이 발견되더라도 검색결과엔 절대 나오지 않게 한다. 실제 방문자(성도)
-  //    화면과는 완전히 분리된 분기라 이 아래 3번(일반 방문자)엔 영향 없음.
-  //
-  //    아래 bulletinSearchable 분기는 일부러 SPA(index.html의 <script> 태그)를
-  //    전혀 포함하지 않는 완전히 독립된 정적 HTML만 반환한다 — SPA를 같이
-  //    보내면 구글이 자바스크립트를 실행하는 2차 렌더링 단계에서 이 React
-  //    앱(BulletinView.tsx)이 그대로 마운트되면서, Firestore에서 주보 데이터를
-  //    다 받아오기 전인 "불러오는 중..." 로딩 스피너 화면에서 캡처가 끝나버리는
-  //    문제가 실제로 확인됨(구글 서치콘솔 "실시간 테스트"로 재현). 검색봇에게는
-  //    처음부터 로딩이 필요 없는 완성된 HTML만 주면 이 문제 자체가 생기지 않음
-  if (SEARCH_BOT_REGEX.test(userAgent)) {
-    if (bulletinSearchable) {
-      const safeTitle = escapeHtml(ogTitle);
-      const safeDesc = escapeHtml(description);
-      const safeUrl = escapeHtml(
-        `https://bulletin.stayon-platform.com/view/${bulletinId}`
-      );
-      const safeImageUrl = /^https?:\/\//.test(imageUrl) ?
-        escapeHtml(imageUrl) :
-        "";
-      const imageTag = safeImageUrl ?
-        `<meta property="og:image" content="${safeImageUrl}" />` :
-        "";
-      const safeExtraBody = extraBody ? escapeHtml(extraBody) : "";
-      const extraBodyTag = safeExtraBody ? `<p>${safeExtraBody}</p>` : "";
-      const pageUrl = `https://bulletin.stayon-platform.com/view/${bulletinId}`;
-      const hasImage = imageUrl && /^https?:\/\//.test(imageUrl);
-      const publishedTimeTag = bulletinDateIso ?
-        "<meta property=\"article:published_time\" " +
-          `content="${bulletinDateIso}" />` :
-        "";
-
-      // 검색엔진이 이 페이지를 "진짜 콘텐츠가 있는 페이지"로 더 잘 인식하도록
-      // schema.org 구조화 데이터(JSON-LD)를 Church/WebSite/WebPage/Article/
-      // BreadcrumbList 5종류로 연결해서 넣는다(경쟁사 주보 서비스가 쓰는
-      // 구조와 동일한 패턴). </script>로 끊기지 않게 "<"는 유니코드 이스케이프로 치환.
-      const structuredData = {
-        "@context": "https://schema.org",
-        "@graph": [
-          {
-            "@type": "Church",
-            "@id": `${pageUrl}#church`,
-            "name": churchName,
-            "url": pageUrl,
-            ...(hasImage ? {image: imageUrl, logo: imageUrl} : {}),
-          },
-          {
-            "@type": "WebSite",
-            "@id": `${pageUrl}#website`,
-            "name": `${churchName} 온라인주보`,
-            "url": pageUrl,
-            "inLanguage": "ko-KR",
-            "about": {"@id": `${pageUrl}#church`},
-          },
-          {
-            "@type": "WebPage",
-            "@id": `${pageUrl}#webpage`,
-            "url": pageUrl,
-            "name": ogTitle,
-            "description": description,
-            "inLanguage": "ko-KR",
-            "isPartOf": {"@id": `${pageUrl}#website`},
-            "about": {"@id": `${pageUrl}#church`},
-            "breadcrumb": {"@id": `${pageUrl}#breadcrumb`},
-          },
-          {
-            "@type": "BreadcrumbList",
-            "@id": `${pageUrl}#breadcrumb`,
-            "itemListElement": [
-              {
-                "@type": "ListItem", "position": 1,
-                "name": churchName, "item": pageUrl,
-              },
-              {
-                "@type": "ListItem", "position": 2,
-                "name": "온라인 주보", "item": pageUrl,
-              },
-            ],
-          },
-          {
-            "@type": "Article",
-            "@id": `${pageUrl}#article`,
-            "headline": ogTitle,
-            "description": description,
-            "mainEntityOfPage": {"@id": `${pageUrl}#webpage`},
-            "author": {"@type": "Organization", "name": churchName},
-            "publisher": {
-              "@type": "Organization",
-              "name": churchName,
-              ...(hasImage ?
-                {logo: {"@type": "ImageObject", "url": imageUrl}} :
-                {}),
-            },
-            "inLanguage": "ko-KR",
-            ...(bulletinDateIso ? {datePublished: bulletinDateIso} : {}),
-            ...(hasImage ? {image: [imageUrl]} : {}),
-          },
-        ],
-      };
-      const structuredDataTag = `<script type="application/ld+json">${
-        JSON.stringify(structuredData).replace(/</g, "\\u003c")
-      }</script>`;
-      const html = `
-        <!DOCTYPE html>
-        <html lang="ko">
-        <head>
-          <meta charset="utf-8" />
-          <title>${safeTitle}</title>
-          <meta name="description" content="${safeDesc}" />
-          <link rel="canonical" href="${safeUrl}" />
-          <meta property="og:type" content="article" />
-          <meta property="og:title" content="${safeTitle}" />
-          <meta property="og:description" content="${safeDesc}" />
-          <meta property="og:url" content="${safeUrl}" />
-          <meta property="og:site_name" content="${escapeHtml(churchName)}" />
-          <meta property="og:locale" content="ko_KR" />
-          ${publishedTimeTag}
-          ${imageTag}
-          <meta name="twitter:card" content="summary_large_image" />
-          <meta name="twitter:title" content="${safeTitle}" />
-          <meta name="twitter:description" content="${safeDesc}" />
-          ${structuredDataTag}
-        </head>
-        <body>
-          <h1>${safeTitle}</h1>
-          <p>${safeDesc}</p>
-          ${extraBodyTag}
-        </body>
-        </html>
-      `;
+  // 3. 일반 성도인 경우: SPA의 실제 index.html을 서브하여 해시 없는 /view/... 주보 화면이 정상 렌더링되도록 함
+  //    검색엔진 노출을 켠 교회는 head(제목/설명/canonical/og)만 검색봇이 받는
+  //    것과 똑같이 맞춘다 - 구글이 일반 브라우저로 확인 요청을 했을 때 메인
+  //    페이지 head(og:url=메인)가 나오면 봇용 페이지와 어긋나 보이기 때문.
+  //    본문/스크립트는 손대지 않으므로 성도 화면(React)은 그대로.
+  let seoPage: SeoPage | null = null;
+  try {
+    const ctx = viewId ?
+      await resolveCtx(viewId, {onlySearchable: true}) :
+      null;
+    if (ctx) seoPage = buildSeoPage(ctx, viewSub, viewSubId);
+  } catch (error) {
+    console.error("성도 화면 head 생성 에러:", error);
+  }
+  try {
+    const indexPath = SHELL_HTML_PATH;
+    if (fs.existsSync(indexPath)) {
+      const indexHtml = fs.readFileSync(indexPath, "utf8");
+      const html = seoPage ?
+        injectChurchMeta(indexHtml, {
+          title: escapeHtml(seoPage.title),
+          description: escapeHtml(seoPage.description),
+          canonicalUrl: escapeHtml(seoPage.canonical),
+          imageUrl: /^https?:\/\//.test(imageUrl) ? escapeHtml(imageUrl) : "",
+        }) :
+        indexHtml;
       res.setHeader("Content-Type", "text/html; charset=utf-8");
       res.status(200).send(html);
-      return;
-    }
-
-    const indexPath = path.join(__dirname, "../dist/index.html");
-    if (fs.existsSync(indexPath)) {
-      const indexHtml = fs.readFileSync(indexPath, "utf8");
-      const withNoindex = indexHtml.replace(
-        "</head>",
-        "  <meta name=\"robots\" content=\"noindex, nofollow\" />\n  </head>"
-      );
-      res.setHeader("Content-Type", "text/html; charset=utf-8");
-      res.status(200).send(withNoindex);
-      return;
-    }
-  }
-
-  // 3. 일반 성도인 경우: SPA의 실제 index.html을 서브하여 해시 없는 /view/... 주보 화면이 정상 렌더링되도록 함
-  try {
-    const indexPath = path.join(__dirname, "../dist/index.html");
-    if (fs.existsSync(indexPath)) {
-      const indexHtml = fs.readFileSync(indexPath, "utf8");
-      res.setHeader("Content-Type", "text/html; charset=utf-8");
-      res.status(200).send(indexHtml);
       return;
     }
   } catch (e) {
@@ -909,7 +913,10 @@ const SITE_PREVIEW_BOT_REGEX =
   /kakaotalk-scrap|facebookexternalhit|twitterbot|slackbot|telegrambot/i;
 // yeti = 네이버 크롤러. 원래 구글/빙만 잡고 있어서 네이버는 교회별 맞춤 메타를
 // 못 받고 있었음(성도 주보 주소가 아닌 회사 소개 텍스트만 보고 갔음) — 추가함
-const SITE_SEARCH_BOT_REGEX = /googlebot|bingbot|google-inspectiontool|yeti/i;
+// google-firebase: Firebase Hosting 경유 시 "Googlebot"이 바뀌어 들어오는 UA
+// (SEARCH_BOT_REGEX 주석 참고)
+const SITE_SEARCH_BOT_REGEX =
+  /googlebot|google-firebase|bingbot|google-inspectiontool|yeti/i;
 
 // 검색봇에게는 얇은 미리보기용 안내 HTML이 아니라 실제 SPA(index.html)를
 // 그대로 주면서 head의 title/description/OG 태그만 이 교회 것으로 바꿔 끼움
@@ -1067,6 +1074,80 @@ export const siteOG = functions.https.onRequest(async (req, res) => {
   const isPreviewBot = SITE_PREVIEW_BOT_REGEX.test(userAgent);
   const isSearchBot = SITE_SEARCH_BOT_REGEX.test(userAgent);
 
+  // 교회 홈페이지 주소의 robots.txt / sitemap.xml. 예전엔 Firebase Hosting의
+  // bulletin용 파일이 그대로 나가서(다른 도메인 사이트맵) 교회마다 네이버에
+  // 따로 등록할 수 없었다. Worker가 이 두 경로만 UA와 상관없이 넘겨준다
+  if (churchSlug && (requestPath === "/robots.txt" ||
+    requestPath === "/sitemap.xml" || requestPath === "/rss.xml")) {
+    try {
+      const siteDoc = await db.collection("churchSites").doc(churchSlug).get();
+      const site = siteDoc.exists ?
+        siteDoc.data() as Record<string, unknown> : null;
+      if (!site) {
+        res.status(404).send("Not Found");
+        return;
+      }
+      const base = `https://${churchSlug}.stayon-platform.com`;
+      const published = site.published === true;
+      if (requestPath === "/robots.txt") {
+        res.setHeader("Content-Type", "text/plain; charset=utf-8");
+        res.status(200).send([
+          "User-agent: *",
+          "Allow: /",
+          "Disallow: /admin",
+          "Disallow: /super",
+          "",
+          published ? `Sitemap: ${base}/sitemap.xml` : "",
+          "",
+        ].join("\n"));
+        return;
+      }
+      // 교회 홈페이지 RSS(페이지 전환형만 — 원페이지형은 상세 페이지가 없음)
+      if (requestPath === "/rss.xml") {
+        if (!published || site.layoutMode === "onepage") {
+          res.status(404).send("Not Found");
+          return;
+        }
+        const ownerId = typeof site.ownerId === "string" ? site.ownerId : "";
+        const ctx = ownerId ? await resolveCtx(ownerId) : null;
+        res.setHeader("Content-Type", "application/rss+xml; charset=utf-8");
+        res.status(200).send(churchSiteRss(site, ctx, base));
+        return;
+      }
+      // 페이지 전환형: 메뉴별 페이지 + 지난 주보·소식·칼럼·중보기도 상세까지
+      if (published && site.layoutMode !== "onepage") {
+        const ownerId = typeof site.ownerId === "string" ? site.ownerId : "";
+        const ctx = ownerId ? await resolveCtx(ownerId) : null;
+        res.setHeader("Content-Type", "application/xml; charset=utf-8");
+        res.status(200).send([
+          "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+          "<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">",
+          ...churchSitePaths(site, ctx, base)
+            .map((loc) => `  <url><loc>${escapeHtml(loc)}</loc></url>`),
+          "</urlset>",
+        ].join("\n"));
+        return;
+      }
+      const updatedAt = site.updatedAt as admin.firestore.Timestamp | undefined;
+      const lastmod = updatedAt && typeof updatedAt.toDate === "function" ?
+        updatedAt.toDate().toISOString().split("T")[0] : "";
+      res.setHeader("Content-Type", "application/xml; charset=utf-8");
+      res.status(200).send([
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+        "<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">",
+        published ? (lastmod ?
+          `  <url><loc>${base}/</loc><lastmod>${lastmod}</lastmod></url>` :
+          `  <url><loc>${base}/</loc></url>`) : "",
+        "</urlset>",
+      ].filter(Boolean).join("\n"));
+      return;
+    } catch (error) {
+      console.error("교회 사이트 robots/sitemap 에러:", error);
+      res.status(500).send("Internal Server Error");
+      return;
+    }
+  }
+
   if (churchSlug && (isPreviewBot || isSearchBot)) {
     try {
       const siteRef = db.collection("churchSites").doc(churchSlug);
@@ -1097,9 +1178,39 @@ export const siteOG = functions.https.onRequest(async (req, res) => {
         const safeUrl = escapeHtml(pageUrl);
         const safeImageUrl = imageUrl ? escapeHtml(imageUrl) : "";
 
+        // 페이지 전환형 교회 홈페이지: 주소마다 그 페이지 내용(MultiPageSite와 같음)
+        if (isSearchBot && site.layoutMode !== "onepage" &&
+          fs.existsSync(SHELL_HTML_PATH)) {
+          const ownerId = typeof site.ownerId === "string" ? site.ownerId : "";
+          const ctx = ownerId ? await resolveCtx(ownerId) : null;
+          const base = `https://${churchSlug}.stayon-platform.com`;
+          const page = churchSitePage(site, ctx, base, requestPath);
+          const shell = fs.readFileSync(SHELL_HTML_PATH, "utf8");
+          const metas = [
+            ["naver-site-verification", site.naverSiteVerification],
+            ["google-site-verification", site.googleSiteVerification],
+          ].map(([name, v]) => {
+            const code = verificationCode(v);
+            return code ? `<meta name="${name}" content="${code}" />` : "";
+          }).filter(Boolean).join("\n");
+          const html = page ?
+            injectChurchMeta(shell, {
+              title: escapeHtml(page.title),
+              description: escapeHtml(page.description),
+              canonicalUrl: escapeHtml(page.canonical),
+              imageUrl: safeImageUrl,
+            }).replace("<div id=\"root\"></div>",
+              `<div id="root">${page.bodyHtml}</div>`) :
+            shell.replace("</head>",
+              "  <meta name=\"robots\" content=\"noindex\" />\n  </head>");
+          res.setHeader("Content-Type", "text/html; charset=utf-8");
+          res.status(200).send(html.replace("<head>", `<head>\n${metas}`));
+          return;
+        }
+
         // 검색봇(구글/빙): 안내용 HTML이 아니라 실제 SPA를 head 메타만 바꿔서 줌
         if (isSearchBot) {
-          const indexPath = path.join(__dirname, "../dist/index.html");
+          const indexPath = SHELL_HTML_PATH;
           if (fs.existsSync(indexPath)) {
             const indexHtml = fs.readFileSync(indexPath, "utf8");
             const merged = injectChurchMeta(indexHtml, {
@@ -1113,12 +1224,36 @@ export const siteOG = functions.https.onRequest(async (req, res) => {
               // 읽혀서 저품질(thin content) 판정을 받기 쉽다 — 실제 방문자는
               // 이 isSearchBot 분기 자체를 타지 않으므로 안전하게 본문 텍스트를
               // 채워 넣는다
-            const bodyHtml =
+            let bodyHtml =
                 buildChurchBodyHtml(site, churchName, description);
+            // 이 교회가 주보 검색엔진 노출을 켰으면 교회 사이트 → 주보로 가는
+            // 링크를 건다(주보플러스처럼 교회 홈에서 주보로 크롤링이 이어지게)
+            const ownerId = typeof site.ownerId === "string" ?
+              site.ownerId : "";
+            if (ownerId) {
+              const owner = await db.collection("users").doc(ownerId).get();
+              if (owner.exists && owner.data()?.bulletinSearchable === true) {
+                // 주보 전용 주소가 있으면 그쪽(검색엔진 대표 주소)으로 링크
+                const bulletinUrl =
+                  juboSiteBase(owner.data()?.bulletinSlug) ||
+                  `https://bulletin.stayon-platform.com/view/${ownerId}`;
+                bodyHtml += "\n<section><h2>온라인 주보</h2>" +
+                  `<p><a href="${escapeHtml(bulletinUrl)}">` +
+                  `${escapeHtml(churchName)} 이번 주 주보 보기</a></p></section>`;
+              }
+            }
+            // /super > 사이트 발행 관리에서 넣은 이 교회 홈페이지용 소유확인 코드
+            const verifyMetas = [
+              ["naver-site-verification", site.naverSiteVerification],
+              ["google-site-verification", site.googleSiteVerification],
+            ].map(([name, v]) => {
+              const code = verificationCode(v);
+              return code ? `<meta name="${name}" content="${code}" />` : "";
+            }).filter(Boolean).join("\n");
             const withBody = merged.replace(
               "<div id=\"root\"></div>",
               `<div id="root">${bodyHtml}</div>`
-            );
+            ).replace("<head>", `<head>\n${verifyMetas}`);
             res.setHeader("Content-Type", "text/html; charset=utf-8");
             res.status(200).send(withBody);
             return;
@@ -1200,7 +1335,7 @@ export const siteOG = functions.https.onRequest(async (req, res) => {
 
     if (isSearchBot) {
       try {
-        const indexPath = path.join(__dirname, "../dist/index.html");
+        const indexPath = WEBSITE_HTML_PATH;
         if (fs.existsSync(indexPath)) {
           const sitesSnap = await db
             .collection("churchSites")
@@ -1230,11 +1365,18 @@ export const siteOG = functions.https.onRequest(async (req, res) => {
         console.error("교회 사이트 링크 목록 조회 에러:", error);
       }
     }
+
+    // 일반 방문자: 빌드 때 미리 그려둔 /website 화면(내용이 다 들어 있는 HTML)
+    if (fs.existsSync(WEBSITE_HTML_PATH)) {
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.status(200).send(fs.readFileSync(WEBSITE_HTML_PATH, "utf8"));
+      return;
+    }
   }
 
   // 그 외 모든 경우: 기존과 완전히 동일하게 정적 index.html 그대로 반환
   try {
-    const indexPath = path.join(__dirname, "../dist/index.html");
+    const indexPath = SHELL_HTML_PATH;
     if (fs.existsSync(indexPath)) {
       const indexHtml = fs.readFileSync(indexPath, "utf8");
       res.setHeader("Content-Type", "text/html; charset=utf-8");
@@ -1296,57 +1438,94 @@ export const churchSitemap = functions.https.onRequest(async (_req, res) => {
 // (/view/{uid})만 모아 사이트맵 XML로 생성. 기본값이 꺼짐(opt-in)이라 대부분의
 // 교회는 여기 안 잡히고, AdminEditor.tsx에서 직접 켠 교회만 포함됨. churchSitemap과
 // 마찬가지로 완전히 새로운 함수/경로이며 기존 주보 플랫폼 로직은 건드리지 않음.
+// 메인 페이지 하단 교회 목록에서 빼는 교회 이름(운영자 요청)
+const LANDING_EXCLUDED_CHURCHES = ["석진교회"];
+
 export const bulletinSitemap = functions.https.onRequest(
-  async (_req, res) => {
+  async (req, res) => {
     try {
+      // /searchable-churches.json: 메인 페이지(Landing.tsx) 하단 교회 이름 링크
+      // 목록. 검색 노출 여부와 상관없이 지금 발행 중인 주보가 있는 교회 전부.
+      // 교회 이름과 고정 주소용 ID만 내보낸다
+      if (req.path === "/searchable-churches.json") {
+        const pubSnap = await db
+          .collection("bulletins")
+          .where("status", "==", "published")
+          .get();
+        const authorIds = [...new Set(pubSnap.docs
+          .map((d) => d.data().authorId)
+          .filter((v): v is string => typeof v === "string" && v !== ""))];
+        const userDocs = authorIds.length ?
+          await db.getAll(...authorIds.map((id) => db.doc(`users/${id}`))) :
+          [];
+        const churches = userDocs
+          .filter((u) => u.exists)
+          .map((u) => ({
+            id: u.id,
+            name: u.data()?.churchName,
+            // 주보 전용 주소가 있으면 그쪽으로 링크(없으면 Landing이 /view/{id})
+            url: u.data()?.bulletinSearchable === true ?
+              juboSiteBase(u.data()?.bulletinSlug) : "",
+          }))
+          .filter((c): c is {id: string; name: string; url: string} =>
+            typeof c.name === "string" && c.name.trim() !== "" &&
+            !c.name.trim().startsWith("마스터") && // 운영자 테스트 계정 제외
+            !LANDING_EXCLUDED_CHURCHES.includes(c.name.trim()));
+        res.setHeader("Content-Type", "application/json; charset=utf-8");
+        res.setHeader("Cache-Control", "public, max-age=600");
+        res.status(200).send(JSON.stringify(churches));
+        return;
+      }
+
       const usersSnap = await db
         .collection("users")
         .where("bulletinSearchable", "==", true)
         .get();
+      const ctxs = (await Promise.all(
+        usersSnap.docs.map((d) => resolveCtx(d.id, {onlySearchable: true}))
+      )).filter((c): c is NonNullable<typeof c> => c !== null)
+        // 주보 전용 주소가 있는 교회는 그 주소의 sitemap.xml/rss.xml로 따로
+        // 내보낸다(네이버는 사이트맵·RSS에 다른 도메인 주소가 섞이면 거부)
+        .filter((c) => !c.siteBase);
 
-      const urlEntries: string[] = [];
-
-      // 교회당 "최신 주보" 고정 링크(/view/{uid}) - 항상 지금 발행된 주보를 보여줌
-      usersSnap.forEach((doc) => {
-        const loc = `https://bulletin.stayon-platform.com/view/${doc.id}`;
-        urlEntries.push(`  <url><loc>${loc}</loc></url>`);
-      });
-
-      // 교회마다 발행된 주보 "전체"를 각자 고유 URL(/view/{주보문서ID})로도
-      // 등록한다. 매주 새 주보를 발행할 때마다 색인 가능한 페이지가 하나씩
-      // 쌓이게 하기 위함 - 경쟁사(주보플러스)처럼 "주보마다 영구 URL"이 있어야
-      // 콘텐츠가 누적되지, 교회당 "최신 주보" 링크 1개만으로는 매주 똑같은
-      // 페이지 하나만 재사용하는 꼴이라 구글이 쌓인 콘텐츠로 안 쳐준다.
-      const searchableUids = usersSnap.docs.map((d) => d.id);
-      if (searchableUids.length > 0) {
-        // Firestore "in" 쿼리는 최대 30개까지만 받아서 30개씩 끊어서 조회
-        const chunks: string[][] = [];
-        for (let i = 0; i < searchableUids.length; i += 30) {
-          chunks.push(searchableUids.slice(i, i + 30));
-        }
-        for (const chunk of chunks) {
-          const bulletinsSnap = await db
-            .collection("bulletins")
-            .where("authorId", "in", chunk)
-            .where("status", "==", "published")
-            .get();
-          bulletinsSnap.forEach((doc) => {
-            const data = doc.data() as Record<string, unknown>;
-            const publishedAt =
-              data.publishedAt as admin.firestore.Timestamp | undefined;
-            const lastmod = publishedAt ?
-              publishedAt.toDate().toISOString().split("T")[0] :
-              undefined;
-            const loc =
-              `https://bulletin.stayon-platform.com/view/${doc.id}`;
-            urlEntries.push(
-              lastmod ?
-                `  <url><loc>${loc}</loc><lastmod>${lastmod}</lastmod></url>` :
-                `  <url><loc>${loc}</loc></url>`
-            );
-          });
-        }
+      // /bulletin-rss.xml: 검색엔진 노출을 켠 모든 교회의 주보·칼럼을 한 피드로
+      // (네이버 서치어드바이저는 사이트당 RSS 1개만 제출 가능해서 통합본을 둔다)
+      if (req.path === "/bulletin-rss.xml") {
+        const items = ctxs
+          .map((c) => buildRss(c).match(/<item>[\s\S]*?<\/item>/g) || [])
+          .flat()
+          .map((item) => ({
+            item,
+            date: Date.parse(
+              (item.match(/<pubDate>([^<]+)<\/pubDate>/) || [])[1] || ""
+            ) || 0,
+          }))
+          .sort((a, b) => b.date - a.date)
+          .slice(0, 200)
+          .map((x) => x.item);
+        res.setHeader("Content-Type", "application/rss+xml; charset=utf-8");
+        res.status(200).send([
+          "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+          "<rss version=\"2.0\">",
+          "<channel>",
+          "<title>STAYON 온라인 주보 - 교회 주보·소식</title>",
+          "<link>https://bulletin.stayon-platform.com/</link>",
+          "<description>스테이온 온라인 주보를 쓰는 교회들의 주보와 소식</description>",
+          "<language>ko</language>",
+          ...items,
+          "</channel>",
+          "</rss>",
+        ].join("\n"));
+        return;
       }
+
+      // 교회마다 성도 화면에 실제로 보이는 모든 주소: 교회 고정 주소(/view/{uid},
+      // QR 주소) + 하위 메뉴(교회 소개/섬기시는 분/칼럼/교회 소식/오시는 길 등)
+      // + 지난 주보(archived) + 칼럼·교회 소식 상세. 최신 주보 문서 주소는
+      // /view/{uid}와 같은 내용이라(canonical을 그쪽으로 모음) 넣지 않는다.
+      const urlEntries = ctxs.flatMap(sitemapEntries).map((e) => e.lastmod ?
+        `  <url><loc>${e.loc}</loc><lastmod>${e.lastmod}</lastmod></url>` :
+        `  <url><loc>${e.loc}</loc></url>`);
 
       const xml = [
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
@@ -1392,3 +1571,133 @@ export const onChurchSitePublished = onDocumentUpdated(
     }
   }
 );
+
+// 교회별 주보 전용 주소({bulletinSlug}-jubo.stayon-platform.com) 전용 함수.
+// 주보플러스처럼 교회 하나를 검색엔진에 사이트 하나로 등록할 수 있게, 그 주소의
+// 첫 화면·하위 메뉴·지난 주보·robots.txt·sitemap.xml·rss.xml을 내려준다.
+// Cloudflare Worker(flat-shape-14)가 이 주소로 온 요청(정적 파일 제외)을
+// ?host=&path= 로 넘겨준다. 기존 bulletinOG(/view, QR 주소)와는 완전히 별개
+export const bulletinSite = functions.https.onRequest(async (req, res) => {
+  const host = typeof req.query.host === "string" ?
+    req.query.host.toLowerCase() : "";
+  const rawPath = typeof req.query.path === "string" ? req.query.path : "/";
+  const userAgent = req.headers["user-agent"] || "";
+  const slug = host.endsWith(JUBO_HOST_SUFFIX) ?
+    host.slice(0, -JUBO_HOST_SUFFIX.length) : "";
+
+  try {
+    if (!BULLETIN_SLUG_REGEX.test(slug)) {
+      res.status(404).send("Not Found");
+      return;
+    }
+    const q = await db.collection("users")
+      .where("bulletinSlug", "==", slug).limit(1).get();
+    if (q.empty) {
+      res.status(404).send("Not Found");
+      return;
+    }
+    const uid = q.docs[0].id;
+    const base = `https://${slug}${JUBO_HOST_SUFFIX}`;
+
+    if (rawPath === "/robots.txt") {
+      res.setHeader("Content-Type", "text/plain; charset=utf-8");
+      res.status(200).send(
+        `User-agent: *\nAllow: /\n\nSitemap: ${base}/sitemap.xml\n`
+      );
+      return;
+    }
+
+    // 주소 → (주보 id, 하위 메뉴, 상세 id). 성도 화면은 브라우저에서
+    // /view/{uid}/... 형태로 바꿔 쓰므로(아래 스크립트) 그 형태도 받아준다.
+    //   /            → 최신 주보      /about 등 → 하위 메뉴
+    //   /bulletins/{주보ID}[/...] → 지난 주보
+    let segs = rawPath.split("/").filter(Boolean);
+    if (segs[0] === "view" && segs[1]) {
+      segs = segs[1] === uid ?
+        segs.slice(2) :
+        ["bulletins", segs[1], ...segs.slice(2)];
+    }
+    const isArchive = segs[0] === "bulletins" && !!segs[1];
+    const ctxId = isArchive ? segs[1] : uid;
+    const sub = (isArchive ? segs[2] : segs[0]) || "";
+    const subId = (isArchive ? segs[3] : segs[1]) || "";
+
+    const found = await resolveCtx(ctxId);
+    const ctx = found && found.uid === uid ? found : null;
+
+    if (rawPath === "/sitemap.xml") {
+      const entries = ctx && ctx.searchable ? sitemapEntries(ctx) : [];
+      res.setHeader("Content-Type", "application/xml; charset=utf-8");
+      res.status(200).send([
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+        "<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">",
+        ...entries.map((e) => e.lastmod ?
+          `  <url><loc>${e.loc}</loc><lastmod>${e.lastmod}</lastmod></url>` :
+          `  <url><loc>${e.loc}</loc></url>`),
+        "</urlset>",
+      ].join("\n"));
+      return;
+    }
+    if (rawPath === "/rss.xml") {
+      if (!ctx || !ctx.searchable) {
+        res.status(404).send("Not Found");
+        return;
+      }
+      res.setHeader("Content-Type", "application/rss+xml; charset=utf-8");
+      res.status(200).send(buildRss(ctx));
+      return;
+    }
+
+    const page = ctx && ctx.searchable ? buildSeoPage(ctx, sub, subId) : null;
+
+    // 검색봇·링크 미리보기 봇: 내용이 다 들어 있는 HTML
+    if (SEARCH_BOT_REGEX.test(userAgent) || BOT_AGENT_REGEX.test(userAgent)) {
+      if (page) {
+        res.setHeader("Content-Type", "text/html; charset=utf-8");
+        res.status(200).send(page.html);
+        return;
+      }
+    }
+
+    // 성도(일반 방문자): 기존 성도 화면 그대로. 브라우저 주소를 /view/{uid}/...
+    // 로 바꿔서 기존 라우트(routes.tsx)가 그대로 그리게 한다(주소창 표시만 바뀜)
+    if (!fs.existsSync(SHELL_HTML_PATH)) {
+      res.status(500).send("Internal Server Error");
+      return;
+    }
+    const shell = fs.readFileSync(SHELL_HTML_PATH, "utf8");
+    const cover = ctx ? String(ctx.user.coverImage || "") : "";
+    let html = page ?
+      injectChurchMeta(shell, {
+        title: escapeHtml(page.title),
+        description: escapeHtml(page.description),
+        canonicalUrl: escapeHtml(page.canonical),
+        imageUrl: /^https?:\/\//.test(cover) ? escapeHtml(cover) : "",
+      }) :
+      shell.replace(
+        "</head>",
+        "  <meta name=\"robots\" content=\"noindex, nofollow\" />\n  </head>"
+      );
+    const toView =
+      "<script>(function(){var p=location.pathname," +
+      `u=${JSON.stringify(uid)},` +
+      "m=p.match(/^\\/bulletins\\/([^/]+)(\\/.*)?$/)," +
+      "t=p.indexOf(\"/view/\")===0?p:m?\"/view/\"+m[1]+(m[2]||\"\"):" +
+      "\"/view/\"+u+(p===\"/\"?\"\":p);" +
+      "history.replaceState(null,\"\",t+location.search+location.hash)" +
+      "})()</script>";
+    html = html.replace(
+      "<head>",
+      `<head>\n${toView}\n${ctx ? churchVerificationMetas(ctx) : ""}`
+    );
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.status(200).send(html);
+  } catch (error) {
+    console.error("주보 전용 주소 처리 에러:", error);
+    res.status(500).send("Internal Server Error");
+  }
+});
+
+// 종이 주보 자동 분석(빌더 '교회 주보' 파일 → 설교·교회 소식·기본 정보 추출, 저장은 안 함)
+// ANTHROPIC_API_KEY 시크릿 등록 전까지 배포 제외(등록 후 아래 줄 주석 해제)
+// export {analyzePaperBulletin} from "./bulletinAnalyze";

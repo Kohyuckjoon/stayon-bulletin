@@ -164,6 +164,17 @@ export function Landing() {
   // 메인 화면에서 공지사항 클릭 시 내용을 보여주기 위한 상세 모달 상태 추가
   const [selectedNotice, setSelectedNotice] = useState<any>(null);
 
+  // 검색엔진 노출을 켠 교회들의 주보 링크 — 버튼(navigate)과 달리 진짜 <a href>라서
+  // 구글이 메인에서 각 교회 주보(/view/교회ID)로 따라 들어갈 수 있다.
+  // 목록은 bulletinSitemap 함수의 /searchable-churches.json에서 받음
+  const [searchableChurches, setSearchableChurches] = useState<{ id: string; name: string; url?: string }[]>([]);
+  useEffect(() => {
+    fetch("/searchable-churches.json")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((list) => Array.isArray(list) && setSearchableChurches(list))
+      .catch(() => {});
+  }, []);
+
   // 멀티 카드 슬라이드 인덱스 상태 (3개씩 순환 노출)
   const [heroCardIdx, setHeroCardIdx] = useState(0);
 
@@ -1315,6 +1326,14 @@ export function Landing() {
 
         {/* Footer */}
         <footer className="mt-10 py-12 border-t border-gray-100 text-center">
+          {/* 검색엔진이 따라갈 수 있는 실제 링크(발행 중인 교회 주보) — 화면엔 작은 회색 글씨로 교회 이름만 */}
+          {searchableChurches.length > 0 && (
+            <nav aria-label="교회 주보" className="mb-3 flex flex-wrap justify-center gap-x-3 gap-y-1 px-4 text-[11px] text-gray-300">
+              {searchableChurches.map((c) => (
+                <a key={c.id} href={c.url || `/view/${c.id}`} className="hover:text-gray-500">{c.name}</a>
+              ))}
+            </nav>
+          )}
           <p className="text-gray-400 text-xs sm:text-sm font-medium">© 2026 StayOn. All rights reserved.</p>
         </footer>
       </div>
