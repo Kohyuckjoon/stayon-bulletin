@@ -4,6 +4,7 @@ import { auth, db } from "../../../firebase";
 import { onAuthStateChanged } from "firebase/auth";
 import { Mail, Calendar, Shield, UserCheck, Search, Globe } from "lucide-react";
 import { Switch } from "../../components/ui/switch";
+import { DenominationPicker } from "../../components/DenominationPicker";
 
 // 교회별 주보 전용 주소({주소}-jubo.stayon-platform.com) — functions/src/bulletinSeo.ts의
 // BULLETIN_SLUG_REGEX / verificationCode와 같은 규칙. 주보플러스처럼 교회 하나를 네이버·구글에
@@ -19,6 +20,7 @@ const JuboSiteEditor = ({ user, onSaved, onClose }: { user: any; onSaved: (data:
   const [slug, setSlug] = useState<string>(user.bulletinSlug || "");
   const [naver, setNaver] = useState<string>(user.naverSiteVerification || "");
   const [google, setGoogle] = useState<string>(user.googleSiteVerification || "");
+  const [denomination, setDenomination] = useState<string>(user.denomination || "");
   const [saving, setSaving] = useState(false);
 
   const handleSave = async () => {
@@ -49,6 +51,7 @@ const JuboSiteEditor = ({ user, onSaved, onClose }: { user: any; onSaved: (data:
         bulletinSlug: nextSlug,
         naverSiteVerification: toVerificationCode(naver),
         googleSiteVerification: toVerificationCode(google),
+        denomination, // 검색 결과 파비콘(교단 마크). 교회가 주보 편집 화면에서 정하는 값과 같은 칸
       };
       await setDoc(doc(db, "users", user.id), data, { merge: true });
       onSaved(data);
@@ -78,6 +81,12 @@ const JuboSiteEditor = ({ user, onSaved, onClose }: { user: any; onSaved: (data:
         <span className="text-xs font-bold text-gray-600">구글 소유확인 코드 (선택)</span>
         <input value={google} onChange={(e) => setGoogle(e.target.value)} placeholder='<meta name="google-site-verification" content="..." />' className={`${inputClass} mt-1`} />
       </label>
+      <div>
+        <span className="text-xs font-bold text-gray-600">교단 (검색 결과 아이콘)</span>
+        <div className="mt-1">
+          <DenominationPicker value={denomination} onChange={setDenomination} emptyLabel="선택 안 함 (홈페이지 교단 또는 기본 아이콘)" />
+        </div>
+      </div>
       {user.bulletinSlug && slug.trim().toLowerCase() !== user.bulletinSlug && (
         <p className="text-xs font-bold text-red-600">
           주소를 바꾸면 기존 주소({user.bulletinSlug}{JUBO_HOST_SUFFIX})는 더 이상 열리지 않고, 네이버·구글에 새 주소로 다시 등록해야 합니다.

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { getChurchSite, ChurchSite, MENU_ITEMS } from "../../../utils/churchSite";
+import { applySiteFavicon } from "../../../utils/churchFavicon";
 import { HomeSection } from "./sections/HomeSection";
 import { CommunitySection } from "./sections/CommunitySection";
 import { NewsSection } from "./sections/NewsSection";
@@ -57,6 +58,12 @@ export function WebsiteRenderer({ slug, site: liveSite, section, pathname }: Pro
         // 페이지 전환형은 MultiPageSite가 페이지마다 제목을 따로 정함
         if (site && site.layoutMode === "onepage") document.title = site.metaTitle || `${site.churchName} | STAYON`;
     }, [site]);
+
+    // 브라우저 탭 아이콘을 이 교회 교단 마크로. 빌더 미리보기(liveSite)에서는 빌더 탭 아이콘을 바꾸지 않음
+    useEffect(() => {
+        if (!site || liveSite) return;
+        applySiteFavicon((site as { denomination?: unknown }).denomination, site.ownerId);
+    }, [site, liveSite]);
 
     if (!site) return null;
 

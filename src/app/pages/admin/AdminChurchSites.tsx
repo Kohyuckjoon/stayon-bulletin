@@ -2,8 +2,9 @@ import { Fragment, useEffect, useState } from "react";
 import { collection, getDocs, query, where, doc, setDoc, Timestamp } from "firebase/firestore";
 import { auth, db } from "../../../firebase";
 import { onAuthStateChanged } from "firebase/auth";
-import { ExternalLink, Trash2, Globe, CalendarClock, ShieldCheck } from "lucide-react";
-import { deleteChurchSite, ChurchSite } from "../../../utils/churchSite";
+import { ExternalLink, Trash2, Globe, CalendarClock, ShieldCheck, Pencil, Plus } from "lucide-react";
+import { deleteChurchSite, createChurchSite, ChurchSite } from "../../../utils/churchSite";
+import { checkSlugFormat, isSlugTaken, confirmPermanentAddress } from "../../../utils/slugValidation";
 
 // 교회 사이트 제작 플랫폼(주보 플랫폼과는 완전히 별개 기능) 전용 운영자 페이지.
 // 발행된 교회 사이트 조회 + 바로가기 + 삭제 + 이용 기간 조정 + 네이버 소유확인 코드.
@@ -137,11 +138,100 @@ const VerificationEditor = ({ site, onSaved, onClose }: { site: SiteRow; onSaved
   );
 };
 
+type UserOption = { uid: string; email: string; churchName: string };
+
+// 교회 대신 만들기: 가입한 교회 계정을 골라 그 교회 소유(ownerId)로 사이트를 만든다.
+// 소유자가 그 교회라서 ① 그 교회 주보가 홈페이지에 자동으로 들어가고 ② 그 교회 계정으로
+// 로그인하면 편집 화면에 "내 프로젝트"로 보인다. 운영자는 목록의 "편집" 버튼으로 같은 사이트를 편집.
+const CreateForChurch = ({ users, onCreated, onClose }: { users: UserOption[]; onCreated: (site: SiteRow) => void; onClose: () => void }) => {
+  const [search, setSearch] = useState("");
+  const [picked, setPicked] = useState<UserOption | null>(null);
+  const [churchName, setChurchName] = useState("");
+  const [slug, setSlug] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const q = search.trim().toLowerCase();
+  const matches = q ? users.filter((u) => u.churchName.toLowerCase().includes(q) || u.email.toLowerCase().includes(q)).slice(0, 8) : [];
+
+  const pick = (u: UserOption) => {
+    setPicked(u);
+    setChurchName(u.churchName);
+    setSearch("");
+  };
+
+  const handleCreate = async () => {
+    if (!picked) { alert("교회 계정을 골라 주세요."); return; }
+    if (!churchName.trim()) { alert("교회 이름을 입력해 주세요."); return; }
+    const s = slug.trim().toLowerCase();
+    const fmtCheck = checkSlugFormat(s);
+    if (!fmtCheck.valid) { alert(fmtCheck.reason); return; }
+    setSaving(true);
+    try {
+      if (await isSlugTaken(s)) { alert("이미 사용 중인 주소입니다."); return; }
+      if (!confirmPermanentAddress(`${s}.stayon-platform.com`)) return;
+      await createChurchSite(s, churchName.trim(), picked.uid);
+      await setDoc(doc(db, "churchSites", s), { createdByOperator: true }, { merge: true });
+      onCreated({ slug: s, churchName: churchName.trim(), ownerId: picked.uid, published: false, ownerEmail: picked.email });
+    } catch (error) {
+      console.error("교회 사이트 대신 만들기 오류:", error);
+      alert(error instanceof Error ? error.message : "만들기에 실패했습니다.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="rounded-2xl p-5 mb-6" style={{ background: C.card }}>
+      <p className="text-[15px] font-bold" style={{ color: C.ink }}>교회 대신 만들기</p>
+      <p className="mt-1 text-xs" style={{ color: C.muted }}>고른 교회 계정 소유로 만들어져요. 그 교회 주보가 자동으로 들어가고, 교회 계정으로 로그인하면 편집 화면에서 바로 보여요.</p>
+
+      <label className="mt-4 block text-sm font-bold" style={{ color: C.sub }}>교회 계정</label>
+      {picked ? (
+        <div className="mt-2 flex items-center justify-between gap-3 rounded-xl border px-3 py-2.5 text-sm" style={inputStyle}>
+          <span><b>{picked.churchName || "(교회 이름 없음)"}</b> <span style={{ color: C.muted }}>{picked.email}</span></span>
+          <button onClick={() => setPicked(null)} className="text-xs font-bold" style={{ color: C.blue }}>다시 고르기</button>
+        </div>
+      ) : (
+        <>
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="교회 이름 또는 이메일로 찾기" className="mt-2 w-full rounded-xl border px-3 py-2.5 text-sm outline-none focus:border-[#3182F6]" style={inputStyle} />
+          {matches.length > 0 && (
+            <div className="mt-2 rounded-xl border overflow-hidden" style={{ borderColor: C.line }}>
+              {matches.map((u) => (
+                <button key={u.uid} onClick={() => pick(u)} className="block w-full text-left px-3 py-2.5 text-sm hover:bg-[#F9FAFB]" style={{ borderBottom: `1px solid ${C.line}` }}>
+                  <b style={{ color: C.ink }}>{u.churchName || "(교회 이름 없음)"}</b> <span style={{ color: C.muted }}>{u.email}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          {q && matches.length === 0 && <p className="mt-2 text-xs" style={{ color: C.muted }}>찾는 계정이 없어요.</p>}
+        </>
+      )}
+
+      <label className="mt-4 block text-sm font-bold" style={{ color: C.sub }}>교회 이름</label>
+      <input value={churchName} onChange={(e) => setChurchName(e.target.value)} placeholder="예: 통영베다니감리교회" className="mt-2 w-full rounded-xl border px-3 py-2.5 text-sm outline-none focus:border-[#3182F6]" style={inputStyle} />
+
+      <label className="mt-4 block text-sm font-bold" style={{ color: C.sub }}>홈페이지 주소</label>
+      <div className="mt-2 flex items-center gap-2">
+        <input value={slug} onChange={(e) => setSlug(e.target.value.toLowerCase())} placeholder="bethany" className="w-48 rounded-xl border px-3 py-2.5 text-sm outline-none focus:border-[#3182F6]" style={inputStyle} />
+        <span className="text-sm" style={{ color: C.sub }}>.stayon-platform.com</span>
+      </div>
+      <p className="mt-1 text-xs font-bold" style={{ color: C.red }}>주소는 한 번 정하면 바꿀 수 없어요. 교회와 먼저 확정해 주세요.</p>
+
+      <div className="mt-5 flex justify-end gap-2">
+        <button onClick={onClose} className="rounded-xl px-4 py-2.5 text-sm font-bold" style={{ color: C.sub }}>닫기</button>
+        <button onClick={handleCreate} disabled={saving} className="rounded-xl px-5 py-2.5 text-sm font-bold text-white disabled:opacity-50" style={{ background: C.blue }}>{saving ? "만드는 중..." : "만들고 편집하기"}</button>
+      </div>
+    </div>
+  );
+};
+
 export const AdminChurchSites = () => {
   const [rows, setRows] = useState<SiteRow[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [deletingSlug, setDeletingSlug] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ slug: string; kind: "period" | "naver" } | null>(null);
+  const [users, setUsers] = useState<UserOption[]>([]);
+  const [showCreate, setShowCreate] = useState(false);
   const ADMIN_EMAILS = ["akhj123akhjk@gmail.com", "stayon.platform@gmail.com"];
 
   useEffect(() => {
@@ -159,14 +249,24 @@ export const AdminChurchSites = () => {
             getDocs(query(collection(db, "churchSites"), where("published", "==", true))),
           ]);
           const emailByUid = new Map<string, string>();
+          const userOptions: UserOption[] = [];
           usersSnap.forEach((d) => {
-            const data = d.data() as { email?: string };
+            const data = d.data() as { email?: string; churchName?: string };
             emailByUid.set(d.id, data.email || d.id);
+            userOptions.push({ uid: d.id, email: data.email || "", churchName: data.churchName || "" });
           });
-          setRows(sitesSnap.docs.map((d) => {
+          setUsers(userOptions);
+          const published = sitesSnap.docs.map((d) => {
             const site = d.data() as ChurchSite & { naverSiteVerification?: string };
             return { ...site, ownerEmail: emailByUid.get(site.ownerId) || site.ownerId };
-          }));
+          });
+          // 운영자가 교회 대신 만든 사이트는 발행 전(초안)이어도 목록에 보여야 "편집"으로 들어갈 수 있음
+          const draftsSnap = await getDocs(query(collection(db, "churchSites"), where("createdByOperator", "==", true)));
+          const drafts = draftsSnap.docs
+            .map((d) => d.data() as ChurchSite & { naverSiteVerification?: string })
+            .filter((s) => !s.published)
+            .map((site) => ({ ...site, ownerEmail: emailByUid.get(site.ownerId) || site.ownerId }));
+          setRows([...drafts, ...published]);
         } catch (error) {
           console.error("교회 사이트 목록 조회 오류:", error);
         } finally {
@@ -208,9 +308,13 @@ export const AdminChurchSites = () => {
       : <VerificationEditor site={site} onSaved={(code) => patchRow(site.slug, { naverSiteVerification: code })} onClose={() => setEditing(null)} />;
   };
 
+  // 운영자가 그 교회 사이트 편집 화면으로 바로 들어감(BuilderPage가 ?site=주소를 운영자에게만 열어 줌)
+  const openBuilder = (slug: string) => { window.location.href = `/website-builder?site=${encodeURIComponent(slug)}`; };
+
   const actionBtn = "inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-bold whitespace-nowrap transition-colors hover:brightness-95";
   const Actions = ({ site }: { site: SiteRow }) => (
     <>
+      <button onClick={() => openBuilder(site.slug)} className={actionBtn} style={{ background: C.blue, color: "#fff" }}><Pencil className="w-3.5 h-3.5" /> 편집</button>
       <button onClick={() => toggle(site.slug, "period")} className={actionBtn} style={{ background: C.blueBg, color: C.blue }}><CalendarClock className="w-3.5 h-3.5" /> 기간 조정</button>
       <button onClick={() => toggle(site.slug, "naver")} className={actionBtn} style={{ background: C.bg, color: C.sub }}><ShieldCheck className="w-3.5 h-3.5" /> 네이버</button>
       <a href={`https://${site.slug}.stayon-platform.com`} target="_blank" rel="noopener noreferrer" className={actionBtn} style={{ background: C.bg, color: C.sub }}>바로가기 <ExternalLink className="w-3.5 h-3.5" /></a>
@@ -220,13 +324,27 @@ export const AdminChurchSites = () => {
 
   return (
     <div className="min-h-screen p-4 sm:p-6 lg:p-8" style={{ background: C.bg }}>
-      <div className="mb-6">
+      <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
+        <div>
         <h1 className="text-2xl sm:text-[28px] font-bold tracking-tight" style={{ color: C.ink }}>교회 홈페이지 발행 관리</h1>
         <p className="mt-2 text-sm sm:text-base" style={{ color: C.sub }}>
-          발행된 교회 홈페이지 <b style={{ color: C.blue }}>{rows.length}</b>곳
+          발행된 교회 홈페이지 <b style={{ color: C.blue }}>{rows.filter((r) => r.published).length}</b>곳
+          {rows.some((r) => !r.published) && <> · 대신 만든 초안 <b style={{ color: C.ink }}>{rows.filter((r) => !r.published).length}</b>곳</>}
           {expiringSoon > 0 && <> · 만료 임박·만료 <b style={{ color: C.red }}>{expiringSoon}</b>곳</>}
         </p>
+        </div>
+        {!showCreate && (
+          <button onClick={() => setShowCreate(true)} className="inline-flex items-center gap-1.5 rounded-xl px-4 py-2.5 text-sm font-bold text-white" style={{ background: C.blue }}><Plus className="w-4 h-4" /> 교회 대신 만들기</button>
+        )}
       </div>
+
+      {showCreate && (
+        <CreateForChurch
+          users={users}
+          onClose={() => setShowCreate(false)}
+          onCreated={(site) => { setRows((prev) => [site, ...prev]); setShowCreate(false); openBuilder(site.slug); }}
+        />
+      )}
 
       <div className="rounded-3xl overflow-hidden" style={{ background: C.card }}>
         {loading ? (
@@ -243,7 +361,7 @@ export const AdminChurchSites = () => {
                   <div key={site.slug} className="p-5 space-y-3" style={{ borderBottom: `1px solid ${C.line}` }}>
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <p className="font-bold truncate" style={{ color: C.ink }}>{site.churchName}</p>
+                        <p className="font-bold truncate" style={{ color: C.ink }}>{site.churchName}{!site.published && <span className="ml-2 rounded-md px-1.5 py-0.5 text-[11px]" style={{ background: C.bg, color: C.muted }}>초안</span>}</p>
                         <p className="text-xs truncate" style={{ color: C.muted }}>{site.slug}.stayon-platform.com · {site.ownerEmail}</p>
                       </div>
                       <Badge d={exp} />
@@ -279,7 +397,7 @@ export const AdminChurchSites = () => {
                             <span className="flex items-center gap-3">
                               <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl" style={{ background: C.blueBg }}><Globe className="w-4 h-4" style={{ color: C.blue }} /></span>
                               <span>
-                                <span className="block font-bold" style={{ color: C.ink }}>{site.churchName}</span>
+                                <span className="block font-bold" style={{ color: C.ink }}>{site.churchName}{!site.published && <span className="ml-2 rounded-md px-1.5 py-0.5 text-[11px]" style={{ background: C.bg, color: C.muted }}>초안</span>}</span>
                                 <span className="block text-xs" style={{ color: C.muted }}>{site.slug}.stayon-platform.com</span>
                               </span>
                             </span>

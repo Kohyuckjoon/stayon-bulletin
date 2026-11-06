@@ -7,6 +7,7 @@ import { getChurchSite, getChurchSitesByOwner, createChurchSite, updateChurchSit
 import { checkSlugFormat, isSlugTaken, confirmPermanentAddress } from '../../../utils/slugValidation'
 import { DENOMINATIONS, DEFAULT_DENOMINATION, NO_DENOMINATION, denominationLogoSrc } from '../../../utils/denominations'
 import { fetchOwnerData, builderDefaultsFromBulletin, BuilderDefaults } from '../../../utils/churchSiteContent'
+import { isOperatorEmail } from '../../../utils/operator'
 import { WebsiteRenderer } from './WebsiteRenderer'
 
 // 미리보기 패널 안에서 실제 배포 화면(WebsiteRenderer)을 데스크톱 폭(1280px) 기준으로 그린 뒤
@@ -167,6 +168,7 @@ export default function BuilderPage({ onBack }: Props) {
   const [projects, setProjects] = useState<ChurchSite[]>([])
   const [loadingProjects, setLoadingProjects] = useState(true)
   const [selectedProject, setSelectedProject] = useState<string | null>(null)
+  const [pendingOpenSlug, setPendingOpenSlug] = useState<string | null>(null) // 운영자 ?site=주소로 열 사이트
   const [creating, setCreating] = useState(false)
   const [slug, setSlug] = useState('')
   const [slugError, setSlugError] = useState('')
@@ -217,17 +219,28 @@ export default function BuilderPage({ onBack }: Props) {
 
   // ── 온라인 주보 내용으로 빈 칸 자동 채우기 + 주보와 다를 때 약한 안내 ──────────────────
   // 주보는 읽기만 함(빌더에서 고친 내용을 주보에 복사하지 않음)
+  // 주보를 읽어 올 교회 = 지금 편집 중인 사이트의 소유 교회. 운영자가 다른 교회 사이트를
+  // 편집할 때(?site=주소)도 운영자 주보가 아니라 그 교회 주보가 들어가야 하므로 uid가 아닌 ownerId 기준
+  const currentOwnerId = (selectedProject && projects.find(p => p.slug === selectedProject)?.ownerId) || uid
   const [bulletinDefaults, setBulletinDefaults] = useState<BuilderDefaults | null>(null)
+  const [bulletinDefaultsOwner, setBulletinDefaultsOwner] = useState<string | null>(null)
   const prefilledFor = useRef<string | null>(null)
   useEffect(() => {
-    if (!uid) return
+    if (!currentOwnerId) return
     let cancelled = false
-    fetchOwnerData(uid).then(o => { if (!cancelled) setBulletinDefaults(builderDefaultsFromBulletin(o)) })
+    setBulletinDefaults(null)
+    setBulletinDefaultsOwner(null)
+    fetchOwnerData(currentOwnerId).then(o => {
+      if (cancelled) return
+      setBulletinDefaults(builderDefaultsFromBulletin(o))
+      setBulletinDefaultsOwner(currentOwnerId)
+    })
     return () => { cancelled = true }
-  }, [uid])
+  }, [currentOwnerId])
   useEffect(() => {
     const key = selectedProject ?? (creating ? '__new__' : null)
-    if (!key || !bulletinDefaults || prefilledFor.current === key) return
+    // 다른 교회 주보로 빈 칸이 채워지는 일이 없게, 지금 사이트 소유 교회의 주보를 다 불러온 뒤에만 채움
+    if (!key || !bulletinDefaults || bulletinDefaultsOwner !== currentOwnerId || prefilledFor.current === key) return
     prefilledFor.current = key
     const d = bulletinDefaults
     setForm(p => {
@@ -241,7 +254,7 @@ export default function BuilderPage({ onBack }: Props) {
     setWorshipServices(prev => (prev.length ? prev : d.worshipServices))
     setStaffMembers(prev => (prev.length ? prev : d.staffMembers))
     setLayLeaders(prev => (prev.length ? prev : d.layLeaders))
-  }, [bulletinDefaults, selectedProject, creating])
+  }, [bulletinDefaults, bulletinDefaultsOwner, currentOwnerId, selectedProject, creating])
   const norm = (v: unknown) => String(v ?? '').replace(/\s+/g, ' ').trim()
   // 홈페이지에서 실제로 어느 쪽이 보이는지(utils/churchSiteContent.ts buildSiteContent 기준)
   const HOMEPAGE_USES_BUILDER: string[] = ['churchName', 'email']
@@ -679,6 +692,18 @@ export default function BuilderPage({ onBack }: Props) {
       setUid(user.uid)
       try {
         const sites = await getChurchSitesByOwner(user.uid)
+        // 운영자가 /super > 교회 사이트 관리의 "편집"으로 들어온 경우(?site=주소): 다른 교회 사이트도
+        // 목록에 넣고 바로 연다. 소유자(ownerId)는 그대로 그 교회 — 저장해도 소유자가 바뀌지 않음
+        const siteParam = new URLSearchParams(window.location.search).get('site')
+        if (siteParam && isOperatorEmail(user.email)) {
+          const target = sites.find(s => s.slug === siteParam) || await getChurchSite(siteParam)
+          if (target) {
+            if (!sites.some(s => s.slug === target.slug)) sites.unshift(target)
+            setPendingOpenSlug(target.slug)
+          } else {
+            alert(`'${siteParam}' 주소의 사이트를 찾을 수 없어요.`)
+          }
+        }
         setProjects(sites)
       } catch (error) {
         console.error('프로젝트 목록 로드 실패:', error)
@@ -689,6 +714,16 @@ export default function BuilderPage({ onBack }: Props) {
     })
     return () => unsubscribe()
   }, [])
+
+  // ?site=주소로 들어온 사이트를 목록 로드 후 한 번만 자동으로 열기
+  useEffect(() => {
+    if (!pendingOpenSlug) return
+    const target = projects.find(p => p.slug === pendingOpenSlug)
+    if (!target) return
+    setPendingOpenSlug(null)
+    handleSelectProject(target)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingOpenSlug, projects])
 
   // 폼에 입력된 값들을 Firestore에 저장할 형태로 변환 (BuilderPage 전용 단순 필드 구조)
   const buildSitePatch = () => ({
@@ -850,7 +885,7 @@ export default function BuilderPage({ onBack }: Props) {
   // 실제 배포 화면과 100% 동일하게 보이도록, 지금 폼에 입력 중인 값들로 진짜 WebsiteRenderer에 넘길 site 객체를 즉석에서 구성
   const previewSite: ChurchSite = {
     slug: selectedProject || slug || 'preview',
-    ownerId: uid || '',
+    ownerId: currentOwnerId || '',
     published: true,
     ...buildSitePatch(),
   }
@@ -970,6 +1005,13 @@ export default function BuilderPage({ onBack }: Props) {
       </nav>
 
       <div style={{ maxWidth: 1200, margin: '0 auto', padding: '32px 24px' }}>
+
+        {/* 운영자가 다른 교회 사이트를 편집 중일 때 안내 (저장하면 그 교회 사이트에 바로 반영됨) */}
+        {selectedProject && uid && currentOwnerId && currentOwnerId !== uid && (
+          <div style={{ background: '#FEF3C7', border: '1px solid #FCD34D', color: '#92400E', borderRadius: 12, padding: '10px 16px', fontSize: 13, fontWeight: 700, marginBottom: 20 }}>
+            운영자 편집 중: {projects.find(p => p.slug === selectedProject)?.churchName || selectedProject} 사이트입니다. 저장하면 이 교회 사이트에 바로 반영돼요.
+          </div>
+        )}
 
         {/* PROJECT SELECTOR */}
         {!selectedProject && !creating ? (

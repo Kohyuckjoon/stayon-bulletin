@@ -179,6 +179,8 @@ export interface Ctx {
   columns: BulletinItem[];
   // 주보 전용 주소(없으면 빈 문자열 → 기존 /view/{uid} 주소 그대로)
   siteBase: string;
+  // 교단 id(파비콘용). 없으면 빈 문자열 → 스테이온 기본 파비콘
+  denomination: string;
 }
 
 /**
@@ -269,7 +271,74 @@ export async function resolveCtx(
     list,
     columns,
     siteBase: juboSiteBase(user.bulletinSlug),
+    denomination: await churchDenomination(uid, user),
   };
+}
+
+// ---------------------------------------------------------------------------
+// 교단 파비콘 — 검색 결과(네이버 등) 사이트 이름 옆 아이콘
+// ---------------------------------------------------------------------------
+
+// src/utils/denominations.ts의 DENOMINATIONS id와 같음
+// (파일은 public/denomination-logos/{id}.png)
+const DENOMINATION_IDS = [
+  "pck-hapdong", "pck-tonghap", "pck-kosin", "pck-baekseok", "pck-hapshin",
+  "prok", "kmc", "kehc", "jehc", "nazarene", "kbc", "agk", "salvation-army",
+  "kaicam",
+];
+
+/**
+ * 알려진 교단 id만 통과(그 외는 빈 문자열).
+ * @param {unknown} v 저장된 값
+ * @return {string} 교단 id 또는 ""
+ */
+export function denominationId(v: unknown): string {
+  const s = str(v);
+  return DENOMINATION_IDS.includes(s) ? s : "";
+}
+
+/**
+ * 교회 교단 결정: ① 교회 계정에 정한 교단(운영자 /super 또는 교회 주보 편집
+ * 화면에서 정함) → ② 그 교회 홈페이지 빌더에서 고른 교단 → ③ 없음.
+ * @param {string} uid 교회 계정 uid
+ * @param {Doc} user 교회 계정 문서
+ * @return {Promise<string>} 교단 id 또는 ""
+ */
+async function churchDenomination(uid: string, user: Doc): Promise<string> {
+  const own = denominationId(user.denomination);
+  if (own) return own;
+  try {
+    const q = await admin.firestore().collection("churchSites")
+      .where("ownerId", "==", uid).limit(1).get();
+    return q.empty ? "" : denominationId(q.docs[0].data().denomination);
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * 파비콘 주소. 같은 주소(서브도메인)에서 열리도록 상대 경로로 준다.
+ * 검색 결과·브라우저 탭 모두 투명 배경 교단 마크(-Photoroom.png)를 쓴다.
+ * @param {string} denom 교단 id
+ * @return {string} 파비콘 경로
+ */
+export function faviconHref(denom: string): string {
+  return denom ? `/denomination-logos/${denom}-Photoroom.png` : "/favicon.png";
+}
+
+/**
+ * HTML의 파비콘 태그를 교단 파비콘으로 바꾼다(없으면 head 끝에 추가).
+ * @param {string} html 원본 HTML
+ * @param {string} denom 교단 id
+ * @return {string} 바뀐 HTML
+ */
+export function withFavicon(html: string, denom: string): string {
+  const tag =
+    `<link rel="icon" type="image/png" href="${faviconHref(denom)}" />`;
+  const re = /<link rel="icon"[^>]*>/;
+  return re.test(html) ?
+    html.replace(re, tag) :
+    html.replace("</head>", `${tag}\n</head>`);
 }
 
 // ---------------------------------------------------------------------------
@@ -972,6 +1041,7 @@ function renderHtml(ctx: Ctx, p: PageSpec, activeSub: string): string {
 <title>${t}</title>
 <meta name="description" content="${d}" />
 <link rel="canonical" href="${u}" />
+<link rel="icon" type="image/png" href="${faviconHref(ctx.denomination)}" />
 <meta name="robots" content="index,follow" />
 <meta property="og:title" content="${t}" />
 <meta property="og:description" content="${d}" />

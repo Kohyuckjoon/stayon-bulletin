@@ -35,6 +35,7 @@ import { Calendar } from "../components/ui/calendar";
 import { format } from "date-fns";
 import { ko } from "date-fns/locale";
 import { PAGE_BG_THEMES, DEFAULT_PAGE_BG_THEME_ID } from "../../utils/pageBgThemes";
+import { DenominationPicker } from "../components/DenominationPicker";
 import { BULLETIN_TEMPLATES, DEFAULT_BULLETIN_TEMPLATE_ID, isCustomBulletinTemplate } from "../../utils/bulletinTemplates";
 import { canApplyCustomTemplate, isCustomDesignFreePeriod, type CustomDesignConfig } from "../../utils/customDesignAccess";
 import { CHURCH_LOGO_SIZE_OPTIONS, DEFAULT_CHURCH_LOGO_SIZE, normalizeChurchLogoSize, churchLogoHeightClass, type ChurchLogoSize } from "../../utils/churchLogo";
@@ -139,6 +140,49 @@ function DatePickerField({ value, onChange }: { value: string; onChange: (value:
   );
 }
 
+// 교회 소개 화면(ABOUT/VISION/MISSION) 제목 선택 — "표어 / 주제 성구"의 제목 버튼과 같은 모양.
+// 기본값 버튼이거나 직접 입력을 비워두면 성도 화면엔 기본 제목(defaultLabel)이 그대로 나온다.
+function CustomLabelField({ id, defaultLabel, enabled, onEnabledChange, value, onValueChange }: {
+  id: string;
+  defaultLabel: string;
+  enabled: boolean;
+  onEnabledChange: (v: boolean) => void;
+  value: string;
+  onValueChange: (v: string) => void;
+}) {
+  return (
+    <div className="mb-3" id={id}>
+      <label className="block text-xs font-bold text-slate-500 mb-1.5">화면에 표시할 제목</label>
+      <div className="flex gap-2">
+        {[
+          { custom: false, label: defaultLabel },
+          { custom: true, label: "직접 입력" },
+        ].map((opt) => (
+          <button
+            key={opt.label}
+            type="button"
+            onClick={() => onEnabledChange(opt.custom)}
+            className={`flex-1 h-10 rounded-xl text-xs font-bold border transition-all ${enabled === opt.custom
+              ? "bg-blue-600 border-blue-600 text-white"
+              : "bg-slate-50 border-slate-200 text-slate-500 hover:bg-white"
+              }`}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+      {enabled && (
+        <Input
+          value={value}
+          onChange={(e) => onValueChange(e.target.value.slice(0, 20))}
+          placeholder="예: 우리 교회는, 함께 꿈꾸는 것"
+          className="rounded-xl h-11 border-slate-200 bg-white text-sm font-bold mt-2"
+        />
+      )}
+    </div>
+  );
+}
+
 // 목회 칼럼(프로 이상)/담임목사 인사말(스탠다드 이상)처럼 등급이 안 되는 경우 보여주는 안내 문구.
 // 커스텀 디자인의 "지금 고른 디자인은 프로 요금제 전용이에요" 문구와 톤을 맞췄다 - 입력 자체는
 // 막지 않고(데이터는 저장됨), 등급이 안 되면 성도 화면에만 안 보이게 한다는 걸 알려준다.
@@ -215,6 +259,9 @@ export function AdminEditor() {
   // 교회가 직접 켜야만 사이트맵에 포함되어 검색에 노출된다(functions/src/index.ts 연동).
   const [bulletinSearchable, setBulletinSearchable] = useState(false);
   const [bulletinSearchableSaving, setBulletinSearchableSaving] = useState(false);
+  // 교단(users.denomination) — 검색 결과 파비콘용. 주보마다가 아니라 교회 계정에 한 번 저장
+  const [churchDenomination, setChurchDenomination] = useState("");
+  const [churchDenominationSaving, setChurchDenominationSaving] = useState(false);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
@@ -236,6 +283,7 @@ export function AdminEditor() {
           if (typeof data.churchName === "string") setPreviewChurchName(data.churchName);
           if (typeof data.description === "string") setPreviewDescription(data.description);
           if (typeof data.bulletinSearchable === "boolean") setBulletinSearchable(data.bulletinSearchable);
+          if (typeof data.denomination === "string") setChurchDenomination(data.denomination);
           // 커스텀 디자인 사용 권한 판정용 계정 데이터(allowedTemplates, 요금제 등).
           setAccountData(data);
         }
@@ -406,6 +454,27 @@ export function AdminEditor() {
       toast.error("설정 저장 중 오류가 발생했습니다.");
     } finally {
       setBulletinSearchableSaving(false);
+    }
+  };
+
+  // 교단 선택 — 고르는 즉시 교회 계정에 저장(검색엔진 노출 토글과 같은 방식)
+  const handleChangeDenomination = async (value: string) => {
+    if (!auth.currentUser) {
+      toast.error("로그인이 필요합니다");
+      return;
+    }
+    const prev = churchDenomination;
+    setChurchDenomination(value);
+    setChurchDenominationSaving(true);
+    try {
+      await setDoc(doc(db, "users", auth.currentUser.uid), { denomination: value }, { merge: true });
+      toast.success("교단을 저장했어요.");
+    } catch (error) {
+      console.error("교단 저장 실패:", error);
+      setChurchDenomination(prev);
+      toast.error("저장 중 오류가 발생했습니다.");
+    } finally {
+      setChurchDenominationSaving(false);
     }
   };
 
@@ -735,6 +804,13 @@ export function AdminEditor() {
   const [churchVision, setChurchVision] = useState("");
   const [churchMissionEnabled, setChurchMissionEnabled] = useState(true);
   const [churchMission, setChurchMission] = useState("");
+  // 교회 소개 화면 제목(ABOUT/VISION/MISSION)을 다른 이름으로 표시 — 체크 + 입력값이 있을 때만 바뀜
+  const [churchIntroLabelEnabled, setChurchIntroLabelEnabled] = useState(false);
+  const [churchIntroLabel, setChurchIntroLabel] = useState("");
+  const [churchVisionLabelEnabled, setChurchVisionLabelEnabled] = useState(false);
+  const [churchVisionLabel, setChurchVisionLabel] = useState("");
+  const [churchMissionLabelEnabled, setChurchMissionLabelEnabled] = useState(false);
+  const [churchMissionLabel, setChurchMissionLabel] = useState("");
 
   // 다음 우편번호 찾기 스크립트 로드 (place.stayon-platform.com/register와 동일한 방식)
   useEffect(() => {
@@ -1136,10 +1212,14 @@ export function AdminEditor() {
           if (data.churchVision) {
             setChurchVisionEnabled(data.churchVisionEnabled !== false);
             setChurchVision(data.churchVision);
+            setChurchVisionLabelEnabled(data.churchVisionLabelEnabled === true);
+            setChurchVisionLabel(data.churchVisionLabel || "");
           }
           if (data.churchMission) {
             setChurchMissionEnabled(data.churchMissionEnabled !== false);
             setChurchMission(data.churchMission);
+            setChurchMissionLabelEnabled(data.churchMissionLabelEnabled === true);
+            setChurchMissionLabel(data.churchMissionLabel || "");
           }
           setPastoralColumnsEnabled(data.pastoralColumnsEnabled === true);
           if (data.bulletinTemplate) {
@@ -1153,6 +1233,8 @@ export function AdminEditor() {
           if (data.churchIntro) {
             setChurchIntro(data.churchIntro);
             setChurchIntroEnabled(data.churchIntroEnabled !== false);
+            setChurchIntroLabelEnabled(data.churchIntroLabelEnabled === true);
+            setChurchIntroLabel(data.churchIntroLabel || "");
           }
           if (data.churchImage) setChurchImage(data.churchImage);
           // SNS·유튜브 채널도 표어·로고처럼 거의 안 바뀌므로 최근 값을 이어받는다.
@@ -1631,6 +1713,12 @@ export function AdminEditor() {
       churchVision,
       churchMissionEnabled,
       churchMission,
+      churchIntroLabelEnabled,
+      churchIntroLabel,
+      churchVisionLabelEnabled,
+      churchVisionLabel,
+      churchMissionLabelEnabled,
+      churchMissionLabel,
       pastorGreetingEnabled,
       pastorGreeting,
       pastoralColumnsEnabled,
@@ -1644,7 +1732,7 @@ export function AdminEditor() {
       isPreview: true // 미리보기 모드임을 알림
     };
     localStorage.setItem("temp_bulletin", JSON.stringify(tempData));
-  }, [bulletinData, titleFontSizeEnabled, sections, announcements, midweekServices, sundayServices, ministers, ministersEnabled, officers, officersEnabled, extraHymns, extraHymnsEnabled, seniorPastor, seniorPastorEnabled, sharingQuestions, sharingEnabled, churchAddress, churchAddressDetail, addressEnabled, locationImage, locationImageRatio, snsEnabled, snsNaverBlog, snsInstagram, snsThreads, youtubeChannelUrl, youtubeChannelName, youtubeChannelThumbnail, mottoEnabled, mottoLabelType, mottoCustomLabel, mottoText, mottoReference, churchVisionEnabled, churchVision, churchMissionEnabled, churchMission, pastorGreetingEnabled, pastorGreeting, pastoralColumnsEnabled, bulletinTemplate, accountData, customDesignConfig, churchLogo, churchLogoEnabled, churchLogoSize, churchIntro, churchIntroEnabled, churchImage]);
+  }, [bulletinData, titleFontSizeEnabled, sections, announcements, midweekServices, sundayServices, ministers, ministersEnabled, officers, officersEnabled, extraHymns, extraHymnsEnabled, seniorPastor, seniorPastorEnabled, sharingQuestions, sharingEnabled, churchAddress, churchAddressDetail, addressEnabled, locationImage, locationImageRatio, snsEnabled, snsNaverBlog, snsInstagram, snsThreads, youtubeChannelUrl, youtubeChannelName, youtubeChannelThumbnail, mottoEnabled, mottoLabelType, mottoCustomLabel, mottoText, mottoReference, churchVisionEnabled, churchVision, churchMissionEnabled, churchMission, churchIntroLabelEnabled, churchIntroLabel, churchVisionLabelEnabled, churchVisionLabel, churchMissionLabelEnabled, churchMissionLabel, pastorGreetingEnabled, pastorGreeting, pastoralColumnsEnabled, bulletinTemplate, accountData, customDesignConfig, churchLogo, churchLogoEnabled, churchLogoSize, churchIntro, churchIntroEnabled, churchImage]);
 
   useEffect(() => {
     if (isEditing && id) {
@@ -1750,6 +1838,12 @@ export function AdminEditor() {
             setChurchVision(data.churchVision || "");
             setChurchMissionEnabled(data.churchMissionEnabled !== false);
             setChurchMission(data.churchMission || "");
+            setChurchIntroLabelEnabled(data.churchIntroLabelEnabled === true);
+            setChurchIntroLabel(data.churchIntroLabel || "");
+            setChurchVisionLabelEnabled(data.churchVisionLabelEnabled === true);
+            setChurchVisionLabel(data.churchVisionLabel || "");
+            setChurchMissionLabelEnabled(data.churchMissionLabelEnabled === true);
+            setChurchMissionLabel(data.churchMissionLabel || "");
             setPastoralColumnsEnabled(data.pastoralColumnsEnabled === true);
             setBulletinTemplate(data.bulletinTemplate || DEFAULT_BULLETIN_TEMPLATE_ID);
 
@@ -2095,6 +2189,12 @@ export function AdminEditor() {
         churchVision: String(churchVision || ""),
         churchMissionEnabled,
         churchMission: String(churchMission || ""),
+        churchIntroLabelEnabled,
+        churchIntroLabel: String(churchIntroLabel || ""),
+        churchVisionLabelEnabled,
+        churchVisionLabel: String(churchVisionLabel || ""),
+        churchMissionLabelEnabled,
+        churchMissionLabel: String(churchMissionLabel || ""),
         pastorGreetingEnabled,
         pastorGreeting: {
           greetingText: String(pastorGreeting.greetingText || ""),
@@ -3562,6 +3662,16 @@ export function AdminEditor() {
             )}
           </div>
 
+          <div className="mt-4">
+            <CustomLabelField
+              id="intro-label-toggle"
+              defaultLabel="ABOUT"
+              enabled={churchIntroLabelEnabled}
+              onEnabledChange={setChurchIntroLabelEnabled}
+              value={churchIntroLabel}
+              onValueChange={setChurchIntroLabel}
+            />
+          </div>
           <Textarea
             value={churchIntro}
             onChange={(e) => setChurchIntro(e.target.value)}
@@ -3687,6 +3797,14 @@ export function AdminEditor() {
           <p className="text-xs text-slate-400 mb-4 font-medium leading-relaxed">
             선택 입력이에요. 성도 화면 <b>메뉴 &gt; 교회 소개</b>에 표시돼요.
           </p>
+          <CustomLabelField
+            id="vision-label-toggle"
+            defaultLabel="VISION"
+            enabled={churchVisionLabelEnabled}
+            onEnabledChange={setChurchVisionLabelEnabled}
+            value={churchVisionLabel}
+            onValueChange={setChurchVisionLabel}
+          />
           <Textarea
             value={churchVision}
             onChange={(e) => setChurchVision(e.target.value.slice(0, 300))}
@@ -3726,6 +3844,14 @@ export function AdminEditor() {
           <p className="text-xs text-slate-400 mb-4 font-medium leading-relaxed">
             선택 입력이에요. 성도 화면 <b>메뉴 &gt; 교회 소개</b>에 표시돼요.
           </p>
+          <CustomLabelField
+            id="mission-label-toggle"
+            defaultLabel="MISSION"
+            enabled={churchMissionLabelEnabled}
+            onEnabledChange={setChurchMissionLabelEnabled}
+            value={churchMissionLabel}
+            onValueChange={setChurchMissionLabel}
+          />
           <Textarea
             value={churchMission}
             onChange={(e) => setChurchMission(e.target.value.slice(0, 300))}
@@ -5060,6 +5186,18 @@ export function AdminEditor() {
               검색엔진에 실제로 반영되기까지는 며칠에서 몇 주가 걸릴 수 있어요.
             </p>
           )}
+          {/* 교단 — 검색 결과에서 교회 이름 옆에 나오는 아이콘(파비콘). 운영자 /super에서 정하는 값과 같은 칸 */}
+          <div className="mt-4 pt-4 border-t border-gray-100">
+            <label className="block text-xs font-bold text-slate-500 mb-1.5">우리 교회 교단</label>
+            <DenominationPicker
+              value={churchDenomination}
+              onChange={handleChangeDenomination}
+              disabled={churchDenominationSaving}
+            />
+            <p className="text-[11px] text-slate-400 font-medium mt-1.5 leading-relaxed">
+              검색 결과에서 교회 이름 옆에 교단 마크가 아이콘으로 나와요. 선택하지 않으면 스테이온 기본 아이콘이 나와요.
+            </p>
+          </div>
         </Card>
 
         <Card className="p-5 rounded-[1.75rem] border-0 bg-white shadow-xl shadow-blue-500/5 mt-4">

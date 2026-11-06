@@ -400,7 +400,7 @@ function HomePage({ c, color, A, groups }: { c: SiteContent; color: string; A: L
           <Card>
             <p className="text-xs font-black tracking-widest" style={{ color }}>THIS WEEK</p>
             <p className="mt-2 font-black text-gray-900">이번 주 주보</p>
-            {latest && <p className="mt-1 text-sm text-gray-500">{latest.date} {latest.title}</p>}
+            {latest && <p className="mt-1 text-sm text-gray-500">{latest.date}<br />{latest.title}</p>}
             <A to="/jubo" className="inline-block mt-4 text-sm font-bold" style={{ color }}>주보 보기 →</A>
           </Card>
         )}

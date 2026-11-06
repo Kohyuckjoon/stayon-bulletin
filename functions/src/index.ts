@@ -13,7 +13,7 @@ import * as fs from "fs";
 import {
   resolveCtx, buildSeoPage, buildRss, sitemapEntries, SeoPage,
   juboSiteBase, churchVerificationMetas, JUBO_HOST_SUFFIX, BULLETIN_SLUG_REGEX,
-  verificationCode,
+  verificationCode, withFavicon, denominationId,
 } from "./bulletinSeo";
 import {churchSitePage, churchSitePaths, churchSiteRss} from "./churchSiteSeo";
 
@@ -1203,8 +1203,12 @@ export const siteOG = functions.https.onRequest(async (req, res) => {
               `<div id="root">${page.bodyHtml}</div>`) :
             shell.replace("</head>",
               "  <meta name=\"robots\" content=\"noindex\" />\n  </head>");
+          // 파비콘: 홈페이지에서 고른 교단 → 교회 계정 교단 → 스테이온 기본
+          const denom = denominationId(site.denomination) ||
+            (ctx ? ctx.denomination : "");
           res.setHeader("Content-Type", "text/html; charset=utf-8");
-          res.status(200).send(html.replace("<head>", `<head>\n${metas}`));
+          res.status(200).send(withFavicon(
+            html.replace("<head>", `<head>\n${metas}`), denom));
           return;
         }
 
@@ -1230,8 +1234,10 @@ export const siteOG = functions.https.onRequest(async (req, res) => {
             // 링크를 건다(주보플러스처럼 교회 홈에서 주보로 크롤링이 이어지게)
             const ownerId = typeof site.ownerId === "string" ?
               site.ownerId : "";
+            let denom = denominationId(site.denomination);
             if (ownerId) {
               const owner = await db.collection("users").doc(ownerId).get();
+              if (!denom) denom = denominationId(owner.data()?.denomination);
               if (owner.exists && owner.data()?.bulletinSearchable === true) {
                 // 주보 전용 주소가 있으면 그쪽(검색엔진 대표 주소)으로 링크
                 const bulletinUrl =
@@ -1255,7 +1261,7 @@ export const siteOG = functions.https.onRequest(async (req, res) => {
               `<div id="root">${bodyHtml}</div>`
             ).replace("<head>", `<head>\n${verifyMetas}`);
             res.setHeader("Content-Type", "text/html; charset=utf-8");
-            res.status(200).send(withBody);
+            res.status(200).send(withFavicon(withBody, denom));
             return;
           }
         }
@@ -1690,6 +1696,8 @@ export const bulletinSite = functions.https.onRequest(async (req, res) => {
       "<head>",
       `<head>\n${toView}\n${ctx ? churchVerificationMetas(ctx) : ""}`
     );
+    // 교단 파비콘(교단을 모르면 스테이온 기본 파비콘 그대로)
+    if (ctx) html = withFavicon(html, ctx.denomination);
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.status(200).send(html);
   } catch (error) {

@@ -39,6 +39,7 @@ import {
 } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { toast } from "sonner";
+import { applyChurchFavicon } from "../../utils/churchFavicon";
 
 import {
   Dialog,
@@ -157,6 +158,11 @@ export function BulletinView() {
 
     fetchBulletin();
   }, [id, location]);
+
+  // 브라우저 탭 아이콘을 이 교회 교단 마크로(교단을 정하지 않은 교회는 스테이온 기본 아이콘)
+  useEffect(() => {
+    applyChurchFavicon(bulletin?.authorId);
+  }, [bulletin?.authorId]);
 
   // 커스텀 디자인 사용 권한 판정에 필요한 데이터 로드.
   //  - settings/customDesign: 유료화 시작일 등 (항상 읽음, 아주 작은 문서)

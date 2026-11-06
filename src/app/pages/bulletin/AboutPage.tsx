@@ -33,6 +33,14 @@ export function AboutPage() {
   const churchImage: string = bulletin?.churchImage || "";
   const vision: string = bulletin?.churchVisionEnabled !== false ? (bulletin?.churchVision || "") : "";
   const mission: string = bulletin?.churchMissionEnabled !== false ? (bulletin?.churchMission || "") : "";
+  // 제목: 관리자가 "다른 이름으로 표시"를 체크하고 이름을 넣었을 때만 그 이름, 아니면 기본값
+  const label = (enabledKey: string, textKey: string, fallback: string): string => {
+    const custom = String(bulletin?.[textKey] || "").trim();
+    return bulletin?.[enabledKey] === true && custom ? custom : fallback;
+  };
+  const introLabel = label("churchIntroLabelEnabled", "churchIntroLabel", "About");
+  const visionLabel = label("churchVisionLabelEnabled", "churchVisionLabel", "Vision");
+  const missionLabel = label("churchMissionLabelEnabled", "churchMissionLabel", "Mission");
   const show = intro.trim() !== "" || churchImage !== "" || vision.trim() !== "" || mission.trim() !== "";
 
   return (
@@ -81,7 +89,7 @@ export function AboutPage() {
             {/* 3. ABOUT 소개글 */}
             {intro.trim() !== "" && (
               <>
-                <p className="text-[10px] font-black tracking-[0.22em] uppercase mb-2" style={{ color: t.label }}>About</p>
+                <p className="text-[10px] font-black tracking-[0.22em] uppercase mb-2" style={{ color: t.label }}>{introLabel}</p>
                 <p className="text-[15px] sm:text-base leading-[1.9] whitespace-pre-line break-keep" style={{ color: t.ink }}>
                   {intro}
                 </p>
@@ -90,7 +98,7 @@ export function AboutPage() {
             {/* 4. 교회 비전 */}
             {vision.trim() !== "" && (
               <div className={intro.trim() !== "" ? "mt-8 pt-6 border-t" : ""} style={{ borderColor: t.line }}>
-                <p className="text-[10px] font-black tracking-[0.22em] uppercase mb-2" style={{ color: t.label }}>Vision</p>
+                <p className="text-[10px] font-black tracking-[0.22em] uppercase mb-2" style={{ color: t.label }}>{visionLabel}</p>
                 <p className="text-[15px] sm:text-base leading-[1.9] whitespace-pre-line break-keep" style={{ color: t.ink }}>
                   {vision}
                 </p>
@@ -99,7 +107,7 @@ export function AboutPage() {
             {/* 5. 교회 사명 */}
             {mission.trim() !== "" && (
               <div className={intro.trim() !== "" || vision.trim() !== "" ? "mt-8 pt-6 border-t" : ""} style={{ borderColor: t.line }}>
-                <p className="text-[10px] font-black tracking-[0.22em] uppercase mb-2" style={{ color: t.label }}>Mission</p>
+                <p className="text-[10px] font-black tracking-[0.22em] uppercase mb-2" style={{ color: t.label }}>{missionLabel}</p>
                 <p className="text-[15px] sm:text-base leading-[1.9] whitespace-pre-line break-keep" style={{ color: t.ink }}>
                   {mission}
                 </p>
