@@ -9,6 +9,7 @@ import { AlertCircle } from 'lucide-react';
 import { KakaoChannelButton } from "../components/KakaoChannelButton";
 import { NoticeImageCarousel } from "../components/NoticeImageCarousel";
 import { useJobBoardEnabled } from "../../hooks/useJobBoardEnabled";
+import { clearLoginReturnTo } from "../../utils/loginReturn";
 import {
   Smartphone, TrendingDown, Clock, Edit, Sparkles, ChevronRight, ChevronLeft, MousePointerClick,
   QrCode, UserPlus, Rocket, HelpCircle, Plus, Minus, Monitor, BellRing, CreditCard, Building, MapPin,
@@ -154,6 +155,10 @@ export function Landing() {
   // 페이지가 부드럽게 사라지는(디졸브) 효과를 제어할 페이드아웃 상태값
   const [isFadingOut, setIsFadingOut] = useState(false);
 
+  // 주보 플랫폼 메인(/)에서 로그인하러 가면 로그인 후 다시 메인(/)으로.
+  // /website 등에서 로그인 버튼만 눌러 두고 돌아온 경우 남아 있던 "돌아갈 곳"을 지워서, 메인에서 로그인했는데 /website로 가는 일이 없게
+  useEffect(() => { clearLoginReturnTo(); }, []);
+
   // 공지사항 스크롤을 위한 Ref
   const noticeRef = useRef<HTMLDivElement>(null);
 
@@ -167,7 +172,7 @@ export function Landing() {
   // 검색엔진 노출을 켠 교회들의 주보 링크 — 버튼(navigate)과 달리 진짜 <a href>라서
   // 구글이 메인에서 각 교회 주보(/view/교회ID)로 따라 들어갈 수 있다.
   // 목록은 bulletinSitemap 함수의 /searchable-churches.json에서 받음
-  const [searchableChurches, setSearchableChurches] = useState<{ id: string; name: string; url?: string }[]>([]);
+  const [searchableChurches, setSearchableChurches] = useState<{ id: string; name: string; url?: string; site?: string; onlySite?: boolean }[]>([]);
   useEffect(() => {
     fetch("/searchable-churches.json")
       .then((r) => (r.ok ? r.json() : []))
@@ -316,13 +321,13 @@ export function Landing() {
     {
       title: "2. 매주 단 3단계면 끝",
       desc: "복잡한 과정 없이 쉽고 빠르게 모바일 주보를 발행하세요.",
-      imgSrc: "/stayon_jubo_02.png",
+      imgSrc: "/stayon_jubo_02.jpg",
       icon: <Smartphone className="w-6 h-6 text-purple-600" />
     },
     {
       title: "3. 앱 설치가 필요 없습니다",
       desc: "QR 코드 또는 링크 하나로 언제 어디서나 성도들이 즉시 확인합니다.",
-      imgSrc: "/stayon_jubo_03.png",
+      imgSrc: "/stayon_jubo_03.jpg",
       icon: <QrCode className="w-6 h-6 text-orange-600" />
     },
     {
@@ -334,7 +339,7 @@ export function Landing() {
     {
       title: "5. 실제 비용을 비교해 보세요",
       desc: "1년 사용 기준, 인쇄비용과 행정 수고를 모두 극적으로 절감합니다.",
-      imgSrc: "/stayon_jubo_05.png",
+      imgSrc: "/stayon_jubo_05.jpg",
       icon: <CreditCard className="w-6 h-6 text-indigo-600" />
     }
   ];
@@ -346,21 +351,21 @@ export function Landing() {
       desc: "매주 출력하던 번거로운 종이 주보,\n이제 스마트폰으로 간편하게 바꿔보세요.",
       icon: <Monitor className="w-7 h-7 text-blue-600" />,
       iconBg: "bg-blue-50",
-      image: "/c1.png"
+      image: "/c1.jpg"
     },
     {
       title: "앱 설치가\n필요 없습니다",
       desc: "QR 코드 또는 링크 하나로\n언제 어디서나 성도들이 즉시 확인합니다.",
       icon: <QrCode className="w-7 h-7 text-orange-600" />,
       iconBg: "bg-orange-50",
-      image: "/c2.png"
+      image: "/c2.jpg"
     },
     {
       title: "실제 비용을\n비교해 보세요",
       desc: "1년 사용 기준, 인쇄비용과\n행정 수고를 모두 극적으로 절감합니다.",
       icon: <CreditCard className="w-7 h-7 text-indigo-600" />,
       iconBg: "bg-indigo-50",
-      image: "/c3.png"
+      image: "/c3.jpg"
     }
   ];
 
@@ -390,19 +395,19 @@ export function Landing() {
     {
       title: "1단계: 회원가입 및 로그인",
       desc: "이메일 또는 소셜 계정으로 1분 만에 간편하게 시작하세요.",
-      imgSrc: "/STAYON_1_join.png",
+      imgSrc: "/STAYON_1_join.jpg",
       badge: "STEP 1"
     },
     {
       title: "2단계: 주보 만들기 클릭",
       desc: "관리자 페이지에서 '새 주보 만들기' 버튼을 눌러 작성을 시작합니다.",
-      imgSrc: "/STAYON_2_make.png",
+      imgSrc: "/STAYON_2_make.jpg",
       badge: "STEP 2"
     },
     {
       title: "3단계: 내용 입력 후 게시하기",
       desc: "예배 순서와 소식을 입력하면 성도 화면에 즉시 실시간 반영됩니다.",
-      imgSrc: "/STAYON_3_open.png",
+      imgSrc: "/STAYON_3_open.jpg",
       badge: "STEP 3"
     }
   ];
@@ -583,6 +588,20 @@ export function Landing() {
                 외부사역팀 섭외
               </Button>
 
+              {/* 교회 홈페이지 제작: 준비 중 해제(2026-11-10) — 누르면 홈페이지 제작 소개 화면(/website)으로 */}
+              <Button
+                variant="ghost"
+                // 바로 바뀌지 않고, 주보 관리자 버튼처럼 화면이 서서히 사라진 뒤 넘어감(/website는 서서히 나타남)
+                onClick={() => {
+                  setIsFadingOut(true);
+                  setTimeout(() => { navigate("/website"); window.scrollTo(0, 0); }, 700);
+                }}
+                className="text-slate-700 font-bold hover:text-slate-900 hover:bg-transparent rounded-md px-3 hidden md:flex items-center gap-1.5"
+              >
+                <Building className="w-4 h-4 text-slate-500" />
+                교회 홈페이지 제작
+              </Button>
+              {/* 준비 중일 때 쓰던 비활성(자물쇠) 버전
               <Button
                 variant="ghost"
                 disabled
@@ -591,6 +610,7 @@ export function Landing() {
                 <Lock className="w-4 h-4 text-slate-400" />
                 교회 홈페이지 제작
               </Button>
+              */}
 
               <span className="hidden md:block w-px h-5 bg-slate-200 mx-1.5" />
 
@@ -696,7 +716,7 @@ export function Landing() {
                 bg-contain이 실제로 차지하는 폭을 CSS만으로 알 수 없어 mask 위치가 안 맞았음) */}
             <div className="absolute inset-0 flex items-center justify-center">
               <img
-                src="/background_cover.png"
+                src="/background_cover.jpg"
                 alt=""
                 className="h-full w-auto max-w-none object-contain"
                 style={{
@@ -822,7 +842,7 @@ export function Landing() {
           {/* <section className="relative w-screen left-1/2 -translate-x-1/2 overflow-hidden pt-16 sm:pt-10"> */}
           {/* <section className="relative w-screen left-1/2 -translate-x-1/2 overflow-hidden h-[240px] sm:h-[380px] lg:h-[460px]">
           <img
-              src="/stayon_jubo_02.png"
+              src="/stayon_jubo_02.jpg"
               alt="STAYON 온라인 주보 미리보기"
               className="h-full w-auto max-w-none object-contain"
             />
@@ -1330,7 +1350,12 @@ export function Landing() {
           {searchableChurches.length > 0 && (
             <nav aria-label="교회 주보" className="mb-3 flex flex-wrap justify-center gap-x-3 gap-y-1 px-4 text-[11px] text-gray-300">
               {searchableChurches.map((c) => (
-                <a key={c.id} href={c.url || `/view/${c.id}`} className="hover:text-gray-500">{c.name}</a>
+                <span key={c.id} className="contents">
+                  {/* onlySite: 주보 없이 홈페이지만 있는 교회 → 홈페이지 링크만 */}
+                  {!c.onlySite && <a href={c.url || `/view/${c.id}`} className="hover:text-gray-500">{c.name}</a>}
+                  {/* 교회 홈페이지가 있으면 그 링크도(구글이 메인에서 교회 홈페이지를 찾아가게) */}
+                  {c.site && <a href={c.site} className="hover:text-gray-500">{c.name} 홈페이지</a>}
+                </span>
               ))}
             </nav>
           )}

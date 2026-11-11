@@ -110,9 +110,62 @@ import { collection, getDocs, query, orderBy, Timestamp, doc, deleteDoc, updateD
 import { auth, db } from "../../firebase";
 import { CONGREGATION_SIZES } from "../../utils/congregationSizes";
 import { PLAN_TIERS, getPlanTierMeta, getExpiryInfo, toDateSafe } from "../../utils/subscriptionTier";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Pencil, Check, X } from "lucide-react";
 
 import { onAuthStateChanged } from "firebase/auth";
+
+// 교회명 직접 수정(운영자). 연필을 누르면 입력칸으로 바뀌고 Enter/✓로 저장, Esc/✕로 취소.
+// users/{uid}.churchName만 바꾼다 — 주보·주보 전용 주소·검색봇 화면이 모두 이 값을 읽음
+const ChurchNameEditor = ({ name, onSave, size = "md" }: { name: string; onSave: (v: string) => Promise<void>; size?: "sm" | "md" }) => {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(name || "");
+  const [saving, setSaving] = useState(false);
+  const text = size === "sm" ? "text-sm" : "text-sm";
+
+  const save = async () => {
+    const next = value.trim();
+    if (!next) { alert("교회명을 입력해 주세요."); return; }
+    if (next === (name || "")) { setEditing(false); return; }
+    if (!window.confirm(`교회명을 "${name || "(없음)"}" → "${next}"(으)로 바꿀까요?\n주보 화면과 검색 결과에도 바뀐 이름이 나와요.`)) return;
+    setSaving(true);
+    try {
+      await onSave(next);
+      setEditing(false);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!editing) {
+    return (
+      <span className="group inline-flex items-center gap-1.5 min-w-0">
+        <span className={`font-bold text-gray-900 truncate ${text}`}>{name || "-"}</span>
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); setValue(name || ""); setEditing(true); }}
+          className="shrink-0 rounded-lg p-1 text-gray-300 hover:bg-blue-50 hover:text-blue-600 transition-colors"
+          aria-label="교회명 수정"
+        >
+          <Pencil className="w-3.5 h-3.5" />
+        </button>
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+      <input
+        autoFocus
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Enter") save(); if (e.key === "Escape") setEditing(false); }}
+        disabled={saving}
+        className={`w-44 rounded-lg border border-blue-400 bg-white px-2 py-1 font-bold text-gray-900 outline-none ring-4 ring-blue-500/10 ${text}`}
+      />
+      <button type="button" onClick={save} disabled={saving} className="rounded-lg p-1 text-blue-600 hover:bg-blue-50 disabled:opacity-50" aria-label="저장"><Check className="w-4 h-4" /></button>
+      <button type="button" onClick={() => setEditing(false)} disabled={saving} className="rounded-lg p-1 text-gray-400 hover:bg-gray-100" aria-label="취소"><X className="w-4 h-4" /></button>
+    </span>
+  );
+};
 
 // 날짜 하나를 "YYYY.MM.DD" 형태로. Timestamp/ISO문자열/Date 아무거나 받는다.
 const formatDate = (value: unknown): string => {
@@ -301,7 +354,7 @@ export const AdminJuboManagement = () => {
             {users.map((user) => (
               <div key={user.id} className="p-4 space-y-3">
                 <div className="flex items-center justify-between gap-2">
-                  <p className="font-bold text-gray-900 text-sm truncate">{user.churchName}</p>
+                  <div className="min-w-0"><ChurchNameEditor size="sm" name={user.churchName} onSave={(v) => handleUpdateUserField(user.id, "churchName", v)} /></div>
                   <StatusSelect user={user} size="sm" />
                 </div>
                 <div className="text-xs text-gray-500 font-medium">
@@ -385,7 +438,7 @@ export const AdminJuboManagement = () => {
                 {users.map((user) => (
                   // 호버시 부드러운 배경색 변화 및 시각적 간격 조정
                   <tr key={user.id} className="hover:bg-blue-50/30 transition-colors group">
-                    <td className="p-3.5 font-bold text-gray-900 whitespace-nowrap text-sm">{user.churchName}</td>
+                    <td className="p-3.5 whitespace-nowrap"><ChurchNameEditor name={user.churchName} onSave={(v) => handleUpdateUserField(user.id, "churchName", v)} /></td>
                     <td className="p-3.5 text-gray-600 whitespace-nowrap text-sm">{user.seniorPastorName || '-'}</td>
                     <td className="p-3.5 whitespace-nowrap">
                       <input

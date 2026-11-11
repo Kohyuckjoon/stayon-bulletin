@@ -14,41 +14,45 @@ import { ChurchNewsListPage } from "./pages/bulletin/ChurchNewsListPage"; // 성
 import { ChurchNewsDetailPage } from "./pages/bulletin/ChurchNewsDetailPage"; // 지난 교회 소식 상세
 import { LocationPage } from "./pages/bulletin/LocationPage"; // 성도 화면 메뉴 > 오시는 길
 import { SnsPage } from "./pages/bulletin/SnsPage"; // 성도 화면 메뉴 > 교회 SNS·유튜브
-import { AdminDashboard } from "./pages/AdminDashboard";
-import { AdminEditor } from "./pages/AdminEditor";
-import { History } from "./pages/History";
 import { Billing } from "./pages/Billing"; // 결제 관리(정기결제) 화면
-import { ChurchNewsHistory } from "./pages/ChurchNewsHistory"; // 주보들에 흩어진 교회 소식을 날짜순으로 모아보는 페이지
-import { ChurchNewsDetail } from "./pages/ChurchNewsDetail"; // 교회 소식 모아보기 > 특정 주보의 교회 소식 상세
 import { Pricing } from "./pages/Pricing";
 import { SuccessPage } from "./pages/Success";
 import { Footer } from "./components/layout/footer";
-import { AdminJuboManagement } from "./pages/AdminJuboManagement";
-import { AdminBulletinList } from "./pages/AdminBulletinList"; // 교회별 주보 관리 페이지 임포트
-import { AdminAuthUsers } from "./pages/admin/AdminAuthUsers"; // 전체 가입자 현황 페이지 컴포넌트 임포트
-import { AdminChurchSites } from "./pages/admin/AdminChurchSites"; // 교회 사이트 제작 플랫폼 발행 관리 페이지 임포트
-import { AdminAdSettings } from "./pages/admin/AdminAdSettings"; // 사역자 청빙 게시판 끌어올리기(광고) 설정 페이지 임포트
-import { AdminFeatureSettings } from "./pages/admin/AdminFeatureSettings"; // 화면 노출 on/off 관리 페이지 임포트
-import { AdminFeatureUpdateNotice } from "./pages/admin/AdminFeatureUpdateNotice"; // 기능 업데이트 알림 관리 페이지 임포트
-import { AdminCustomDesign } from "./pages/admin/AdminCustomDesign"; // 커스텀 디자인(주보 템플릿) 교회별 사용 권한 관리 페이지 임포트
 import { SuperAuthGuard } from "./pages/SuperAuthGuard";
-import { NoticeBoard } from "./pages/NoticeBoard"; // 공지사항 게시판 페이지 컴포넌트 추가
 import { AdminSidebar } from "./components/layout/Sidebar";
-import { WebsiteCreate } from "./pages/website/WebsiteCreate";
-import { WebsitePreview } from "./pages/website/WebsitePreview";
 
 import { WebsiteMain } from "./pages/website/WebsiteMain"; // 교회 홈페이지 제작 메인 페이지 컴포넌트 임포트
-import BuilderPage from "./pages/website/BuilderPage"; // 새 사이트 빌더 프로토타입 화면 임포트
 import { WebsiteRenderer } from "./pages/website/WebsiteRenderer";
-import { WebsiteOffer } from "./pages/website/WebsiteOffer"; // '홈페이지 상품 선택하기' 전용 혜택가/가격 안내 페이지
 
 // 사역자 청빙관 및 등록 페이지 컴포넌트 임포트
-import { JobBoard } from "./pages/JobBoard";
-import { JobWrite } from "./pages/JobWrite";
-import { JobBoost } from "./pages/JobBoost"; // 사역자 청빙 공고 홍보(끌어올리기/티커 노출) 셀프 신청 페이지 임포트
-import { JobDetail } from "./pages/JobDetail"; // 공고 상세보기 화면(팝업 alert 대체) 임포트
-import { JobEdit } from "./pages/JobEdit"; // 공고 수정 화면 임포트
 import { JobsGate } from "./pages/JobsGate"; // /jobs 전체를 관리자 화면 관리 설정에 따라 잠그는 공통 게이트 임포트
+import { lazyPage } from "./lazyPage";
+
+// ── 따로 떼어 내 필요할 때만 불러오는 화면(관리자·편집·청빙 등). lazyPage.tsx 참고
+// 성도 주보 화면(BulletinView 등)·결제(Pricing/Billing/Success)·메인·교회 홈페이지는 위에서 바로 불러옴
+const AdminDashboard = lazyPage(() => import("./pages/AdminDashboard"), "AdminDashboard");
+const AdminEditor = lazyPage(() => import("./pages/AdminEditor"), "AdminEditor");
+const History = lazyPage(() => import("./pages/History"), "History");
+const ChurchNewsHistory = lazyPage(() => import("./pages/ChurchNewsHistory"), "ChurchNewsHistory");
+const ChurchNewsDetail = lazyPage(() => import("./pages/ChurchNewsDetail"), "ChurchNewsDetail");
+const AdminJuboManagement = lazyPage(() => import("./pages/AdminJuboManagement"), "AdminJuboManagement");
+const AdminBulletinList = lazyPage(() => import("./pages/AdminBulletinList"), "AdminBulletinList");
+const AdminAuthUsers = lazyPage(() => import("./pages/admin/AdminAuthUsers"), "AdminAuthUsers");
+const AdminChurchSites = lazyPage(() => import("./pages/admin/AdminChurchSites"), "AdminChurchSites");
+const AdminAdSettings = lazyPage(() => import("./pages/admin/AdminAdSettings"), "AdminAdSettings");
+const AdminFeatureSettings = lazyPage(() => import("./pages/admin/AdminFeatureSettings"), "AdminFeatureSettings");
+const AdminFeatureUpdateNotice = lazyPage(() => import("./pages/admin/AdminFeatureUpdateNotice"), "AdminFeatureUpdateNotice");
+const AdminCustomDesign = lazyPage(() => import("./pages/admin/AdminCustomDesign"), "AdminCustomDesign");
+const NoticeBoard = lazyPage(() => import("./pages/NoticeBoard"), "NoticeBoard");
+const WebsiteCreate = lazyPage(() => import("./pages/website/WebsiteCreate"), "WebsiteCreate");
+const WebsitePreview = lazyPage(() => import("./pages/website/WebsitePreview"), "WebsitePreview");
+const WebsiteOffer = lazyPage(() => import("./pages/website/WebsiteOffer"), "WebsiteOffer");
+const JobBoard = lazyPage(() => import("./pages/JobBoard"), "JobBoard");
+const JobWrite = lazyPage(() => import("./pages/JobWrite"), "JobWrite");
+const JobBoost = lazyPage(() => import("./pages/JobBoost"), "JobBoost");
+const JobDetail = lazyPage(() => import("./pages/JobDetail"), "JobDetail");
+const JobEdit = lazyPage(() => import("./pages/JobEdit"), "JobEdit");
+const BuilderPage = lazyPage(() => import("./pages/website/BuilderPage"), "default");
 
 const SEOManager = () => {
   const location = useLocation();
@@ -195,7 +199,7 @@ const ChurchPageRoute = churchSectionRoute("home");
 const CHURCH_PAGE_PATHS = [
   "about", "about/pastor", "about/history", "about/staff", "worship/online", "sermons",
   "bulletins", "bulletins/:pageId", "jubo", "news/:pageId", "column", "column/:pageId",
-  "prayer", "prayer/:pageId",
+  "prayer", "prayer/:pageId", "education", "education/:pageId", // "album", "album/:pageId", (앨범 잠시 주석)
 ];
 
 

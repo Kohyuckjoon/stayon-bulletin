@@ -4,12 +4,13 @@ import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { DENOMINATIONS, denominationLogoSrc } from "../../utils/denominations";
 
 // 교단 선택(로고 | 교단 이름). 기본 select는 이미지를 못 넣어서 목록을 직접 그림.
-// value ""는 "선택 안 함"(스테이온 기본 아이콘).
-export function DenominationPicker({ value, onChange, disabled, emptyLabel = "선택 안 함" }: {
+// value가 emptyValue(기본 "")면 "선택 안 함". 홈페이지 빌더는 "사용 안 함"을 "none"으로 저장해서 emptyValue로 넘김.
+export function DenominationPicker({ value, onChange, disabled, emptyLabel = "선택 안 함", emptyValue = "" }: {
   value: string;
   onChange: (id: string) => void;
   disabled?: boolean;
   emptyLabel?: string;
+  emptyValue?: string;
 }) {
   const [open, setOpen] = useState(false);
   const selected = DENOMINATIONS.find((d) => d.id === value) || null;
@@ -26,7 +27,8 @@ export function DenominationPicker({ value, onChange, disabled, emptyLabel = "�
 
   const pick = (id: string) => {
     setOpen(false);
-    if (id !== value) onChange(id);
+    const next = id || emptyValue;
+    if (next !== value) onChange(next);
   };
 
   return (
@@ -50,7 +52,7 @@ export function DenominationPicker({ value, onChange, disabled, emptyLabel = "�
         className="w-[var(--radix-popover-trigger-width)] max-h-[360px] overflow-y-auto rounded-2xl border-0 bg-white p-1.5 shadow-[0_12px_40px_rgba(15,23,42,0.16)]"
       >
         {[{ id: "", name: emptyLabel }, ...DENOMINATIONS].map((d) => {
-          const active = d.id === value;
+          const active = d.id ? d.id === value : !selected;
           return (
             <button
               key={d.id || "none"}

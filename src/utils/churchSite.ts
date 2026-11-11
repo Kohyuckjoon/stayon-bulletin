@@ -21,14 +21,22 @@ export interface ChurchSite {
   email?: string;
   address?: string;
   locationDetail?: string; // 상세 위치 안내 (ex. "○○빌딩 3층, 엘리베이터 옆 계단"). 개척교회처럼 상가 건물에 있는 경우를 위한 보충 설명
+  shuttleInfo?: string; // 차량 운행 안내(여러 줄). 홈페이지 오시는 길에 "펼쳐 보기"로 표시
 
   worshipTime?: string; // 구버전 단일 텍스트 필드 (하위 호환용, worshipServices가 있으면 그쪽을 우선 사용)
-  worshipServices?: { title: string; time: string; note?: string; group?: string }[]; // group: "주일예배"/"주중예배" 등 같은 이름끼리 카드로 묶어서 표시
+  worshipServices?: { title: string; time: string; place?: string; note?: string; group?: string }[]; // group: "주일예배"/"주중예배" 등 같은 이름끼리 카드로 묶어서 표시
+  worshipGroupPhotos?: Record<string, string>; // 예배 안내 카드 왼쪽 대표 사진(예배 구분 이름 → 사진 주소)
   mainWorshipGroup?: string; // worshipServices의 group 값 중 "본 예배" 뱃지를 표시할 구분 이름
   visionItems?: { title: string; desc: string }[];
-  newsItems?: { title: string; date: string; content: string }[];
+  // 교회 소식(편집 화면 > 매주 업데이트). date = 등록일(YYYY-MM-DD, 자동). id = 상세 주소(/news/id)용
+  newsItems?: { id?: string; title: string; date: string; content: string; items?: { title: string; content: string }[] }[];
   staffMembers?: { role: string; name: string; department: string; phone: string; email: string; photoUrl?: string }[]; // 부목사·전도사 등 섬기는 사람들 (숫자 제한 없음)
   layLeaders?: { role: string; name: string; department: string; photoUrl?: string }[]; // 중직자(장로·권사). 표시 시 시무장로 > 원로장로 > 은퇴장로 > 권사 순으로 정렬
+  // 주일학교/교육부서 메뉴: 메뉴 이름(주일학교·교육부서·직접 입력)과 부서 목록(유초등부·중고등부·청년부 등)
+  eduMenuLabel?: string;
+  eduDepartments?: { name: string; target: string; time: string; place: string; leader: string; desc: string; photoUrl?: string }[];
+  // 앨범(상단 메뉴 "앨범"): 행사별 제목·날짜·사진 여러 장(Storage 주소)
+  albums?: { id: string; title: string; date: string; photos: string[] }[];
   youtubeVideoId?: string;
   // false로 명시하면 youtubeVideoId가 있어도 "교회 소개 영상" 섹션 전체를 숨김. 미설정(기존 사이트)은 true로 취급
   introVideoEnabled?: boolean;
@@ -42,6 +50,11 @@ export interface ChurchSite {
   // false로 명시하면 설교가 등록돼 있어도 "온라인 예배" 섹션 전체를 숨김. 미설정(기존 사이트)은 true로 취급
   onlineWorshipEnabled?: boolean;
   intro?: string;
+  // 표어·비전·사명(편집 화면 > 교회소개). 주보와 연동하지 않는 교회(2·3번)에서 씀
+  mottoText?: string;
+  mottoReference?: string;
+  vision?: string;
+  mission?: string;
   logoUrl?: string;
   heroImageUrl?: string; // 메인 화면 상단(히어로) 배경 사진. 없으면 primaryColor 그라데이션으로 대체
   galleryImages?: string[]; // 홈 화면 "이번 주 예배 시간" 바로 위에 화면 꽉 채워 표시되는 사진(최대 10장, 여러 장이면 슬라이드)
@@ -51,6 +64,7 @@ export interface ChurchSite {
   activeMenus?: string[];
   kakaoLink?: string;
   youtubeLink?: string;
+  sermonPlaylistUrl?: string; // "지난 설교"에 쓸 유튜브 재생목록 주소(없으면 채널 영상)
   instagramLink?: string;
   metaTitle?: string;
   metaDesc?: string;
@@ -58,11 +72,22 @@ export interface ChurchSite {
   // 결제/이용기간 관련 필드 (교회 사이트 제작 기능 전용, 주보 플랫폼과는 무관)
   // 화면 방식: "multipage"(기본, 메뉴마다 주소가 따로 있는 페이지 전환형) / "onepage"(예전 한 페이지 스크롤형)
   layoutMode?: "multipage" | "onepage";
+  // 교회 정보 가져오기: bulletin(주보와 연동, 홈페이지에 주보 내용) / custom(주보는 쓰지만 홈페이지는 따로) /
+  // website(홈페이지만). 없으면 예전과 같이 주보가 있으면 주보 내용을 보여 줌
+  dataSource?: "bulletin" | "custom" | "website";
   denomination?: string; // 교단 마크 id(utils/denominations.ts). 없으면 예장 합동, "none"이면 사용 안 함
   denominationWithLogo?: boolean; // 로고 이미지가 있어도 교단 마크를 옆에 같이 표시
   hideLogo?: boolean; // 홈페이지에서는 로고 이미지를 쓰지 않음(교단 마크 + 교회 이름으로 표시). 주보 로고는 그대로
   heroImages?: string[]; // 첫 화면 배너 사진(최대 10장). 첫 장은 heroImageUrl에도 같이 저장됨
   heroTransition?: "slide" | "fade"; // 2장 이상일 때 넘김 방식: 슬라이드 / 디졸브
+  // 메인 바로가기 카드 4개 문구(편집 화면 > 홈 화면). {교회}는 교회 이름으로 바뀜. 비우면 기본 문구
+  homeCards?: { title?: string; desc?: string }[];
+  heroTextColor?: string; // 메인 사진 위 글자(WELCOME·교회 이름·표어) 색. 비우면 흰색
+  // 이번 주 말씀(편집 화면 > 매주 업데이트). 주보 설교가 없거나 주보와 연동하지 않는 교회에서 씀
+  weeklySermon?: { title?: string; scripture?: string; preacher?: string; date?: string };
+  // 서버(youtubeVideos)가 저장해 둔 유튜브 채널 영상 목록. 홈페이지는 이걸 바로 쓰고 1시간 지났을 때만 새로 받음
+  ytVideos?: { url?: string; t?: number; videos?: { id: string; title: string; published: string; short?: boolean }[] };
+  ytPlaylist?: { url?: string; t?: number; videos?: { id: string; title: string; published: string; short?: boolean }[] }; // 지난 설교 재생목록 저장본
   historyItems?: { date: string; content: string }[]; // 교회 연혁
   prayerPosts?: { id: string; title: string; date: string; content: string }[]; // 중보기도(외부 공개해도 되는 기도제목)
   // 교회 주보(종이 주보 파일): 교회가 쓰는 한글·워드·PDF·사진 파일을 그대로 올린 목록. 온라인 주보와 별개

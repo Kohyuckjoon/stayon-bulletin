@@ -1,10 +1,12 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { QRCodeSVG } from "qrcode.react";
-import { LayoutGrid, List as ListIcon, Search } from "lucide-react";
+import { LayoutGrid, List as ListIcon, Search, HandHeart, Church, Youtube, Car } from "lucide-react";
 import { ChurchSite } from "../../../utils/churchSite";
 import { denominationLogoSrc } from "../../../utils/denominations";
-import { fetchOwnerData, buildSiteContent, OwnerData, SiteContent, fixedBulletinUrl } from "../../../utils/churchSiteContent";
+import { fetchOwnerData, buildSiteContent, OwnerData, SiteContent, fixedBulletinUrl, trimOwnerForCache } from "../../../utils/churchSiteContent";
+import { readSiteCache, writeSiteCache } from "../../../utils/siteLocalCache";
+import { homeCardText } from "../../../utils/homeCards";
 
 // 교회 홈페이지 "페이지 전환형" 화면. 메뉴마다 주소(/about, /worship …)가 따로 있고,
 // 각 페이지가 따로 검색엔진에 걸리도록 진짜 <a href> 링크로 이동한다.
@@ -14,10 +16,12 @@ import { fetchOwnerData, buildSiteContent, OwnerData, SiteContent, fixedBulletin
 type PageKey =
   | "home" | "about" | "pastor" | "history" | "staff" | "location"
   | "worship" | "online" | "sermons" | "bulletins" | "jubo"
-  | "news" | "column" | "prayer";
+  | "news" | "column" | "prayer" | "education" | "album";
 
 interface PageDef { key: PageKey; path: string; label: string }
 interface GroupDef { en: string; label: string; pages: PageDef[] }
+
+const EDU_GROUP_LABEL = "교육부서";
 
 export const SITE_GROUPS: GroupDef[] = [
   { en: "ABOUT", label: "교회소개", pages: [
@@ -32,37 +36,48 @@ export const SITE_GROUPS: GroupDef[] = [
     { key: "online", path: "/worship/online", label: "온라인 예배" },
     { key: "sermons", path: "/sermons", label: "설교" },
   ] },
+  // 주일학교/교육부서: 메뉴 이름은 교회가 정함(홈페이지 편집 화면). 여기 label은 기본값이고 화면에선 c.eduLabel로 바꿔 보여 줌
+  { en: "EDUCATION", label: EDU_GROUP_LABEL, pages: [
+    { key: "education", path: "/education", label: EDU_GROUP_LABEL },
+  ] },
   { en: "BULLETIN", label: "주보", pages: [
     { key: "bulletins", path: "/bulletins", label: "교회 주보" },
-    { key: "jubo", path: "/jubo", label: "온라인 주보" },
     // 교회 소식은 주보 페이지 탭에도 같이 둠(상단 "교회소식" 메뉴에도 그대로 있음 — 같은 페이지)
     { key: "news", path: "/news", label: "교회 소식" },
+    { key: "jubo", path: "/jubo", label: "온라인 주보" },
   ] },
   { en: "NEWS", label: "교회소식", pages: [
     { key: "news", path: "/news", label: "교회소식" },
     { key: "column", path: "/column", label: "교회 칼럼" },
     { key: "prayer", path: "/prayer", label: "중보기도" },
   ] },
+  // 앨범: 교회가 홈페이지 편집 화면에서 올린 행사별 사진 앨범. 사진이 없어도 메뉴는 항상 보임(안내 문구)
+  // (2026-11-10 잠시 주석 — 서버 검색봇용 페이지에 앨범이 아직 없어 /album이 404로 나감)
+  // { en: "ALBUM", label: "앨범", pages: [
+  //   { key: "album", path: "/album", label: "앨범" },
+  // ] },
 ];
 
 // 페이지에 보여줄 내용이 실제로 있는지 — 없는 메뉴는 숨김(눌러도 빈 화면인 죽은 링크 방지)
 function hasPage(key: PageKey, c: SiteContent, site: ChurchSite): boolean {
   switch (key) {
     case "home": return true;
-    case "about": return !!(c.intro || c.vision || c.mission || c.motto || c.visionItems.length);
+    case "about": return !!(c.intro || c.vision || c.mission || c.motto || c.buildingImageUrl);
     case "pastor": return !!(c.pastor && (c.pastor.greeting || c.pastor.greetingTitle));
     case "history": return Array.isArray((site as any).historyItems) && (site as any).historyItems.length > 0;
     case "staff": return c.staff.length > 0 || c.officers.length > 0;
     case "location": return !!c.address;
     case "worship": return c.worship.length > 0;
     case "online": return !!c.youtubeLink || c.sermonVideos.length > 0;
-    case "sermons": return c.sermons.length > 0 || c.sermonVideos.length > 0;
+    case "sermons": return c.sermons.length > 0 || c.sermonVideos.length > 0 || !!c.youtubeLink;
     // 교회 주보(올린 종이 주보 파일)는 파일이 없어도 탭을 항상 보여줌(온라인 주보 탭과 나란히)
     case "bulletins": return true;
     case "jubo": return !!(c.ownerId && c.latestBulletinId);
     case "news": return c.news.length > 0;
     case "column": return c.columns.length > 0;
     case "prayer": return c.prayers.length > 0;
+    case "education": return c.eduDepartments.length > 0;
+    case "album": return true;
   }
 }
 
@@ -78,13 +93,17 @@ function parsePath(pathname: string): { key: PageKey; id: string } {
       if (p === pg.path) return { key: pg.key, id: "" };
     }
   }
-  if (["bulletins", "news", "column", "prayer"].includes(seg[0]) && seg[1]) {
+  if (["bulletins", "news", "column", "prayer", "album", "education"].includes(seg[0]) && seg[1]) {
     return { key: seg[0] as PageKey, id: seg[1] };
   }
   return { key: "home", id: "" };
 }
 
-const groupOf = (key: PageKey) => SITE_GROUPS.find((g) => g.pages.some((p) => p.key === key));
+// 한 페이지가 두 메뉴에 같이 있으면(교회 소식: 주보 탭 + 교회소식 메뉴) 그 페이지가 첫 화면인
+// 메뉴(교회소식)를 선택된 메뉴로 본다 — 그렇지 않으면 위에 있는 "주보"가 선택돼 보임
+const groupOf = (key: PageKey) =>
+  SITE_GROUPS.find((g) => g.pages[0]?.key === key) ||
+  SITE_GROUPS.find((g) => g.pages.some((p) => p.key === key));
 const pageOf = (key: PageKey) => SITE_GROUPS.flatMap((g) => g.pages).find((p) => p.key === key);
 const nl = (t: string) => <span className="whitespace-pre-line">{t}</span>;
 
@@ -100,19 +119,79 @@ const ownerCache = new Map<string, OwnerData>();
 
 export function MultiPageSite({ site, pathname, preview }: Props) {
   const navigate = useNavigate();
-  const [owner, setOwner] = useState<OwnerData | null>(() => ownerCache.get(String(site.ownerId || "")) ?? null);
+  // 실제 교회 홈페이지에서는 이 브라우저에 저장해 둔 주보 데이터(지난 방문)로 바로 그림. 빌더 미리보기는 기존 그대로
+  const [owner, setOwner] = useState<OwnerData | null>(() => {
+    const oid = String(site.ownerId || "");
+    return ownerCache.get(oid) ?? (!preview && oid ? readSiteCache<OwnerData>(`owner:${oid}`) : null);
+  });
   const [previewPath, setPreviewPath] = useState("/");
   const [menuOpen, setMenuOpen] = useState(false);
+  // 휴대폰 메뉴가 열려 있는 동안 뒤 화면이 같이 스크롤되지 않게 막고, Esc로 닫기
+  useEffect(() => {
+    if (!menuOpen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setMenuOpen(false); };
+    window.addEventListener("keydown", onKey);
+    return () => { document.body.style.overflow = prev; window.removeEventListener("keydown", onKey); };
+  }, [menuOpen]);
 
   useEffect(() => {
     let cancelled = false;
+    let fullDone = false;
+    const oid = String(site.ownerId || "");
+    // 처음 방문(저장본 없음)이면 최근 주보 몇 개만 먼저 받아 첫 화면을 빨리 띄우고, 전체 목록은 뒤이어 채움
+    if (!preview && oid && !ownerCache.has(oid) && !readSiteCache(`owner:${oid}`)) {
+      // 주보 한 부가 사진 때문에 수백 KB인 경우가 있어, 첫 화면에 꼭 필요한 최신 2부만 먼저 받음
+      fetchOwnerData(site.ownerId, 2).then((o) => {
+        if (!cancelled && !fullDone) setOwner((prev) => prev ?? o);
+      });
+    }
     fetchOwnerData(site.ownerId).then((o) => {
-      ownerCache.set(String(site.ownerId || ""), o);
+      fullDone = true;
+      ownerCache.set(oid, o);
+      if (!preview && oid) writeSiteCache(`owner:${oid}`, trimOwnerForCache(o));
       if (!cancelled) setOwner(o);
     });
     return () => { cancelled = true; };
-  }, [site.ownerId]);
+  }, [site.ownerId, preview]);
   const content = useMemo(() => (owner ? buildSiteContent(site, owner) : null), [site, owner]);
+
+  // 어느 화면으로 들어오든 교회 유튜브 채널 영상을 뒤에서 미리 받아 둠 → 설교·온라인 예배 화면에 가면 기다림 없이 바로 보임
+  // (첫 화면 그리기를 방해하지 않게 조금 뒤에)
+  // 서버가 사이트 데이터에 저장해 둔 목록(채널 = ytVideos, 지난 설교 재생목록 = ytPlaylist)이 있으면 그걸 바로 쓰고,
+  // 1시간이 지났을 때만 새로 받음(새로 받으면 서버가 사이트 데이터에 다시 저장 → 방문이 없으면 호출도 없음)
+  const ytChannel = content?.youtubeLink || "";
+  const ytPlaylistUrl = content?.sermonPlaylist || "";
+  ytSiteSlug = !preview ? String(site.slug || "") : "";
+  const ytStale: string[] = [];
+  ([[ytChannel, site.ytVideos], [ytPlaylistUrl, site.ytPlaylist]] as const).forEach(([u, saved]) => {
+    if (!u) return;
+    if (!ytMemo.has(u) && saved?.url === u && Array.isArray(saved.videos) && saved.videos.length) ytMemo.set(u, saved.videos);
+    const fresh = saved?.url === u && Date.now() - Number(saved?.t || 0) < 60 * 60 * 1000;
+    // 저장본이 오래됐을 때만 서버에 "사이트에 저장해 줘"(site=주소)를 같이 보냄
+    if (fresh) ytNeedsSave.delete(u);
+    else { ytNeedsSave.add(u); ytStale.push(u); }
+  });
+  const ytStaleKey = ytStale.join("\n");
+  useEffect(() => {
+    const todo = (ytStaleKey ? ytStaleKey.split("\n") : []).filter((u) => !ytLiveMemo.has(u));
+    if (!todo.length) return;
+    const t = setTimeout(() => { todo.forEach((u) => { void loadYt(u); }); }, 800);
+    return () => clearTimeout(t);
+  }, [ytStaleKey]);
+
+  // 주소에 #edu-1 처럼 위치가 붙어 들어오면(새로고침·링크 공유) 내용이 그려진 뒤 그 위치로
+  useEffect(() => {
+    if (!content || preview || !window.location.hash) return;
+    const t = setTimeout(() => document.getElementById(window.location.hash.slice(1))?.scrollIntoView({ block: "start" }), 150);
+    return () => clearTimeout(t);
+  }, [content, preview]);
+
+  // 앱 화면이 준비되면 서버가 미리 그려 준 교회 화면(main.tsx의 #ssr-shell)을 지움 — 화면에 그리기 전에
+  useLayoutEffect(() => {
+    if (content && !preview) document.getElementById("ssr-shell")?.remove();
+  }, [content, preview]);
 
   const current = preview ? previewPath : pathname;
   const { key, id } = parsePath(current);
@@ -121,7 +200,13 @@ export function MultiPageSite({ site, pathname, preview }: Props) {
     e.preventDefault();
     setMenuOpen(false);
     if (preview) setPreviewPath(path);
-    else { navigate(path); window.scrollTo(0, 0); }
+    else {
+      // /education#edu-1 처럼 # 이 붙은 주소는 그 페이지로 간 뒤 해당 부서 위치로 스크롤
+      const [p, hash] = path.split("#");
+      navigate(p);
+      if (hash) setTimeout(() => document.getElementById(hash)?.scrollIntoView({ behavior: "smooth", block: "start" }), 120);
+      else window.scrollTo(0, 0);
+    }
   };
   const A = ({ to, className, style, children }: { to: string; className?: string; style?: React.CSSProperties; children: React.ReactNode }) => (
     <a href={to} onClick={go(to)} className={className} style={style}>{children}</a>
@@ -131,17 +216,40 @@ export function MultiPageSite({ site, pathname, preview }: Props) {
     if (!content) return [];
     return SITE_GROUPS
       .map((g) => ({ ...g, pages: g.pages.filter((p) => hasPage(p.key, content, site)) }))
-      .filter((g) => g.pages.length > 0);
+      .filter((g) => g.pages.length > 0)
+      // 교육부서 메뉴는 교회가 정한 이름(주일학교·교육부서·직접 입력)으로
+      .map((g) => (g.en === "EDUCATION"
+        // 상단 메뉴에 마우스를 올리면 부서(유초등부·중고등부 …)가 하위 메뉴로. 누르면 /education 의 그 부서로 이동
+        ? { ...g, label: content.eduLabel, pages: content.eduDepartments.length > 1
+            ? content.eduDepartments.map((d, i) => ({ key: "education" as PageKey, path: `/education/${i + 1}`, label: d.name }))
+            : g.pages.map((p) => ({ ...p, label: content.eduLabel })) }
+        : g));
   }, [content, site]);
 
-  const group = groupOf(key);
+  // 교회 소식처럼 두 메뉴(교회소식·주보)에 같이 있는 페이지: 기본은 교회소식 메뉴로 보되, 그 메뉴에
+  // 보여 줄 페이지가 교회 소식 하나뿐이면(칼럼·중보기도 없음) 탭이 있는 주보 메뉴로 봄
+  // → 교회 소식 화면에서도 "교회 주보 · 교회 소식 · 온라인 주보" 탭이 보임
+  const tabCount = (en: string) => groups.find((g) => g.en === en)?.pages.length || 0;
+  const baseGroup = groupOf(key);
+  const group = baseGroup && tabCount(baseGroup.en) <= 1
+    ? (SITE_GROUPS.find((g) => g !== baseGroup && g.pages.some((p) => p.key === key) && tabCount(g.en) > 1) || baseGroup)
+    : baseGroup;
   const page = pageOf(key);
+  // 화면에 보이는 메뉴/페이지 이름(교육부서는 교회가 정한 이름으로)
+  // 상단 메뉴 선택 표시는 페이지 원래 소속(교회 소식 → "교회소식")으로. 아래 탭은 위 group 기준(주보 탭)
+  const navGroup = baseGroup;
+  const groupLabel = navGroup?.en === "EDUCATION" ? (content?.eduLabel || navGroup.label) : navGroup?.label;
+  // /bulletins/주보ID 는 온라인(모바일) 주보 보기라서 "교회 주보"(이미지·PDF 파일) 탭이 아니라 "온라인 주보" 탭으로 보이게
+  const onlineBulletin = key === "bulletins" && !!id;
+  // 주일학교 부서별 화면(/education/1 …)은 제목을 부서 이름으로
+  const eduDept = key === "education" && id ? content?.eduDepartments[Number(id) - 1] : undefined;
+  const pageLabel = onlineBulletin ? "온라인 주보" : eduDept ? eduDept.name : key === "education" ? (content?.eduLabel || page?.label) : page?.label;
 
   useEffect(() => {
     if (!content || preview) return;
     document.title = key === "home"
       ? (site.metaTitle || `${content.churchName} | STAYON`)
-      : `${page?.label || ""} | ${content.churchName}`;
+      : `${pageLabel || ""} | ${content.churchName}`;
   }, [content, key, page, preview, site.metaTitle]);
 
   if (!content) return null;
@@ -183,26 +291,51 @@ export function MultiPageSite({ site, pathname, preview }: Props) {
               </span>
             )}
           </A>
-          <DesktopNav groups={groups} activeLabel={group?.label} color={color} A={A} />
-          <button className="md:hidden p-2 -mr-2 text-gray-700" aria-label="메뉴" onClick={() => setMenuOpen((v) => !v)}>
+          <DesktopNav groups={groups} activeLabel={groupLabel} color={color} A={A} />
+          <button className="md:hidden p-2 -mr-2 text-gray-700" aria-label="메뉴 열기" aria-expanded={menuOpen} onClick={() => setMenuOpen(true)}>
             <span className="block w-5 h-0.5 bg-current mb-1.5" /><span className="block w-5 h-0.5 bg-current mb-1.5" /><span className="block w-5 h-0.5 bg-current" />
           </button>
         </div>
-        {menuOpen && (
-          <div className="md:hidden border-t border-gray-100 bg-white px-4 py-3 max-h-[70vh] overflow-y-auto">
-            {groups.map((g) => (
-              <div key={g.label} className="py-2">
-                <p className="text-xs font-black text-gray-400 mb-1">{g.label}</p>
-                <div className="flex flex-wrap gap-2">
-                  {g.pages.map((p) => (
-                    <A key={p.key} to={p.path} className="px-3 py-1.5 rounded-lg bg-gray-50 text-sm font-semibold text-gray-700 transition-colors active:bg-gray-100">{p.label}</A>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
       </header>
+
+      {/* 휴대폰 메뉴: 오른쪽에서 밀려 나와 화면을 덮는 패널(어두운 바깥을 누르거나 X로 닫음).
+          헤더 밖에 둬야 화면 전체 기준으로 덮임(헤더의 흐림 효과 안에 있으면 헤더 크기로 갇힘) */}
+      <div className={`md:hidden fixed inset-0 z-50 ${menuOpen ? "" : "pointer-events-none"}`} aria-hidden={!menuOpen}>
+        <div onClick={() => setMenuOpen(false)} className={`absolute inset-0 bg-black/40 transition-opacity duration-300 ${menuOpen ? "opacity-100" : "opacity-0"}`} />
+        <nav role="dialog" aria-modal="true" aria-label="메뉴"
+          className={`absolute right-0 top-0 flex h-full w-[84%] max-w-[340px] flex-col bg-white shadow-2xl transition-transform duration-300 ease-out ${menuOpen ? "translate-x-0" : "translate-x-full"}`}>
+          <div className="flex h-16 shrink-0 items-center justify-between border-b border-gray-100 px-5">
+            <span className="truncate text-base font-black text-gray-900">{c.churchName}</span>
+            <button type="button" aria-label="메뉴 닫기" onClick={() => setMenuOpen(false)} className="-mr-2 flex h-10 w-10 items-center justify-center rounded-full text-gray-500 active:bg-gray-100">
+              <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden><path d="M18 6 6 18M6 6l12 12" /></svg>
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto overscroll-contain px-5 pb-10">
+            {groups.map((g) => {
+              const label = g.en === "EDUCATION" ? (content?.eduLabel || g.label) : g.label;
+              return (
+                <div key={g.label} className="border-b border-gray-100 py-5 last:border-b-0">
+                  <p className="text-[17px] font-black text-gray-900">{label}</p>
+                  <ul className="mt-2">
+                    {g.pages.map((p) => {
+                      const on = current === p.path;
+                      return (
+                        <li key={p.path}>
+                          <A to={p.path} className="flex items-center justify-between rounded-lg py-2.5 text-[15px] font-semibold active:bg-gray-50"
+                            style={{ color: on ? color : "#4B5563" }}>
+                            <span>{p.label}</span>
+                            <svg viewBox="0 0 24 24" className="h-4 w-4 text-gray-300" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="m9 18 6-6-6-6" /></svg>
+                          </A>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              );
+            })}
+          </div>
+        </nav>
+      </div>
 
       {/* 페이지를 옮길 때마다 가운데 내용만 부드럽게 나타남(디졸브). 상단 메뉴·하단은 그대로 */}
       <div key={current} className="flex-1 animate-in fade-in slide-in-from-bottom-1 duration-300 ease-out">
@@ -214,13 +347,13 @@ export function MultiPageSite({ site, pathname, preview }: Props) {
           <section className="w-full" style={{ background: `${color}0d` }}>
             <div className="max-w-6xl mx-auto px-4 sm:px-8 py-10 sm:py-14">
               <p className="text-xs font-black tracking-[0.2em]" style={{ color }}>{group?.en}</p>
-              <h1 className="mt-2 text-3xl sm:text-4xl font-black text-gray-900">{page?.label}</h1>
-              <p className="mt-3 text-xs text-gray-400"><A to="/" className="hover:underline">홈</A> › {page?.label}</p>
+              <h1 className="mt-2 text-3xl sm:text-4xl font-black text-gray-900">{pageLabel}</h1>
+              <p className="mt-3 text-xs text-gray-400"><A to="/" className="hover:underline">홈</A> › {pageLabel}</p>
             </div>
           </section>
           <main className="max-w-6xl mx-auto px-4 sm:px-8 py-8 sm:py-12">
-            {group && groups.find((g) => g.label === group.label)!.pages.length > 1 && (
-              <SubTabs pages={groups.find((g) => g.label === group.label)!.pages} activeKey={key} color={color} A={A} />
+            {group && group.en !== "EDUCATION" && (groups.find((g) => g.en === group.en)?.pages.length || 0) > 1 && (
+              <SubTabs pages={groups.find((g) => g.en === group.en)!.pages} activeKey={onlineBulletin ? "jubo" : key} color={color} A={A} shortBar={group.en === "BULLETIN"} />
             )}
             {visible
               ? <PageBody pageKey={key} id={id} c={c} site={site} color={color} A={A} />
@@ -272,7 +405,7 @@ function DesktopNav({ groups, activeLabel, color, A }: { groups: GroupDef[]; act
         style={{ left: pill.left, width: pill.width, opacity: pill.show ? 1 : 0 }} />
       {groups.map((g, i) => (
         <div key={g.label} ref={(el) => { itemRefs.current[i] = el; }} className="relative group" onMouseEnter={() => setHover(i)}>
-          <A to={g.pages[0].path} className="relative z-10 block px-4 py-2 text-[15px] font-bold transition-colors duration-200" style={{ color: activeLabel === g.label ? color : "#374151" }}>
+          <A to={g.en === "EDUCATION" ? "/education" : g.pages[0].path} className="relative z-10 block px-4 py-2 text-[15px] font-bold transition-colors duration-200" style={{ color: activeLabel === g.label ? color : "#374151" }}>
             {g.label}
           </A>
           {g.pages.length > 1 && (
@@ -280,7 +413,7 @@ function DesktopNav({ groups, activeLabel, color, A }: { groups: GroupDef[]; act
               {/* 패널은 위에서부터 살짝 펼쳐지고, 항목은 위에서부터 하나씩 차례로 내려옴 */}
               <div className="min-w-[160px] origin-top rounded-xl border border-gray-100 bg-white shadow-lg p-1.5 scale-y-90 -translate-y-1 group-hover:scale-y-100 group-hover:translate-y-0 transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]">
                 {g.pages.map((p, j) => (
-                  <div key={p.key} className="opacity-0 -translate-y-1.5 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-300 ease-out" style={{ transitionDelay: `${60 + j * 45}ms` }}>
+                  <div key={p.path} className="opacity-0 -translate-y-1.5 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-300 ease-out" style={{ transitionDelay: `${60 + j * 45}ms` }}>
                     <A to={p.path} className="block rounded-lg px-3.5 py-2 text-sm text-gray-600 whitespace-nowrap transition-colors duration-150 hover:bg-gray-50 hover:text-gray-900">{p.label}</A>
                   </div>
                 ))}
@@ -294,16 +427,19 @@ function DesktopNav({ groups, activeLabel, color, A }: { groups: GroupDef[]; act
 }
 
 // 페이지 안 메뉴(교회 소개 / 담임목사 인사말 …): 밑줄 탭. 선택된 탭 밑줄이 옆으로 스르륵 이동
-function SubTabs({ pages, activeKey, color, A }: { pages: PageDef[]; activeKey: PageKey; color: string; A: LinkComp }) {
+// shortBar: 선택 밑줄을 탭 폭의 절반으로(가운데). 주보 탭(교회 주보·교회 소식·온라인 주보)에서 씀
+function SubTabs({ pages, activeKey, color, A, shortBar }: { pages: PageDef[]; activeKey: PageKey; color: string; A: LinkComp; shortBar?: boolean }) {
   const refs = useRef<(HTMLDivElement | null)[]>([]);
   const [bar, setBar] = useState<{ left: number; width: number }>({ left: 0, width: 0 });
   const idx = pages.findIndex((p) => p.key === activeKey);
   useLayoutEffect(() => {
     const el = refs.current[idx];
-    if (el) setBar({ left: el.offsetLeft, width: el.offsetWidth });
-  }, [idx, pages]);
+    if (el) setBar(shortBar
+      ? { left: el.offsetLeft + el.offsetWidth / 4, width: el.offsetWidth / 2 }
+      : { left: el.offsetLeft, width: el.offsetWidth });
+  }, [idx, pages, shortBar]);
   return (
-    <div className="mb-10 -mx-4 sm:mx-0 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
+    <div className="mb-5 md:mb-10 -mx-4 sm:mx-0 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
       <div className="relative flex min-w-max border-b border-gray-200 px-4 sm:px-0">
         {pages.map((p, i) => (
           <div key={p.key} ref={(el) => { refs.current[i] = el; }}>
@@ -342,42 +478,313 @@ const Card = ({ children, className = "" }: { children: React.ReactNode; classNa
 const H2 = ({ children }: { children: React.ReactNode }) => <h2 className="text-lg sm:text-xl font-black text-gray-900 mb-4">{children}</h2>;
 
 // 첫 화면 배너 사진: 1장이면 고정, 2장 이상이면 5초마다 자동으로 넘김(슬라이드 / 디졸브)
+// 메인 사진 슬라이드: 5초마다 자동으로 넘어가고, 직접 고를 수도 있음
+//  - PC: 사진에 마우스를 올리면 양옆 ‹ › 버튼, 오른쪽 아래 점(●)을 눌러 원하는 사진으로 바로
+//  - 휴대폰: 손가락으로 옆으로 밀면 다음/이전 사진(손가락을 따라 옆으로 넘어감, 디졸브 없음)
+//  - 직접 넘기면 자동 넘김 5초를 처음부터 다시 셈
 function HeroImages({ images, mode, alt }: { images: string[]; mode: "slide" | "fade"; alt: string }) {
+  const n = images.length;
   const [idx, setIdx] = useState(0);
+  const [dragging, setDragging] = useState(false);
+  const [mobile, setMobile] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 639px)").matches);
+  // 손가락 위치는 화면을 다시 그리지 않고(렉 없이) 슬라이드 줄(track)의 위치만 바로 바꿈
+  const touch = useRef<{ x: number; y: number; dx: number; dir: "" | "h" | "v" } | null>(null);
+  const box = useRef<HTMLDivElement>(null);
+  const track = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    setIdx(0);
-    if (images.length < 2) return;
-    const t = setInterval(() => setIdx((i) => (i + 1) % images.length), 5000);
-    return () => clearInterval(t);
-  }, [images.length]);
-  if (images.length === 0) return null;
-  const Frame = ({ src }: { src: string }) => (
-    <img src={src} alt={alt} className="absolute inset-0 w-full h-full object-cover" />
+    const mq = window.matchMedia("(max-width: 639px)");
+    const on = () => setMobile(mq.matches);
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, []);
+  useEffect(() => { setIdx(0); }, [n]);
+  // 자동 넘김: 사진이 바뀔 때마다(직접 넘겨도) 5초를 다시 셈. 손가락으로 끄는 중엔 멈춤
+  useEffect(() => {
+    if (n < 2 || dragging) return;
+    const t = setTimeout(() => setIdx((i) => (i + 1) % n), 5000);
+    return () => clearTimeout(t);
+  }, [idx, n, dragging]);
+  if (n === 0) return null;
+  const go = (i: number) => setIdx(((i % n) + n) % n);
+  // 휴대폰은 언제나 옆으로 넘기는 방식(편집 화면에서 "서서히 바뀜"을 골랐어도)
+  const slide = mode !== "fade" || mobile;
+  const place = (i: number, px: number, animate: boolean) => {
+    const el = track.current;
+    if (!el) return;
+    el.style.transition = animate ? "transform 450ms cubic-bezier(0.22, 1, 0.36, 1)" : "none";
+    el.style.transform = `translate3d(calc(-${i * 100}% + ${px}px), 0, 0)`;
+  };
+
+  const onTouchStart = (e: React.TouchEvent) => {
+    if (n < 2 || !slide) return;
+    touch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY, dx: 0, dir: "" };
+  };
+  const onTouchMove = (e: React.TouchEvent) => {
+    const tc = touch.current;
+    if (!tc) return;
+    const mx = e.touches[0].clientX - tc.x;
+    const my = e.touches[0].clientY - tc.y;
+    if (!tc.dir) {
+      if (Math.abs(mx) < 6 && Math.abs(my) < 6) return;
+      tc.dir = Math.abs(mx) > Math.abs(my) ? "h" : "v"; // 위아래로 움직이면 화면 스크롤로 둠
+      if (tc.dir === "h") setDragging(true);
+    }
+    if (tc.dir !== "h") return;
+    tc.dx = mx;
+    place(idx, mx, false);
+  };
+  const onTouchEnd = () => {
+    const tc = touch.current;
+    touch.current = null;
+    if (!tc || tc.dir !== "h") return;
+    const w = box.current?.offsetWidth || window.innerWidth;
+    const next = tc.dx < -w * 0.15 ? (idx + 1) % n : tc.dx > w * 0.15 ? (idx - 1 + n) % n : idx;
+    place(next, 0, true);
+    setIdx(next);
+    setDragging(false);
+  };
+
+  const img = (src: string) => (
+    <img src={src} alt={alt} draggable={false} className="absolute inset-0 w-full h-full object-cover select-none pointer-events-none" />
   );
   return (
     <>
-      {mode === "fade" ? (
-        images.map((src, i) => (
-          <div key={src} className="absolute inset-0 overflow-hidden transition-opacity duration-[1200ms] ease-in-out" style={{ opacity: i === idx ? 1 : 0 }}>
-            <Frame src={src} />
+      <div ref={box} className="absolute inset-0 overflow-hidden" style={{ touchAction: "pan-y" }}
+        onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} onTouchCancel={onTouchEnd}>
+        {slide ? (
+          <div ref={track} className="absolute inset-0 flex will-change-transform"
+            style={{ transform: `translate3d(-${idx * 100}%, 0, 0)`, transition: dragging ? "none" : "transform 700ms ease-in-out" }}>
+            {images.map((src) => (
+              <div key={src} className="relative w-full h-full shrink-0 overflow-hidden">{img(src)}</div>
+            ))}
           </div>
-        ))
-      ) : (
-        <div className="absolute inset-0 flex transition-transform duration-700 ease-in-out" style={{ transform: `translateX(-${idx * 100}%)` }}>
-          {images.map((src) => (
-            <div key={src} className="relative w-full h-full shrink-0 overflow-hidden"><Frame src={src} /></div>
+        ) : (
+          images.map((src, i) => (
+            <div key={src} className="absolute inset-0 overflow-hidden transition-opacity duration-[1200ms] ease-in-out" style={{ opacity: i === idx ? 1 : 0 }}>
+              {img(src)}
+            </div>
+          ))
+        )}
+      </div>
+      {n > 1 && (
+        <>
+          {/* PC: 사진에 마우스를 올리면 양옆 이전/다음 버튼 */}
+          {(["prev", "next"] as const).map((k) => (
+            <button key={k} type="button" aria-label={k === "prev" ? "이전 사진" : "다음 사진"} onClick={() => go(idx + (k === "prev" ? -1 : 1))}
+              className={`hidden sm:flex absolute z-10 top-1/2 -translate-y-1/2 ${k === "prev" ? "left-5" : "right-5"} h-12 w-12 items-center justify-center rounded-full bg-black/30 text-white text-2xl backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/50`}>
+              {k === "prev" ? "‹" : "›"}
+            </button>
           ))}
-        </div>
-      )}
-      {images.length > 1 && (
-        <div className="absolute z-10 bottom-5 right-5 sm:bottom-8 sm:right-8 flex gap-2">
-          {images.map((_, i) => (
-            <button key={i} aria-label={`${i + 1}번째 사진`} onClick={() => setIdx(i)}
-              className={`h-2 rounded-full transition-all ${i === idx ? "w-6 bg-white" : "w-2 bg-white/50"}`} />
-          ))}
-        </div>
+          {/* 점: 누르면 그 사진으로 바로(누르기 쉽게 터치 영역을 넉넉히) */}
+          <div className="absolute z-10 bottom-4 right-4 sm:bottom-7 sm:right-7 flex">
+            {images.map((_, i) => (
+              <button key={i} type="button" aria-label={`${i + 1}번째 사진`} onClick={() => go(i)} className="flex h-6 items-center px-1">
+                <span className={`block h-2 rounded-full transition-all ${i === idx ? "w-6 bg-white" : "w-2 bg-white/50 hover:bg-white/80"}`} />
+              </button>
+            ))}
+          </div>
+        </>
       )}
     </>
+  );
+}
+
+// 오시는 길 지도 미리보기: API 키가 필요 없는 구글 지도 임베드(주소로 검색). 주소가 없으면 틀만 보임.
+// 나중에 네이버·카카오 지도(API 키 필요)로 바꿀 때는 이 부품만 교체하면 오시는 길·교회 소개 둘 다 바뀜
+function MapPreview({ c, color, className = "" }: { c: SiteContent; color: string; className?: string }) {
+  return (
+    <div className={`relative w-full overflow-hidden rounded-[20px] ${className}`} style={{ background: `linear-gradient(160deg, ${color}10 0%, ${color}2e 100%)` }}>
+      <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-center px-6">
+        <svg viewBox="0 0 24 24" className="w-10 h-10" fill="none" stroke={color} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+          <path d="M12 21s-7-6.1-7-11.5A7 7 0 0 1 19 9.5C19 14.9 12 21 12 21z" /><circle cx="12" cy="9.5" r="2.5" />
+        </svg>
+        <p className="text-sm font-bold" style={{ color }}>{c.address ? "지도를 불러오는 중…" : "주소를 입력하면 지도가 표시돼요"}</p>
+      </div>
+      {c.address && (
+        <iframe
+          title={`${c.churchName} 위치 지도`}
+          src={`https://maps.google.com/maps?q=${encodeURIComponent(c.address)}&hl=ko&z=16&output=embed`}
+          className="absolute inset-0 w-full h-full border-0"
+          loading="lazy"
+          referrerPolicy="no-referrer-when-downgrade"
+          allowFullScreen
+        />
+      )}
+    </div>
+  );
+}
+
+// 네이버 지도 / 카카오맵 바로가기: 같은 크기 두 칸, 흰 바탕 + 회색 테두리, 앞에 각 서비스 색 마크
+function MapButtons({ address, className = "" }: { address: string; className?: string }) {
+  const items = [
+    { href: `https://map.naver.com/p/search/${encodeURIComponent(address)}`, label: "네이버 지도", mark: "N", bg: "#03C75A", fg: "#FFFFFF" },
+    { href: `https://map.kakao.com/?q=${encodeURIComponent(address)}`, label: "카카오맵", mark: "K", bg: "#FEE500", fg: "#191919" },
+  ];
+  return (
+    <div className={`grid grid-cols-2 gap-2.5 ${className}`}>
+      {items.map((it) => (
+        <a key={it.label} href={it.href} target="_blank" rel="noopener noreferrer"
+          className="flex h-12 items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white text-[15px] font-bold text-gray-800 transition-colors hover:border-gray-300 hover:bg-gray-50">
+          <span className="flex h-6 w-6 items-center justify-center rounded-md text-xs font-black" style={{ background: it.bg, color: it.fg }}>{it.mark}</span>
+          {it.label}
+        </a>
+      ))}
+    </div>
+  );
+}
+
+// 메인 바로가기 카드: 둥근 교회색 아이콘 · 영문 라벨 · 선 · 굵은 제목 · 짧은 설명. 카드 전체를 누르면 이동.
+// PC 4칸 / 태블릿·모바일 2칸
+function QuickCards({ c, color, A }: { c: SiteContent; color: string; A: LinkComp }) {
+  const name = c.churchName;
+  // 문구: 홈페이지 편집 화면 > 홈 화면에서 고른/직접 입력한 문구(없으면 기본 문구). {교회} → 교회 이름
+  const t = (i: number) => homeCardText(c.homeCards, i, name);
+  const items: { icon: React.ReactNode; en: string; title: string; desc: string; to: string; external?: boolean }[] = [
+    { icon: <HandHeart className="w-7 h-7" />, en: "Welcome !", ...t(0), to: "/about" },
+    { icon: <Church className="w-7 h-7" />, en: "Worship service", ...t(1), to: "/worship" },
+    // 유튜브 채널이 없으면 온라인 예배 페이지로
+    { icon: <Youtube className="w-7 h-7" />, en: "Youtube Channel", ...t(2), to: c.youtubeLink || "/worship/online", external: !!c.youtubeLink },
+    { icon: <Car className="w-7 h-7" />, en: "Location", ...t(3), to: "/location" },
+  ];
+  const cls = "group block h-full rounded-[20px] border border-gray-200 bg-white p-6 sm:p-7 transition-all duration-200 hover:-translate-y-1 hover:shadow-lg hover:border-transparent";
+  const body = (it: typeof items[number]) => (
+    <>
+      <span className="flex h-14 w-14 sm:h-16 sm:w-16 items-center justify-center rounded-full text-white" style={{ background: color }}>{it.icon}</span>
+      <p className="mt-5 text-[15px] font-bold" style={{ color }}>{it.en}</p>
+      <div className="mt-3 h-px bg-gray-200" />
+      <p className="mt-4 text-[17px] sm:text-lg font-black text-gray-900 break-keep">{it.title}</p>
+      <p className="mt-2 text-sm leading-relaxed text-gray-500 break-keep">{it.desc}</p>
+    </>
+  );
+  return (
+    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-5">
+      {items.map((it) => it.external
+        ? <a key={it.en} href={it.to} target="_blank" rel="noopener noreferrer" className={cls}>{body(it)}</a>
+        : <A key={it.en} to={it.to} className={cls}>{body(it)}</A>)}
+    </div>
+  );
+}
+
+// 메인 환영 섹션: 담임목사 인사말 페이지와 같은 사진 스타일(교회색을 아주 연하게 깐 둥근 패널).
+// 오른쪽은 인사 문구 + 바로가기 4개(교회 소개 · 예배 시간 및 장소 · 유튜브 · 찾아오시는 길). 사진이 없으면 오른쪽만 가운데로
+function WelcomeSection({ c, color, A }: { c: SiteContent; color: string; A: LinkComp }) {
+  const name = c.churchName;
+  const p = c.pastor;
+  // 인사 문구: 담임목사 인사말 본문 → 교회 소개 (제목 칸은 "담임목사 인사말" 같은 이름만 있는 경우가 많아 쓰지 않음)
+  const greet = (p?.greeting || c.intro || "").trim();
+  const short = greet.length > 140 ? greet.slice(0, 140).trim() + "…" : greet;
+  const links: { en: string; title: string; desc: string; to: string; external?: boolean }[] = [
+    { en: "ABOUT", title: "교회 소개", desc: "교회의 비전과 섬기는 사람들을 소개합니다.", to: "/about" },
+    { en: "WORSHIP", title: "예배 시간 및 장소 안내", desc: "주일과 주중 예배 시간·장소를 안내합니다.", to: "/worship" },
+    c.youtubeLink
+      ? { en: "YOUTUBE", title: `${name} 유튜브 채널`, desc: "멀리서도 함께 예배드릴 수 있어요.", to: c.youtubeLink, external: true }
+      : { en: "ONLINE", title: "온라인 예배", desc: "멀리서도 함께 예배드릴 수 있어요.", to: "/worship/online" },
+    { en: "LOCATION", title: "찾아오시는 길", desc: "교회 위치와 오시는 방법을 안내합니다.", to: "/location" },
+  ];
+  const rowCls = "group flex items-center gap-4 py-5 border-b border-gray-200/70 transition-colors";
+  const row = (l: typeof links[number]) => (
+    <>
+      <span className="w-1 self-stretch rounded-full transition-colors" style={{ background: `${color}33` }} />
+      <span className="min-w-0 flex-1">
+        <span className="block text-[11px] font-black tracking-[0.2em]" style={{ color }}>{l.en}</span>
+        <span className="mt-1 block text-lg font-black text-gray-900 break-keep group-hover:underline underline-offset-4">{l.title}</span>
+        <span className="mt-0.5 block text-sm text-gray-500 break-keep">{l.desc}</span>
+      </span>
+      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-400 transition-all group-hover:text-white group-hover:border-transparent group-hover:translate-x-0.5"
+        onMouseEnter={(e) => { e.currentTarget.style.background = color; }} onMouseLeave={(e) => { e.currentTarget.style.background = ""; }}>→</span>
+    </>
+  );
+  return (
+    // 위 바로가기 카드와 구분되게: 화면 전체 폭으로 교회색을 아주 연하게 깐 띠 배경(위아래 여백 넉넉히)
+    <section className="w-full mt-12 sm:mt-16 py-14 sm:py-20" style={{ background: /^#[0-9a-f]{6}$/i.test(color) ? `${color}0A` : "#F8FAFC" }}>
+      <div className="max-w-6xl mx-auto px-4 sm:px-8">
+      <h2 className="text-center text-2xl sm:text-4xl font-black tracking-tight text-gray-900 break-keep">{name}에 오신 것을 환영합니다</h2>
+      <div className="mx-auto mt-4 h-1 w-10 rounded-full" style={{ background: color }} />
+      <div className={`mt-10 sm:mt-14 grid gap-10 lg:gap-16 items-center ${p?.photoUrl ? "md:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]" : "max-w-2xl mx-auto"}`}>
+        {p?.photoUrl && (
+          <div className="mx-auto w-full max-w-[260px] sm:max-w-[380px]">
+            <div className="overflow-hidden rounded-[28px]" style={{ background: `linear-gradient(160deg, ${color}10 0%, ${color}2e 100%)` }}>
+              <img src={p.photoUrl} alt={p.name} className="block w-full aspect-[4/5] object-cover object-top mix-blend-multiply" />
+            </div>
+          </div>
+        )}
+        <div>
+          {short && <p className="text-[15px] sm:text-base leading-[1.9] text-gray-600 break-keep whitespace-pre-line">{short}</p>}
+          <div className={short ? "mt-6 border-t border-gray-200/70" : "border-t border-gray-200/70"}>
+            {links.map((l) => l.external
+              ? <a key={l.en} href={l.to} target="_blank" rel="noopener noreferrer" className={rowCls}>{row(l)}</a>
+              : <A key={l.en} to={l.to} className={rowCls}>{row(l)}</A>)}
+          </div>
+        </div>
+      </div>
+      </div>
+    </section>
+  );
+}
+
+// 메인 "주보 · 교회 소식": 왼쪽 주보(이번 주 주보 강조 + 지난 주보) / 오른쪽 교회 소식. 각 제목 옆 more +
+function BulletinNewsSection({ c, color, A }: { c: SiteContent; color: string; A: LinkComp }) {
+  // 왼쪽 = 교회가 올린 주보 파일(이미지·PDF, "교회 주보" 탭) / 오른쪽 = 교회 소식.
+  // 두 칸 높이가 같도록 똑같은 모양: 맨 위 강조 칸 1개 + 목록 4줄
+  const files = c.paperBulletins;
+  const news = c.news;
+  const fmt = (d: string) => d.replace(/-/g, ".");
+  // 소식 제목: "2026. 11. 29 교회 소식" (날짜가 없으면 1번 소식 제목)
+  const newsTitle = (n: SiteContent["news"][number]) => n.date ? `${n.date.replace(/-/g, ". ")} 교회 소식` : (n.items.map((i) => i.title).filter(Boolean).join(" · ") || "교회 소식");
+  const newsSub = (n: SiteContent["news"][number]) => { const t = n.items.map((i) => i.title).filter(Boolean); return t.length ? `${t[0]}${t.length > 1 ? ` 외 ${t.length - 1}건` : ""}` : ""; };
+  const tint = /^#[0-9a-f]{6}$/i.test(color) ? `${color}0F` : "#F8FAFC";
+  const Head = ({ word, to }: { word: string; to: string }) => (
+    <div className="flex items-end justify-between gap-3 pb-4 border-b-2 border-gray-900">
+      {/* 교회 이름은 홈페이지에 저장된 이름 그대로. 이름이 "…교회"로 끝나지 않으면 "교회"를 붙여 "○○ 교회 소식"처럼 */}
+      <h3 className="text-xl sm:text-2xl font-black tracking-tight text-gray-900 break-keep">{c.churchName}{/교회$/.test(c.churchName.trim()) ? "" : " 교회"} <span style={{ color }}>{word}</span></h3>
+      <A to={to} className="shrink-0 text-sm font-bold text-gray-500 hover:text-gray-900">more +</A>
+    </div>
+  );
+  const Top = ({ badge, title, sub, action, to }: { badge: string; title: string; sub: string; action: string; to: string }) => (
+    <A to={to} className="group mt-4 flex h-[104px] items-center justify-between gap-4 rounded-2xl px-5 transition-colors" style={{ background: tint }}>
+      <span className="min-w-0">
+        <span className="inline-block rounded-full px-2.5 py-0.5 text-[11px] font-black text-white" style={{ background: color }}>{badge}</span>
+        <span className="mt-2 block truncate text-lg font-black text-gray-900 group-hover:underline underline-offset-4">{title}</span>
+        <span className="mt-0.5 block truncate text-sm text-gray-500">{sub}</span>
+      </span>
+      <span className="shrink-0 text-sm font-bold" style={{ color }}>{action}</span>
+    </A>
+  );
+  const Row = ({ text, date, to }: { text: string; date: string; to: string }) => (
+    <li>
+      <A to={to} className="flex h-14 items-center justify-between gap-3 border-b border-gray-100 hover:bg-gray-50/70 px-1">
+        <span className="truncate text-[15px] font-bold text-gray-800">{text}</span>
+        <span className="shrink-0 text-sm tabular-nums text-gray-400">{date}</span>
+      </A>
+    </li>
+  );
+  // 목록이 4줄보다 적으면 빈 줄로 채워 두 칸 높이를 항상 같게
+  const Pad = ({ n }: { n: number }) => <>{Array.from({ length: Math.max(0, n) }, (_, i) => <li key={`pad-${i}`} aria-hidden className="h-14 border-b border-gray-100" />)}</>;
+  const Empty = ({ text }: { text: string }) => <p className="mt-4 flex h-[336px] items-center justify-center rounded-2xl bg-gray-50 px-5 text-center text-sm text-gray-400">{text}</p>;
+  return (
+    <section className="max-w-6xl mx-auto px-4 sm:px-8 py-14 sm:py-20">
+      <div className="grid gap-12 lg:gap-16 md:grid-cols-2 items-start">
+        <div>
+          {/* 주보: 모두 "교회 주보" 목록(/bulletins)으로 */}
+          <Head word="주보" to="/bulletins" />
+          {files.length ? (
+            <>
+              <Top badge="THIS WEEK" title={files[0].title || `${fmt(files[0].date)} 주보`} sub={fmt(files[0].date)} action="주보 보기 →" to="/bulletins" />
+              <ul className="mt-2">{files.slice(1, 5).map((p) => <Row key={p.id} text={p.title || `${fmt(p.date)} 주보`} date={fmt(p.date)} to="/bulletins" />)}<Pad n={4 - files.slice(1, 5).length} /></ul>
+            </>
+          ) : <Empty text="아직 올린 교회 주보가 없습니다." />}
+        </div>
+        <div>
+          <Head word="소식" to="/news" />
+          {news.length ? (
+            <>
+              <Top badge="NEW" title={newsTitle(news[0])} sub={newsSub(news[0])} action="소식 보기 →" to={`/news/${news[0].id}`} />
+              <ul className="mt-2">{news.slice(1, 5).map((n) => <Row key={n.id} text={newsTitle(n)} date={fmt(n.date)} to={`/news/${n.id}`} />)}<Pad n={4 - news.slice(1, 5).length} /></ul>
+            </>
+          ) : <Empty text="아직 등록된 교회 소식이 없습니다." />}
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -386,16 +793,31 @@ function HomePage({ c, color, A, groups }: { c: SiteContent; color: string; A: L
   const latest = c.bulletins.find((b) => b.id === c.latestBulletinId);
   return (
     <>
-      <section className="relative w-full min-h-[50vh] sm:min-h-0 sm:aspect-[16/9] sm:max-h-[calc((135vh-64px)*2/3)] flex items-end overflow-hidden" style={{ background: color }}>
+      {/* 메인 사진 높이: 참고 사이트처럼 화면 세로 길이 기준 — PC 화면의 78%(최대 720px), 휴대폰 70%(최대 560px) */}
+      <section className="group relative w-full h-[min(70vh,560px)] sm:h-[min(78vh,720px)] flex items-end overflow-hidden" style={{ background: color }}>
         <HeroImages images={c.heroImages} mode={c.heroTransition} alt={c.churchName} />
-        <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/20 to-transparent" />
-        <div className="relative max-w-6xl mx-auto w-full px-4 sm:px-8 pb-10 sm:pb-16 text-white">
-          <p className="text-xs sm:text-sm font-bold tracking-[0.25em] text-white/80">WELCOME</p>
+        {/* 어두운 그라데이션·글자는 손가락 밀기·클릭을 막지 않게(pointer-events-none) */}
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/60 via-black/20 to-transparent" />
+        {/* 글자 색: 홈페이지 편집 화면 > 메인 사진 > "사진 위 글자 색"(기본 흰색) */}
+        <div className="pointer-events-none relative max-w-6xl mx-auto w-full px-4 sm:px-8 pb-10 sm:pb-16" style={{ color: c.heroTextColor }}>
+          <p className="text-xs sm:text-sm font-bold tracking-[0.25em] opacity-80">WELCOME</p>
           <h1 className="mt-2 text-3xl sm:text-5xl font-black">{c.churchName}</h1>
-          {c.motto && <p className="mt-3 text-sm sm:text-lg text-white/90">{c.motto.text}{c.motto.reference ? ` (${c.motto.reference})` : ""}</p>}
+          {c.motto && <p className="mt-3 text-sm sm:text-lg opacity-90">{c.motto.text}{c.motto.reference ? ` (${c.motto.reference})` : ""}</p>}
         </div>
       </section>
+      {/* 바로가기 카드 4개(2026-11-10): 처음 오셨나요 · 예배 시간 및 장소 · 유튜브 · 오시는 길 */}
+      <section className="max-w-6xl mx-auto px-4 sm:px-8 pt-10">
+        <QuickCards c={c} color={color} A={A} />
+      </section>
+      {/* 환영 섹션(2026-11-10): "○○교회에 오신 것을 환영합니다" + 왼쪽 담임목사 사진 · 오른쪽 인사 문구와 바로가기 */}
+      <WelcomeSection c={c} color={color} A={A} />
+      {/* 주보 · 교회 소식(2026-11-10): 환영 섹션 다음 */}
+      <BulletinNewsSection c={c} color={color} A={A} />
+      {/* [이전 메인 하단 — 보관용, 화면에 안 나옴] 교회소식 · 설교 카드(위 주보·교회 소식 섹션으로 바꾸면서 꺼 둠).
+          안쪽에 주석이 있어 주석으로 감쌀 수 없어서 false && 로 꺼 둠 */}
+      {false && (
       <main className="max-w-6xl mx-auto px-4 sm:px-8 py-10 grid gap-5 md:grid-cols-3">
+        {/* [이전 메인 카드 — 보관용] 이번 주 주보 · 예배 안내 · 오시는 길 (위 바로가기 카드로 바꾸면서 주석 처리)
         {has("jubo") && (
           <Card>
             <p className="text-xs font-black tracking-widest" style={{ color }}>THIS WEEK</p>
@@ -422,6 +844,7 @@ function HomePage({ c, color, A, groups }: { c: SiteContent; color: string; A: L
             <A to="/location" className="inline-block mt-4 text-sm font-bold" style={{ color }}>길 안내 →</A>
           </Card>
         )}
+        */}
         {has("news") && (
           <Card className="md:col-span-2">
             <div className="flex items-center justify-between"><H2>교회소식</H2><A to="/news" className="text-sm font-bold" style={{ color }}>더보기</A></div>
@@ -444,6 +867,7 @@ function HomePage({ c, color, A, groups }: { c: SiteContent; color: string; A: L
           </Card>
         )}
       </main>
+      )}
     </>
   );
 }
@@ -453,15 +877,80 @@ function PageBody({ pageKey, id, c, site, color, A }: { pageKey: PageKey; id: st
     case "about":
       return (
         <div className="space-y-6">
-          {c.buildingImageUrl && <img src={c.buildingImageUrl} alt={c.churchName} className="w-full max-h-[420px] object-cover rounded-2xl" />}
-          {c.motto && <Card><H2>표어</H2><p className="text-lg font-bold" style={{ color }}>{nl(c.motto.text)}</p>{c.motto.reference && <p className="mt-1 text-sm text-gray-500">{c.motto.reference}</p>}</Card>}
-          {c.intro && <Card><H2>교회 소개</H2><p className="leading-relaxed">{nl(c.intro)}</p></Card>}
-          {c.vision && <Card><H2>비전</H2><p className="leading-relaxed">{nl(c.vision)}</p></Card>}
-          {c.mission && <Card><H2>사명</H2><p className="leading-relaxed">{nl(c.mission)}</p></Card>}
-          {c.visionItems.length > 0 && (
-            <div className="grid gap-4 sm:grid-cols-2">
-              {c.visionItems.map((v, i) => <Card key={i}><p className="font-black text-gray-900">{v.title}</p><p className="mt-1 text-sm text-gray-600">{nl(v.desc)}</p></Card>)}
-            </div>
+          {/* 위: 왼쪽 표어·교회 소개 / 오른쪽 교회 사진(반반). 사진이 없으면 글만 한 칸으로.
+              모바일에서는 사진이 먼저, 글이 아래 */}
+          {(c.motto || c.intro || c.vision || c.mission || c.buildingImageUrl) && (
+            // PC: 1행 왼쪽 = MOTTO 라벨·"표어" 제목, 2행 = 왼쪽 말씀 상자·교회 소개·비전·사명 / 오른쪽 사진
+            // → 사진 윗변이 "표어" 제목 바로 아래(말씀 상자 윗변)와 같은 높이. 제목 줄 수와 상관없이 자동으로 맞음
+            <section className={`grid gap-x-8 lg:gap-x-12 gap-y-8 md:gap-y-3 items-start ${c.buildingImageUrl ? "md:grid-cols-2" : ""}`}>
+              {c.motto && (
+                <div className="order-2 md:order-none md:col-start-1 md:row-start-1">
+                  <p className="text-xs font-black tracking-[0.2em]" style={{ color }}>MOTTO</p>
+                  <h2 className="mt-2 text-lg sm:text-xl font-black text-gray-900">{c.motto.label}</h2>
+                </div>
+              )}
+              <div className={`order-3 md:order-none md:col-start-1 space-y-8 ${c.motto ? "md:row-start-2" : "md:row-start-1"}`}>
+                {c.motto && (
+                  // 말씀 칸: 상자·세로줄 없이 연한 교회색 큰 따옴표 아래에 말씀(잡지 인용문 느낌), 성구는 아래 작은 회색
+                  <figure className="-mt-5 md:mt-0">
+                    <span aria-hidden className="block h-9 font-serif text-[64px] leading-none select-none" style={{ color, opacity: 0.25 }}>“</span>
+                    <blockquote className="text-lg sm:text-xl font-bold leading-[1.75] text-gray-900 break-keep">{nl(c.motto.text)}</blockquote>
+                    {c.motto.reference && <figcaption className="mt-3 text-sm font-semibold text-gray-400">— {c.motto.reference}</figcaption>}
+                  </figure>
+                )}
+                {c.motto && c.intro && <div className="h-px bg-gray-100" />}
+                {c.intro && (
+                  <div>
+                    <p className="text-xs font-black tracking-[0.2em]" style={{ color }}>ABOUT</p>
+                    <h2 className="mt-2 text-lg sm:text-xl font-black text-gray-900">교회 소개</h2>
+                    <p className="mt-3 text-[15px] sm:text-base leading-[1.9] text-gray-600">{nl(c.intro)}</p>
+                  </div>
+                )}
+                {(c.motto || c.intro) && c.vision && <div className="h-px bg-gray-100" />}
+                {c.vision && (
+                  <div>
+                    <p className="text-xs font-black tracking-[0.2em]" style={{ color }}>VISION</p>
+                    <h2 className="mt-2 text-lg sm:text-xl font-black text-gray-900">비전</h2>
+                    <p className="mt-3 text-[15px] sm:text-base leading-[1.9] text-gray-600">{nl(c.vision)}</p>
+                  </div>
+                )}
+                {(c.motto || c.intro || c.vision) && c.mission && <div className="h-px bg-gray-100" />}
+                {c.mission && (
+                  <div>
+                    <p className="text-xs font-black tracking-[0.2em]" style={{ color }}>MISSION</p>
+                    <h2 className="mt-2 text-lg sm:text-xl font-black text-gray-900">사명</h2>
+                    <p className="mt-3 text-[15px] sm:text-base leading-[1.9] text-gray-600">{nl(c.mission)}</p>
+                  </div>
+                )}
+              </div>
+              {c.buildingImageUrl && (
+                <div className={`order-1 md:order-none md:col-start-2 md:sticky md:top-24 ${c.motto ? "md:row-start-2" : "md:row-start-1"}`}>
+                  <img src={c.buildingImageUrl} alt={c.churchName} className="w-full aspect-[4/3] md:aspect-[4/5] object-cover rounded-3xl shadow-lg" />
+                </div>
+              )}
+            </section>
+          )}
+          {/* 맨 아래: 오시는 길 요약(지도 + 주소·연락처) → "자세히 보기"로 오시는 길 탭 이동 */}
+          {c.address && (
+            <section className="pt-10 border-t border-gray-100">
+              <div className="flex items-end justify-between gap-4">
+                <div>
+                  <p className="text-xs font-black tracking-[0.2em]" style={{ color }}>LOCATION</p>
+                  <h2 className="mt-2 text-lg sm:text-xl font-black text-gray-900">오시는 길</h2>
+                </div>
+                <A to="/location" className="shrink-0 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-bold text-gray-800 hover:bg-gray-50">자세히 보기 →</A>
+              </div>
+              <div className="mt-5 grid gap-6 md:grid-cols-[minmax(0,7fr)_minmax(0,5fr)] items-start">
+                <MapPreview c={c} color={color} className="aspect-[16/9]" />
+                <div className="text-[15px] leading-relaxed text-gray-700 break-keep">
+                  <p className="text-base font-black text-gray-900">{c.churchName}</p>
+                  <p className="mt-2">{c.address}</p>
+                  {c.addressDetail && <p className="mt-1 text-sm text-gray-500">{nl(c.addressDetail)}</p>}
+                  {c.phone && <p className="mt-2"><a href={`tel:${c.phone}`} className="font-bold hover:underline">{c.phone}</a></p>}
+                  <MapButtons address={c.address} className="mt-5" />
+                </div>
+              </div>
+            </section>
           )}
         </div>
       );
@@ -471,11 +960,15 @@ function PageBody({ pageKey, id, c, site, color, A }: { pageKey: PageKey; id: st
       if (!c.pastor) return null;
       const p = c.pastor;
       return (
-        <div className={`grid gap-10 lg:gap-20 items-start ${p.photoUrl ? "md:grid-cols-[minmax(0,7fr)_minmax(0,5fr)]" : ""}`}>
-          <div className="order-2 md:order-1 md:pt-6">
+        // PC: 1행 왼쪽 = 라벨·제목, 2행 = 왼쪽 줄+본문 / 오른쪽 사진 → 사진 윗변이 제목 아래 줄과 같은 높이
+        // (제목이 몇 줄이든 자동으로 맞음). 모바일: 제목 → 사진 → 본문
+        <div className={`grid gap-x-10 lg:gap-x-20 gap-y-8 md:gap-y-6 items-start ${p.photoUrl ? "md:grid-cols-[minmax(0,7fr)_minmax(0,5fr)]" : ""}`}>
+          <div className="md:col-start-1 md:row-start-1 md:pt-6">
             <p className="text-xs sm:text-sm font-black tracking-[0.25em]" style={{ color }}>GREETINGS</p>
             {p.greetingTitle && <p className="mt-4 text-2xl sm:text-[34px] leading-snug font-black tracking-tight text-gray-900 break-keep">{nl(p.greetingTitle)}</p>}
-            <div className="mt-6 h-px w-12" style={{ background: color }} />
+          </div>
+          <div className="order-3 md:order-none md:col-start-1 md:row-start-2">
+            <div className="h-px w-12" style={{ background: color }} />
             <p className="mt-6 text-[15px] sm:text-[17px] leading-[1.95] text-gray-700 break-keep">{nl(p.greeting)}</p>
             {p.name && (
               <p className="mt-10 text-right text-gray-500">
@@ -484,25 +977,14 @@ function PageBody({ pageKey, id, c, site, color, A }: { pageKey: PageKey; id: st
             )}
           </div>
           {p.photoUrl && (
-            // 위가 반원인 아치형 틀(교회 창문 모양). 안쪽 바탕을 대표 색으로 옅게 깔아
-            // 흰 배경 사진도 틀이 또렷하게 보이게 함. 이름은 사진 아래 가운데에
-            <div className="order-1 md:order-2 md:sticky md:top-24">
-              <div className="mx-auto w-full max-w-[300px] md:max-w-[380px]">
-                {/* 3:4 틀에서 위쪽 가로 반지름 50%·세로 37.5% = 정확한 반원(rounded-full을 쓰면 아래 모서리가 0으로 줄어듦).
-                    바깥 아치(대표 색 옅게) 안에 사진 아치를 한 겹 더 넣어 흰 배경 사진도 윤곽이 보이게 */}
-                <div className="p-2.5" style={{ background: `${color}1f`, borderRadius: "50% 50% 28px 28px / 37.5% 37.5% 28px 28px" }}>
-                  <div className="overflow-hidden bg-white" style={{ borderRadius: "50% 50% 20px 20px / 37.5% 37.5% 20px 20px" }}>
-                    <img src={p.photoUrl} alt={p.name} className="block w-full aspect-[3/4] object-cover object-top" />
-                  </div>
+            // 교회 색을 옅게 깐 패널 위에 사진을 "곱하기"로 겹침 → 흰 배경 증명사진도 배경이 패널 색으로
+            // 녹아들어 사람만 떠 보임(잡지 인물 사진 느낌). 오른쪽 2행(제목 아래 줄 높이)에서 시작
+            <div className="order-2 md:order-none md:col-start-2 md:row-start-2 md:sticky md:top-28">
+              <figure className="mx-auto w-full max-w-[320px] md:max-w-none">
+                <div className="overflow-hidden rounded-[28px]" style={{ background: `linear-gradient(160deg, ${color}10 0%, ${color}2e 100%)` }}>
+                  <img src={p.photoUrl} alt={p.name} className="block w-full aspect-[4/5] object-cover object-top mix-blend-multiply" />
                 </div>
-                {p.name && (
-                  <p className="mt-5 text-center">
-                    <span className="text-sm text-gray-500">{p.role}</span>
-                    <span className="mx-2 text-gray-300">·</span>
-                    <span className="text-lg font-black text-gray-900">{p.name}</span>
-                  </p>
-                )}
-              </div>
+              </figure>
             </div>
           )}
         </div>
@@ -522,59 +1004,218 @@ function PageBody({ pageKey, id, c, site, color, A }: { pageKey: PageKey; id: st
         </ol>
       );
     }
-    case "staff":
-      // 온라인 예배 영상 카드처럼: 세로 사진이 카드 위를 꽉 채우고, 이름·직분만 아래에 딱 붙임
+    case "staff": {
+      // 보수적인 교회 홈페이지 느낌: 그림자·둥근 카드 없이 제목 아래 굵은 선, 사진은 단정한 세로 액자,
+      // 이름·직분은 사진 아래 가운데. 담임목사는 맨 위에 크게(사진 | 소개)
+      const groups = staffGroups(c.staff);
+      const isSenior = (role: string) => role.replace(/\s+/g, "").includes("담임");
+      const senior = groups.find((g) => isSenior(g.role));
+      const others = groups.filter((g) => g !== senior);
+      // 담임목사 인사말 화면과 같은 스타일: 교회 색 영문 라벨 → 굵은 제목 → 짧은 교회 색 선
+      const Section = ({ en, title, children }: { en: string; title: string; children: React.ReactNode }) => (
+        <section>
+          <p className="text-xs sm:text-sm font-black tracking-[0.25em]" style={{ color }}>{en}</p>
+          <h2 className="mt-3 text-2xl sm:text-[28px] leading-snug font-black tracking-tight text-gray-900">{title}</h2>
+          <div className="mt-5 h-px w-12" style={{ background: color }} />
+          <div className="mt-8">{children}</div>
+        </section>
+      );
+      // 사진도 인사말 화면과 같게: 교회 색을 옅게 깐 둥근 패널 위에 곱하기로 겹쳐 흰 배경이 패널 색으로 녹아듦
+      const Photo = ({ src, name }: { src?: string; name: string }) => (
+        <div className="w-full aspect-[4/5] overflow-hidden rounded-[20px]" style={{ background: `linear-gradient(160deg, ${color}10 0%, ${color}2e 100%)` }}>
+          {src ? (
+            <img src={src} alt={name} className="block w-full h-full object-cover object-top mix-blend-multiply" />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center text-3xl font-black" style={{ color: `${color}66` }}>{name.slice(0, 1)}</div>
+          )}
+        </div>
+      );
+      const PersonGrid = ({ people }: { people: { name: string; role?: string; department?: string; desc?: string; photoUrl?: string }[] }) => (
+        <div className="grid gap-x-5 gap-y-8 grid-cols-2 sm:grid-cols-3 lg:grid-cols-5">
+          {people.map((p, i) => (
+            <div key={i}>
+              <Photo src={p.photoUrl} name={p.name} />
+              <p className="mt-3 text-xs sm:text-sm text-gray-500">{[p.role, p.department].filter(Boolean).join(" · ")}</p>
+              <p className="mt-0.5 text-base sm:text-lg font-black text-gray-900">{p.name}</p>
+              {p.desc && <p className="mt-1 text-xs sm:text-sm leading-relaxed text-gray-500 break-keep line-clamp-3">{p.desc}</p>}
+            </div>
+          ))}
+        </div>
+      );
       return (
-        <div className="space-y-12">
-          {/* 직분별로 묶어서 담임목사 → 부목사 → 강도사 → 전도사 → 그 밖의 직분 순서로(직분명은 입력값 그대로) */}
-          {staffGroups(c.staff).map((grp) => (
-            <div key={grp.role}>
-              <H2>{grp.role}</H2>
-              <div className="grid gap-3 sm:gap-4 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-                {grp.people.map((p, i) => (
-                  <div key={i} className="overflow-hidden rounded-xl border border-gray-100 bg-white shadow-sm">
-                    {p.photoUrl ? (
-                      <img src={p.photoUrl} alt={p.name} className="block w-full aspect-[1/1] object-cover object-top bg-gray-50" />
-                    ) : (
-                      <div className="w-full aspect-[4/5] flex items-center justify-center text-5xl font-black" style={{ background: `${color}14`, color }}>{p.name.slice(0, 1)}</div>
-                    )}
-                    <div className="px-3.5 py-2.5">
-                      <p className="text-xs font-bold" style={{ color }}>{[p.role, p.department].filter(Boolean).join(" · ") || "교역자"}</p>
-                      <p className="mt-0.5 text-base font-black text-gray-900 truncate">{p.name}</p>
-                      {p.desc && <p className="mt-1 text-xs leading-relaxed text-gray-500 line-clamp-2">{p.desc}</p>}
+        <div className="space-y-16">
+          {/* 담임목사: 사진(왼쪽) | 직분·이름·소개(오른쪽) */}
+          {senior && (
+            <Section en="SENIOR PASTOR" title={senior.role}>
+              <div className="space-y-10">
+                {senior.people.map((p, i) => (
+                  <div key={i} className="grid gap-6 sm:gap-10 sm:grid-cols-[200px_minmax(0,1fr)] items-start">
+                    <div className="max-w-[200px] w-full"><Photo src={p.photoUrl} name={p.name} /></div>
+                    <div className="sm:pt-3">
+                      <p className="text-sm text-gray-500">{p.role}</p>
+                      <p className="mt-1 text-2xl font-black text-gray-900">{p.name}</p>
+                      {p.desc && <p className="mt-4 text-[15px] sm:text-[17px] leading-[1.95] text-gray-700 break-keep">{nl(p.desc)}</p>}
                     </div>
                   </div>
                 ))}
               </div>
-            </div>
+            </Section>
+          )}
+          {/* 그 밖의 교역자: 직분별(부목사 → 강도사 → 전도사 …) */}
+          {others.map((grp) => (
+            <Section key={grp.role} en="MINISTRY" title={grp.role}>
+              <PersonGrid people={grp.people} />
+            </Section>
           ))}
+          {/* 중직자: 교역자와 같은 카드(사진 · 직분 · 이름 · 담당). 사진이 없으면 기본 사진 자리로.
+              (예전: 아무도 사진이 없으면 표(직분 | 이름 | 담당) — 아래 false 부분에 보관) */}
           {c.officers.length > 0 && (
-            <div>
-              <H2>중직자</H2>
-              <ul className="grid gap-3 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4">
-                {c.officers.map((o, i) => (
-                  <li key={i} className="flex items-center justify-between gap-2 rounded-xl border border-gray-100 bg-white px-4 py-3.5 shadow-sm">
-                    <span className="font-black text-gray-900 truncate">{o.name}</span>
-                    <span className="shrink-0 text-xs font-bold" style={{ color }}>{o.role}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
+            <Section en="ELDERS" title="중직자">
+              {true ? (
+                <PersonGrid people={c.officers.map((o) => ({ name: o.name, role: o.role, desc: o.desc, photoUrl: o.photoUrl }))} />
+              ) : (
+                <table className="w-full border-collapse text-sm">
+                  <thead>
+                    <tr className="bg-gray-50 text-gray-700">
+                      <th className="border border-gray-300 px-3 py-2.5 font-bold w-28">직분</th>
+                      <th className="border border-gray-300 px-3 py-2.5 font-bold w-36">이름</th>
+                      <th className="border border-gray-300 px-3 py-2.5 font-bold">담당</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {c.officers.map((o, i) => (
+                      <tr key={i} className="text-center">
+                        <td className="border border-gray-300 px-3 py-2.5 text-gray-600">{o.role}</td>
+                        <td className="border border-gray-300 px-3 py-2.5 font-bold text-gray-900">{o.name}</td>
+                        <td className="border border-gray-300 px-3 py-2.5 text-gray-600">{o.desc || "-"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </Section>
           )}
         </div>
       );
-    case "location":
-      return (
-        <Card>
-          <p className="text-lg font-black text-gray-900">{c.address}</p>
-          {c.addressDetail && <p className="mt-1 text-gray-600">{nl(c.addressDetail)}</p>}
-          {c.phone && <p className="mt-3 text-sm">교회 전화 <a href={`tel:${c.phone}`} className="font-bold">{c.phone}</a></p>}
-          <div className="mt-5 flex flex-wrap gap-2">
-            <a href={`https://map.naver.com/p/search/${encodeURIComponent(c.address)}`} target="_blank" rel="noopener noreferrer" className="px-4 py-2.5 rounded-lg text-sm font-bold text-white bg-[#03C75A]">네이버 지도</a>
-            <a href={`https://map.kakao.com/?q=${encodeURIComponent(c.address)}`} target="_blank" rel="noopener noreferrer" className="px-4 py-2.5 rounded-lg text-sm font-bold text-gray-900 bg-[#FEE500]">카카오맵</a>
-          </div>
-        </Card>
+    }
+    case "location": {
+      // 담임목사 인사말·섬기는 사람들과 같은 스타일. 왼쪽: 지도 자리(지도는 나중에 연결) / 오른쪽: 교회 정보 + 차량 운행 안내(펼치기)
+      const Row = ({ label, children }: { label: string; children: React.ReactNode }) => (
+        <div className="grid grid-cols-[72px_minmax(0,1fr)] gap-3 py-4 border-b border-gray-100">
+          <p className="text-sm font-bold text-gray-400 pt-0.5">{label}</p>
+          <div className="text-[15px] sm:text-base leading-relaxed text-gray-800 break-keep">{children}</div>
+        </div>
       );
+      return (
+        <section>
+          <p className="text-xs sm:text-sm font-black tracking-[0.25em]" style={{ color }}>LOCATION</p>
+          <h2 className="mt-3 text-2xl sm:text-[28px] leading-snug font-black tracking-tight text-gray-900">오시는 길</h2>
+          <div className="mt-5 h-px w-12" style={{ background: color }} />
+          <div className="mt-8 grid gap-8 lg:gap-12 md:grid-cols-[minmax(0,7fr)_minmax(0,5fr)] items-start">
+            <MapPreview c={c} color={color} className="aspect-[4/3]" />
+            <div>
+              <p className="text-xl sm:text-2xl font-black text-gray-900">{c.churchName}</p>
+              <div className="mt-4 border-t-2 border-gray-800">
+                <Row label="주소">
+                  {c.address}
+                  {c.addressDetail && <span className="block mt-1 text-sm text-gray-500">{nl(c.addressDetail)}</span>}
+                </Row>
+                {c.phone && (
+                  <Row label="연락처"><a href={`tel:${c.phone}`} className="font-bold hover:underline">{c.phone}</a></Row>
+                )}
+                {c.shuttleInfo && (
+                  <details className="group border-b border-gray-100">
+                    <summary className="flex cursor-pointer list-none items-center justify-between py-4 [&::-webkit-details-marker]:hidden">
+                      <span className="text-[15px] sm:text-base font-bold text-gray-800">차량 운행 안내</span>
+                      <span className="flex items-center gap-1 text-sm font-bold" style={{ color }}>
+                        <span className="group-open:hidden">펼치기</span><span className="hidden group-open:inline">접기</span>
+                        <svg viewBox="0 0 20 20" className="w-4 h-4 transition-transform group-open:rotate-180" fill="currentColor" aria-hidden><path d="M5.3 7.3a1 1 0 0 1 1.4 0L10 10.6l3.3-3.3a1 1 0 1 1 1.4 1.4l-4 4a1 1 0 0 1-1.4 0l-4-4a1 1 0 0 1 0-1.4z" /></svg>
+                      </span>
+                    </summary>
+                    <div className="pb-5 text-[15px] leading-[1.9] text-gray-600 break-keep whitespace-pre-line">{c.shuttleInfo}</div>
+                  </details>
+                )}
+              </div>
+              <MapButtons address={c.address} className="mt-6" />
+            </div>
+          </div>
+        </section>
+      );
+    }
+    case "education": {
+      // 부서별 화면(/education/1 …): 위에 부서 탭, 아래 그 부서 하나만. /education 은 전체 부서 목록
+      const depts = c.eduDepartments;
+      const one = id ? depts[Number(id) - 1] : undefined;
+      if (id && !one) return <p className="py-16 text-center text-gray-400">부서를 찾을 수 없습니다.</p>;
+      const shown = one ? [one] : depts;
+      // 부서 탭: 다른 페이지(예배 안내 · 온라인 예배 · 설교)와 같은 밑줄 탭(SubTabs)
+      const deptPages = [
+        { key: "edu-all", path: "/education", label: "전체" },
+        ...depts.map((d, i) => ({ key: `edu-${i + 1}`, path: `/education/${i + 1}`, label: d.name })),
+      ] as unknown as PageDef[];
+      const deptTabs = depts.length > 1 && (
+        <SubTabs pages={deptPages} activeKey={(id ? `edu-${id}` : "edu-all") as PageKey} color={color} A={A} />
+      );
+      // 부서마다: 왼쪽 대표 사진 | 오른쪽 대상(알약) · 부서 이름 · 소개 · 회색 상자(예배 시간 · 장소) · 선 · 담당 교역자
+      // 사진은 잘라내지 않고 원래 비율 그대로(사진이 없으면 정사각형 자리 표시). 휴대폰에서는 사진이 위
+      return (
+        <div>
+        {deptTabs}
+        <div className="divide-y divide-gray-100">
+          {shown.map((d, i) => (
+            // id: 상단 메뉴 하위 항목(유초등부 …)을 누르면 이 위치로 스크롤(고정 헤더만큼 띄움)
+            <section key={i} id={`edu-${i}`} className={`scroll-mt-24 grid gap-4 md:gap-12 md:grid-cols-2 items-start ${i ? "pt-7 md:pt-12" : ""} pb-7 md:pb-12`}>
+              <div className={`w-full overflow-hidden rounded-2xl md:rounded-[24px] bg-gray-100 ${d.photoUrl ? "" : "aspect-[16/10] md:aspect-square"}`}>
+                {d.photoUrl ? (
+                  <img src={d.photoUrl} alt={d.name} loading="lazy" className="block w-full h-auto" />
+                ) : (
+                  <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-center text-sm text-gray-400">
+                    <svg viewBox="0 0 24 24" className="h-7 w-7" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="9" cy="9" r="2" /><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21" /></svg>
+                    <span>부서 대표 사진<br />(아이들 예배·활동 모습)</span>
+                  </div>
+                )}
+              </div>
+              <div>
+                {d.target && <span className="inline-block rounded-full bg-gray-100 px-2.5 py-1 md:px-3 md:py-1.5 text-xs md:text-[13px] font-bold text-gray-700">{d.target}</span>}
+                <h2 className={`${d.target ? "mt-2 md:mt-4" : ""} text-2xl md:text-[34px] font-black text-gray-900 break-keep`}>{d.name}</h2>
+                {d.desc && <p className="mt-2 md:mt-3 text-[15px] md:text-base leading-relaxed md:leading-[1.8] text-gray-600 break-keep">{nl(d.desc)}</p>}
+                {(d.time || d.place) && (
+                  <div className="mt-4 md:mt-7 rounded-xl md:rounded-2xl bg-gray-100/80 px-4 py-3.5 md:px-7 md:py-6">
+                    {d.time && (
+                      <>
+                        <p className="flex items-center gap-1.5 text-sm font-bold text-gray-600">
+                          <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><circle cx="12" cy="12" r="10" /><path d="M12 6v6l4 2" /></svg>
+                          예배 시간
+                        </p>
+                        <p className="mt-1 md:mt-2 text-xl md:text-[30px] font-black tabular-nums text-gray-900 break-keep whitespace-pre-line">{d.time}</p>
+                      </>
+                    )}
+                    {d.place && (
+                      <p className={`${d.time ? "mt-1.5 md:mt-3" : ""} flex items-center gap-1.5 text-sm md:text-[15px] text-gray-600 break-keep`}>
+                        <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z" /><circle cx="12" cy="10" r="3" /></svg>
+                        {d.place}
+                      </p>
+                    )}
+                  </div>
+                )}
+                {d.leader && (
+                  <div className="mt-4 md:mt-10 flex items-center gap-3 md:gap-4 border-t border-gray-200 pt-4 md:pt-6">
+                    <span className="flex h-11 w-11 md:h-16 md:w-16 shrink-0 items-center justify-center rounded-full bg-gray-100 text-gray-500">
+                      <svg viewBox="0 0 24 24" className="h-5 w-5 md:h-6 md:w-6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></svg>
+                    </span>
+                    <div>
+                      <p className="text-xs md:text-sm text-gray-500">담당 교역자</p>
+                      <p className="mt-0.5 text-base md:text-lg font-black text-gray-900 break-keep">{d.leader}</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </section>
+          ))}
+        </div>
+        </div>
+      );
+    }
     case "worship": {
       const groupsW: { title: string; items: SiteContent["worship"] }[] = [];
       c.worship.forEach((w) => {
@@ -582,76 +1223,135 @@ function PageBody({ pageKey, id, c, site, color, A }: { pageKey: PageKey; id: st
         if (!g) { g = { title: w.group, items: [] }; groupsW.push(g); }
         g.items.push(w);
       });
+      // 예배 구분마다 카드 하나: 왼쪽 대표 사진(편집 화면 > 예배 > 구분별 대표 사진) | 오른쪽 영문 라벨 · 구분 이름 · 예배별 이름/시간 · 장소
+      // 휴대폰에서는 사진이 위, 내용이 아래. 장소가 모두 같으면 맨 아래 "모든 예배 ○○" 한 줄로, 다르면 예배마다 이름 아래에
+      const enOf = (t: string) => (t.includes("주일") ? "SUNDAY" : t.includes("새벽") ? "DAWN" : (t.includes("주중") || t.includes("수요") || t.includes("금요")) ? "WEEKDAY" : "WORSHIP");
       return (
-        <div className="grid gap-5 md:grid-cols-2">
-          {groupsW.map((g) => (
-            <Card key={g.title}>
-              <H2>{g.title}</H2>
-              <ul className="divide-y divide-gray-100">
-                {g.items.map((w, i) => (
-                  <li key={i} className="py-3 flex justify-between gap-4">
-                    <span className="font-bold text-gray-900">{w.title}{w.note && <span className="block text-xs font-normal text-gray-500">{w.note}</span>}</span>
-                    <span className="text-right text-gray-600">{w.time}{w.place && <span className="block text-xs text-gray-400">{w.place}</span>}</span>
-                  </li>
-                ))}
-              </ul>
-            </Card>
-          ))}
+        <div className="space-y-8 sm:space-y-10">
+          {groupsW.map((g) => {
+            const photo = c.worshipPhotos[g.title];
+            const places = [...new Set(g.items.map((w) => w.place).filter(Boolean))];
+            const samePlace = places.length === 1 && g.items.every((w) => w.place === places[0]);
+            return (
+              <section key={g.title} className="grid overflow-hidden rounded-[24px] border border-gray-200 bg-white md:grid-cols-2">
+                <div className="relative aspect-[16/10] md:aspect-auto md:min-h-[320px] bg-gray-100">
+                  {photo ? (
+                    <img src={photo} alt={`${g.title} 대표 사진`} loading="lazy" className="absolute inset-0 h-full w-full object-cover" />
+                  ) : (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-gray-400">
+                      <svg viewBox="0 0 24 24" className="h-7 w-7" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="9" cy="9" r="2" /><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21" /></svg>
+                      <span className="text-sm">{g.title} 대표 사진</span>
+                    </div>
+                  )}
+                </div>
+                <div className="px-6 py-8 sm:px-12 sm:py-12">
+                  <p className="text-xs font-black tracking-[0.2em] text-gray-700">{enOf(g.title)}</p>
+                  <h2 className="mt-2 text-2xl sm:text-[28px] font-black text-gray-900">{g.title}</h2>
+                  <div className="mt-6 border-t border-gray-800">
+                    {g.items.map((w, i) => (
+                      <div key={i} className="flex items-start justify-between gap-4 border-b border-gray-200 py-5">
+                        <div className="min-w-0">
+                          <p className="text-[15px] sm:text-base font-bold text-gray-900 break-keep">{w.title}</p>
+                          {!samePlace && w.place && <p className="mt-1 text-sm text-gray-500 break-keep">{w.place}</p>}
+                          {w.note && <p className="mt-1 text-xs sm:text-sm text-gray-500 break-keep">{w.note}</p>}
+                        </div>
+                        <p className="shrink-0 text-right text-lg sm:text-2xl font-black tabular-nums text-gray-900 break-keep whitespace-pre-line">{w.time}</p>
+                      </div>
+                    ))}
+                  </div>
+                  {samePlace && (
+                    <p className="mt-5 flex items-center gap-2 text-sm text-gray-500">
+                      <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z" /><circle cx="12" cy="10" r="3" /></svg>
+                      {g.items.length > 1 ? "모든 예배 " : ""}{places[0]}
+                    </p>
+                  )}
+                </div>
+              </section>
+            );
+          })}
         </div>
       );
     }
     case "online":
       return (
-        <div className="space-y-6">
-          {c.youtubeLink && <a href={c.youtubeLink} target="_blank" rel="noopener noreferrer" className="inline-block px-5 py-3 rounded-lg bg-[#FF0000] text-white font-bold text-sm">유튜브 채널에서 예배 보기</a>}
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {c.sermonVideos.map((v, i) => (
-              // 영상은 카드 끝까지 꽉 차게, 제목·정보만 아래에 딱 붙임(공통 Card의 안쪽 여백을 쓰지 않음)
-              <div key={i} className="overflow-hidden rounded-xl border border-gray-100 bg-white shadow-sm">
-                <div className="aspect-video bg-black"><iframe className="block w-full h-full" src={`https://www.youtube.com/embed/${v.youtubeVideoId}`} title={v.title} allowFullScreen /></div>
-                <div className="px-4 py-3">
-                  <p className="font-bold text-gray-900 truncate">{v.title}</p>
-                  <p className="mt-0.5 text-xs text-gray-500 truncate">{[v.date, v.speaker, v.scripture].filter(Boolean).join(" · ")}</p>
+        // 위: 큰 화면(실시간/최근 예배) + 이번 주 설교 정보, 아래: 최근 예배 영상 표(누르면 위 화면에서 재생)
+        <OnlineWorshipLive c={c} color={color} />
+      );
+    case "sermons": {
+      // 예배 안내와 같은 스타일: 교회 색 영문 라벨 → 굵은 제목 → 짧은 선. 맨 위에 가장 최근 설교를 크게,
+      // 아래에 굵은 윗줄로 시작하는 목록(날짜 | 설교 제목·본문 | 설교자 | 보기)
+      // 종이 주보에서 읽어온 설교는 그 주보 파일을 열고, 온라인 주보 설교는 주보 화면으로
+      const SermonLink = ({ s, className, children }: { s: SiteContent["sermons"][number]; className: string; children: React.ReactNode }) =>
+        s.id.startsWith("paper-")
+          ? (s.fileUrl ? <a href={s.fileUrl} target="_blank" rel="noopener noreferrer" className={className}>{children}</a> : <div className={className}>{children}</div>)
+          // 온라인 주보 설교는 "온라인 주보" 탭으로(교회 주보 탭은 이미지·PDF 주보 파일 전용)
+          : <A to={s.id === c.latestBulletinId ? "/jubo" : `/bulletins/${s.id}`} className={className}>{children}</A>;
+      const [latest, ...rest] = c.sermons;
+      const fmt = (d: string) => d.replace(/-/g, ".");
+      return (
+        <div className="space-y-14">
+          {latest && (
+            <section>
+              <p className="text-xs font-black tracking-[0.2em]" style={{ color }}>THIS WEEK</p>
+              <h2 className="mt-2 text-xl sm:text-2xl font-black text-gray-900">이번 주 말씀</h2>
+              {/* 제목 아래 짧은 교회 색 선은 뺌(2026-11-10 요청) */}
+              <div className="mt-5 rounded-[20px] px-6 py-7 sm:px-9 sm:py-9" style={{ background: `linear-gradient(160deg, ${color}0d 0%, ${color}24 100%)` }}>
+                {latest.date && <p className="text-sm font-bold tabular-nums text-gray-500">{fmt(latest.date)}</p>}
+                <p className="mt-2 text-2xl sm:text-3xl font-black leading-snug text-gray-900 break-keep">{latest.title || "말씀"}</p>
+                <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[15px]">
+                  {latest.scripture && <span className="font-bold" style={{ color }}>{latest.scripture}</span>}
+                  {latest.preacher && <span className="text-gray-600">{latest.preacher}</span>}
                 </div>
+                {/* 편집 화면에서 직접 적은 이번 주 말씀(site-weekly)은 연결할 주보가 없어 버튼 없음 */}
+                {!latest.id.startsWith("site-") && (
+                  <SermonLink s={latest} className="mt-6 inline-flex h-11 items-center rounded-xl bg-white px-5 text-sm font-bold text-gray-800 border border-gray-200 hover:bg-gray-50">
+                    {latest.id.startsWith("paper-") ? "주보 파일 보기 →" : "주보 보기 →"}
+                  </SermonLink>
+                )}
               </div>
-            ))}
-          </div>
+            </section>
+          )}
+          {/* 지난 설교: 필요 없다고 하셔서 화면에서 뺌(2026-11-10). 코드는 다시 쓸 수 있게 남겨 둠 */}
+          {false && (
+          <SermonVideoCards c={c} color={color}>
+          {rest.length > 0 && (
+            <section>
+              <p className="text-xs font-black tracking-[0.2em]" style={{ color }}>SERMONS</p>
+              <h2 className="mt-2 text-xl sm:text-2xl font-black text-gray-900">지난 설교</h2>
+              {/* 제목 아래 짧은 교회 색 선은 뺌(2026-11-10 요청) */}
+              <div className="mt-5 border-t-2 border-gray-800">
+                <div className="hidden sm:grid grid-cols-[120px_minmax(0,1fr)_140px] gap-4 px-1 py-3 border-b border-gray-200 text-sm font-bold text-gray-400">
+                  <span>날짜</span><span>설교 제목</span><span>설교자</span>
+                </div>
+                {rest.map((s) => (
+                  <div key={s.id} className="grid grid-cols-[minmax(0,1fr)] sm:grid-cols-[120px_minmax(0,1fr)_140px] gap-x-4 gap-y-1 px-1 py-4 border-b border-gray-100 items-center">
+                    <span className="order-2 sm:order-none text-xs sm:text-[15px] tabular-nums text-gray-500">{s.date ? fmt(s.date) : "-"}</span>
+                    <span className="order-1 sm:order-none min-w-0">
+                      <span className="block text-[15px] sm:text-base font-bold text-gray-900 break-keep">{s.title || "말씀"}</span>
+                      {s.scripture && <span className="block mt-0.5 text-sm" style={{ color }}>{s.scripture}</span>}
+                    </span>
+                    <span className="hidden sm:block text-[15px] text-gray-600 break-keep">{s.preacher || "-"}</span>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+          </SermonVideoCards>
+          )}
         </div>
       );
-    case "sermons":
-      return (
-        <Card>
-          <ul className="divide-y divide-gray-100">
-            {c.sermons.map((s) => {
-              const inner = (
-                <>
-                  <span><b className="text-gray-900">{s.title || "말씀"}</b>{s.scripture && <span className="ml-2 text-sm text-gray-500">{s.scripture}</span>}</span>
-                  <span className="text-sm text-gray-400 shrink-0">{[s.preacher, s.date].filter(Boolean).join(" · ")}</span>
-                </>
-              );
-              const cls = "flex flex-col sm:flex-row sm:items-center justify-between gap-1 py-3.5 hover:underline";
-              // 종이 주보에서 읽어온 설교는 그 주보 파일을 열고, 온라인 주보 설교는 주보 화면으로
-              return (
-                <li key={s.id}>
-                  {s.id.startsWith("paper-")
-                    ? (s.fileUrl ? <a href={s.fileUrl} target="_blank" rel="noopener noreferrer" className={cls}>{inner}</a> : <div className={cls.replace(" hover:underline", "")}>{inner}</div>)
-                    : <A to={`/bulletins/${s.id}`} className={cls}>{inner}</A>}
-                </li>
-              );
-            })}
-          </ul>
-        </Card>
-      );
+    }
     case "bulletins": {
       if (id) {
         const b = c.bulletins.find((x) => x.id === id);
         if (!b) return <p className="py-16 text-center text-gray-400">주보를 찾을 수 없습니다.</p>;
-        return <BulletinPreview title={`${b.date} 주보`} sub={[b.title, b.scripture, b.preacher].filter(Boolean).join(" · ")} url={`https://bulletin.stayon-platform.com/view/${b.id}`} color={color} />;
+        // "온라인 주보" 탭과 같은 화면(왼쪽 목록·가운데 휴대폰·오른쪽 정보)에 이 주보를 선택해서 보여 줌
+        return <JuboPage key={b.id} c={c} color={color} initialId={b.id} A={A} />;
       }
       return <BulletinTable c={c} color={color} A={A} />;
     }
     case "jubo":
-      return <JuboPage c={c} color={color} />;
+      return <JuboPage c={c} color={color} A={A} />;
     case "news":
       return id ? <NewsPost c={c} id={id} A={A} /> : <NewsTable c={c} A={A} />;
     case "column":
@@ -685,9 +1385,363 @@ function PageBody({ pageKey, id, c, site, color, A }: { pageKey: PageKey; id: st
         </Card>
       );
     }
+    case "album":
+      return id ? <AlbumDetail c={c} id={id} color={color} A={A} /> : <AlbumList c={c} color={color} A={A} />;
     default:
       return null;
   }
+}
+
+// 지난 설교 카드: 교회 유튜브 채널(c.youtubeLink)에 올린 최신 영상(쇼츠 포함)을 서버 함수(youtubeVideos)로
+// 자동으로 가져와 온라인 예배 화면처럼 카드로 보여 줌. 누르면 유튜브(쇼츠는 쇼츠 화면)로 열림.
+// 채널이 없거나 못 가져오면 온라인 예배에 직접 넣은 영상, 그것도 없으면 children(예전 목록)
+type YtVideo = { id: string; title: string; published: string; short?: boolean };
+const ytMemo = new Map<string, YtVideo[]>();
+const VIDEO_MAX = 24; // 지난 설교·최근 예배 영상: 최근 24개(주 1개면 약 6개월치)까지만, 그 이전은 유튜브 채널로
+type YtLive = { id: string; title: string } | null;
+const ytLiveMemo = new Map<string, { t: number; live: YtLive }>(); // 실시간 방송 여부(2분 동안 믿음)
+const ytPending = new Map<string, Promise<{ videos: YtVideo[]; live: YtLive }>>();
+// 채널 영상 목록 + 실시간 방송 여부를 한 번에 받음. 같은 채널을 동시에 여러 곳에서 부르면 한 번만 받음(미리 받기와 겹쳐도)
+// slug: 교회 홈페이지 주소 → 서버가 받은 목록을 그 사이트 데이터에 저장해 둠(다음 방문자는 바로 씀)
+let ytSiteSlug = "";
+const ytNeedsSave = new Set<string>(); // 사이트 데이터의 저장본이 없거나 1시간이 지난 주소
+function loadYt(ch: string): Promise<{ videos: YtVideo[]; live: YtLive }> {
+  const pending = ytPending.get(ch);
+  if (pending) return pending;
+  const slug = ytNeedsSave.has(ch) ? ytSiteSlug : "";
+  const p = fetch(`https://asia-northeast3-stayonsbplatform.cloudfunctions.net/youtubeVideos?live=1&url=${encodeURIComponent(ch)}${slug ? `&site=${encodeURIComponent(slug)}` : ""}`)
+    .then((r) => (r.ok ? r.json() : { videos: [], live: null }))
+    .then((d) => {
+      const videos: YtVideo[] = Array.isArray(d.videos) ? d.videos : [];
+      const live: YtLive = d.live && d.live.id ? d.live : null;
+      if (videos.length) { ytMemo.set(ch, videos); ytNeedsSave.delete(ch); }
+      ytLiveMemo.set(ch, { t: Date.now(), live });
+      return { videos, live };
+    })
+    .catch(() => ({ videos: ytMemo.get(ch) || [], live: null }))
+    .finally(() => { ytPending.delete(ch); });
+  ytPending.set(ch, p);
+  return p;
+}
+function SermonVideoCards({ c, color, children }: { c: SiteContent; color: string; children?: React.ReactNode }) {
+  const ch = c.youtubeLink;
+  const [videos, setVideos] = useState<YtVideo[] | null>(() => (ch ? ytMemo.get(ch) ?? null : []));
+  useEffect(() => {
+    if (!ch || ytMemo.has(ch)) return;
+    let cancelled = false;
+    loadYt(ch).then((d) => { if (!cancelled) setVideos(d.videos); });
+    return () => { cancelled = true; };
+  }, [ch]);
+
+  // 한 화면에 최대 12개, 넘으면 아래 번호로 넘김
+  const [page, setPage] = useState(1);
+  const manual: YtVideo[] = c.sermonVideos.map((v) => ({ id: v.youtubeVideoId, title: v.title, published: v.date || "" }));
+  // 편집 화면 "예배 영상 직접 넣기"를 켜고 영상을 넣었으면 그 영상, 껐으면(또는 비었으면) 유튜브 채널 영상
+  const all = (manual.length > 0 ? manual : (videos || [])).slice(0, VIDEO_MAX);
+  const PER = 12;
+  const pages = Math.max(1, Math.ceil(all.length / PER));
+  const cur = Math.min(page, pages);
+  const list = all.slice((cur - 1) * PER, cur * PER);
+  if (videos === null && manual.length === 0) return <p className="py-10 text-center text-sm text-gray-400">설교 영상을 불러오는 중…</p>;
+  if (all.length === 0) return <>{children}</>;
+  const fmt = (d: string) => (d ? d.slice(0, 10).replace(/-/g, ".") : "");
+  return (
+    <section>
+      <p className="text-xs font-black tracking-[0.2em]" style={{ color }}>SERMONS</p>
+      {/* 제목 왼쪽, "유튜브 채널에서 더 보기"는 같은 줄 오른쪽 */}
+      <div className="mt-2 flex items-end justify-between gap-4">
+        <h2 className="text-xl sm:text-2xl font-black text-gray-900">지난 설교</h2>
+        {ch && <a href={ch} target="_blank" rel="noopener noreferrer" className="shrink-0 pb-0.5 text-sm font-bold" style={{ color }}>유튜브 채널에서 더 보기 →</a>}
+      </div>
+      <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {list.map((v) => (
+          <a key={v.id} href={v.short ? `https://www.youtube.com/shorts/${v.id}` : `https://www.youtube.com/watch?v=${v.id}`} target="_blank" rel="noopener noreferrer"
+            className="group overflow-hidden rounded-xl border border-gray-100 bg-white shadow-sm transition-shadow hover:shadow-md">
+            <div className="relative aspect-video bg-black overflow-hidden">
+              <img src={`https://i.ytimg.com/vi/${v.id}/hqdefault.jpg`} alt={v.title} loading="lazy" className="block w-full h-full object-cover transition-transform duration-500 group-hover:scale-[1.03]" />
+              {v.short && <span className="absolute left-2 top-2 rounded-md bg-[#FF0000] px-1.5 py-0.5 text-[11px] font-black text-white">Shorts</span>}
+              <span className="absolute inset-0 flex items-center justify-center">
+                <span className="flex h-12 w-12 items-center justify-center rounded-full bg-black/55 text-white text-lg transition-colors group-hover:bg-[#FF0000]">▶</span>
+              </span>
+            </div>
+            <div className="px-4 py-3">
+              <p className="font-bold text-gray-900 line-clamp-2 break-keep">{v.title}</p>
+              {v.published && <p className="mt-0.5 text-xs text-gray-500">{fmt(v.published)}</p>}
+            </div>
+          </a>
+        ))}
+      </div>
+      {pages > 1 && (
+        <div className="mt-8 flex justify-center gap-1">
+          {Array.from({ length: pages }, (_, i) => i + 1).map((n) => (
+            <button key={n} onClick={() => setPage(n)}
+              className={`h-9 min-w-9 border px-3 text-sm font-bold ${n === cur ? "border-gray-700 bg-gray-700 text-white" : "border-gray-300 text-gray-600 hover:bg-gray-100"}`}>{n}</button>
+          ))}
+        </div>
+      )}
+      {/* 최근 24개(주 1개면 약 6개월치)까지만 보여 주고, 그 이전 영상은 유튜브 채널에서 */}
+      {ch && (
+        <div className="mt-6 text-center">
+          <a href={ch} target="_blank" rel="noopener noreferrer"
+            className="inline-flex h-11 items-center gap-2 rounded-xl border border-gray-300 bg-white px-5 text-sm font-bold text-gray-700 hover:bg-gray-50">
+            <Youtube className="h-4 w-4 text-[#FF0000]" />지난 영상 더 보기 (유튜브 채널)
+          </a>
+        </div>
+      )}
+    </section>
+  );
+}
+
+// 온라인 예배: 왼쪽 큰 화면 = 교회 유튜브 채널이 지금 실시간 방송 중이면 그 방송, 아니면 가장 최근 영상
+// (쇼츠 제외) → 그것도 없으면 온라인 예배에 직접 넣은 영상. 오른쪽 = 이번 주 설교 제목(가장 크게)·본문 말씀·설교자
+function OnlineWorshipLive({ c, color }: { c: SiteContent; color: string }) {
+  const ch = c.youtubeLink;
+  // 미리 받아 둔 영상 목록이 있으면 기다리지 않고 바로 그림. 실시간 방송 여부는 2분이 지났으면 뒤에서 다시 확인
+  const [data, setData] = useState<{ videos: YtVideo[]; live: YtLive } | null>(() => {
+    if (!ch) return { videos: [], live: null };
+    const v = ytMemo.get(ch);
+    return v ? { videos: v, live: ytLiveMemo.get(ch)?.live ?? null } : null;
+  });
+  useEffect(() => {
+    if (!ch) return;
+    const lm = ytLiveMemo.get(ch);
+    if (ytMemo.has(ch) && lm && Date.now() - lm.t < 2 * 60 * 1000) return;
+    let cancelled = false;
+    loadYt(ch).then((d) => { if (!cancelled) setData({ videos: d.videos.length ? d.videos : (ytMemo.get(ch) || []), live: d.live }); });
+    return () => { cancelled = true; };
+  }, [ch]);
+
+  // 아래 "최근 예배 영상": 편집 화면에 지난 예배 재생목록을 넣었으면 그 재생목록 영상만(미리 받아 둔 것 바로 사용)
+  const pl = c.sermonPlaylist;
+  const [plVideos, setPlVideos] = useState<YtVideo[] | null>(() => (pl ? ytMemo.get(pl) ?? null : null));
+  useEffect(() => {
+    if (!pl || ytMemo.has(pl)) return;
+    let cancelled = false;
+    loadYt(pl).then((d) => { if (!cancelled) setPlVideos(d.videos); });
+    return () => { cancelled = true; };
+  }, [pl]);
+  // "예배 영상 직접 넣기"를 켜고 영상을 넣었으면 그 영상 → 재생목록 → 채널 영상(쇼츠 제외)
+  const rows: YtVideo[] = (c.sermonVideos.length
+    ? c.sermonVideos.map((v) => ({ id: v.youtubeVideoId, title: v.title, published: v.date || "" }))
+    : pl && plVideos?.length ? plVideos
+    : (data?.videos.filter((v) => !v.short) || [])).slice(0, VIDEO_MAX);
+  const moreLink = pl || ch;
+  const [picked, setPicked] = useState<YtVideo | null>(null);
+  const [page, setPage] = useState(1);
+  // 오른쪽 위 아이콘으로 보기 전환: ⊞ 카드형(기본) / ☰ 목록형(표). 한 화면 12개, 최대 24개
+  const [view, setView] = useState<"grid" | "table">("grid");
+  const PER = 12;
+  const pages = Math.max(1, Math.ceil(rows.length / PER));
+  const cur = Math.min(page, pages);
+
+  const manual = c.sermonVideos[0];
+  const latestVideo = manual ? undefined : data?.videos.find((v) => !v.short);
+  const videoId = picked?.id || data?.live?.id || latestVideo?.id || manual?.youtubeVideoId || "";
+  const label = picked ? "선택한 예배 영상" : data?.live ? "LIVE" : latestVideo ? "최근 예배 영상" : manual ? "예배 영상" : "";
+  const s = c.sermons[0];
+  const fmtD = (d: string) => (d ? d.slice(0, 10).replace(/-/g, ".") : "-");
+  return (
+    <div className="space-y-12">
+    <section className="grid gap-6 lg:gap-10 lg:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)] items-start">
+      <div>
+        <div className="relative aspect-video overflow-hidden rounded-[16px] bg-black">
+          {videoId ? (
+            <iframe className="block w-full h-full" src={`https://www.youtube.com/embed/${videoId}${data?.live ? "?autoplay=1&mute=1" : ""}`}
+              title={data?.live?.title || latestVideo?.title || manual?.title || "온라인 예배"} allow="autoplay; encrypted-media; picture-in-picture" allowFullScreen />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center text-sm text-white/60">{data === null ? "예배 영상을 불러오는 중…" : "등록된 예배 영상이 없습니다."}</div>
+          )}
+        </div>
+        {label && (
+          <p className="mt-3 flex items-center gap-2 text-sm font-bold text-gray-500">
+            {data?.live && !picked
+              ? <><span className="inline-flex items-center gap-1.5 rounded-md bg-[#FF0000] px-2 py-0.5 text-xs font-black text-white"><span className="h-1.5 w-1.5 rounded-full bg-white animate-pulse" />LIVE</span>지금 실시간으로 예배를 드리고 있습니다</>
+              : label}
+          </p>
+        )}
+      </div>
+      <div className="lg:pt-2">
+        <p className="text-xs font-black tracking-[0.2em]" style={{ color }}>{data?.live ? "LIVE WORSHIP" : "THIS WEEK"}</p>
+        {s ? (
+          <>
+            <h2 className="mt-3 text-2xl sm:text-3xl font-black leading-snug text-gray-900 break-keep">{s.title || "말씀"}</h2>
+            <dl className="mt-6 border-t-2 border-gray-800">
+              {s.scripture && (
+                <div className="grid grid-cols-[84px_minmax(0,1fr)] gap-3 py-3.5 border-b border-gray-100">
+                  <dt className="text-sm font-bold text-gray-400 pt-0.5">본문 말씀</dt>
+                  <dd className="text-[15px] sm:text-base font-bold break-keep" style={{ color }}>{s.scripture}</dd>
+                </div>
+              )}
+              {s.date && (
+                <div className="grid grid-cols-[84px_minmax(0,1fr)] gap-3 py-3.5 border-b border-gray-100">
+                  <dt className="text-sm font-bold text-gray-400 pt-0.5">날짜</dt>
+                  <dd className="text-[15px] sm:text-base text-gray-800 tabular-nums">{s.date.replace(/-/g, ".")}</dd>
+                </div>
+              )}
+              {/* 설교: 날짜 밑에. 주보 설교자 칸 → 비었으면 예배 순서의 설교·말씀 선포 담당자 */}
+              {s.preacher && (
+                <div className="grid grid-cols-[84px_minmax(0,1fr)] gap-3 py-3.5 border-b border-gray-100">
+                  <dt className="text-sm font-bold text-gray-400 pt-0.5">설교</dt>
+                  <dd className="text-[15px] sm:text-base text-gray-800 break-keep">{s.preacher}</dd>
+                </div>
+              )}
+            </dl>
+          </>
+        ) : (
+          <h2 className="mt-3 text-2xl sm:text-3xl font-black text-gray-900">온라인 예배</h2>
+        )}
+        {ch && <a href={ch} target="_blank" rel="noopener noreferrer" className="mt-6 inline-flex h-11 items-center rounded-xl bg-[#FF0000] px-5 text-sm font-bold text-white hover:opacity-90">유튜브 채널에서 보기</a>}
+      </div>
+    </section>
+    {rows.length > 0 && (
+      <section>
+        <div className="flex items-end justify-between gap-4">
+          <div>
+            <p className="text-xs font-black tracking-[0.2em]" style={{ color }}>VIDEOS</p>
+            <h2 className="mt-2 text-xl sm:text-2xl font-black text-gray-900">최근 예배 영상</h2>
+          </div>
+          <div className="flex shrink-0 items-center gap-3">
+          {/* 최근 24개까지만 보여 주고, 그 이전 영상은 유튜브에서(재생목록을 넣었으면 그 재생목록) */}
+          {moreLink && <a href={moreLink} target="_blank" rel="noopener noreferrer" className="hidden sm:inline text-sm font-bold" style={{ color }}>유튜브 채널에서 더 보기 →</a>}
+          {/* 보기 방식 전환(교회 주보 목록과 같은 모양) */}
+          <div className="inline-flex shrink-0 rounded-2xl bg-gray-100 p-1">
+            {([["grid", LayoutGrid, "카드형으로 보기"], ["table", ListIcon, "목록형으로 보기"]] as const).map(([v, Icon, label]) => (
+              <button key={v} type="button" onClick={() => { setView(v); setPage(1); }} aria-label={label} title={label}
+                className={`flex h-10 w-11 items-center justify-center rounded-xl transition-all ${view === v ? "bg-white shadow-sm text-[#3182F6]" : "text-gray-400 hover:text-gray-600"}`}>
+                <Icon className="h-5 w-5" />
+              </button>
+            ))}
+          </div>
+          </div>
+        </div>
+        {moreLink && <a href={moreLink} target="_blank" rel="noopener noreferrer" className="sm:hidden mt-3 inline-block text-sm font-bold" style={{ color }}>유튜브 채널에서 더 보기 →</a>}
+        {view === "table" ? (
+        <div className="mt-5 border-t-2 border-gray-800">
+          <div className="hidden sm:grid grid-cols-[120px_minmax(0,1fr)_88px] gap-4 px-1 py-3 border-b border-gray-200 text-sm font-bold text-gray-400">
+            <span>날짜</span><span>제목</span><span className="text-center">보기</span>
+          </div>
+          {rows.slice((cur - 1) * PER, cur * PER).map((v) => {
+            const on = videoId === v.id;
+            return (
+              <button key={v.id} type="button" onClick={() => { setPicked(v); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                className={`w-full text-left grid grid-cols-[minmax(0,1fr)_auto] sm:grid-cols-[120px_minmax(0,1fr)_88px] gap-x-4 gap-y-1 px-1 py-4 border-b border-gray-100 items-center hover:bg-gray-50/70 ${on ? "bg-gray-50" : ""}`}>
+                <span className="order-2 sm:order-none col-span-2 sm:col-span-1 text-xs sm:text-[15px] tabular-nums text-gray-500">{fmtD(v.published)}</span>
+                <span className="order-1 sm:order-none min-w-0 text-[15px] sm:text-base font-bold text-gray-900 break-keep line-clamp-2">{v.title}</span>
+                <span className="order-1 sm:order-none text-right sm:text-center text-sm font-bold" style={{ color }}>{on ? "재생 중" : "▶ 재생"}</span>
+              </button>
+            );
+          })}
+        </div>
+        ) : (
+        /* 카드형: 한 줄에 3개, 한 화면에 12개까지(최대 24개), 넘으면 아래 번호로 넘김. 누르면 위 큰 화면에서 재생 */
+        <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {rows.slice((cur - 1) * PER, cur * PER).map((v) => {
+            const on = videoId === v.id;
+            return (
+              <button key={v.id} type="button" onClick={() => { setPicked(v); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                className={`group text-left overflow-hidden rounded-xl border bg-white shadow-sm transition-shadow hover:shadow-md ${on ? "border-gray-800" : "border-gray-100"}`}>
+                <span className="relative block aspect-video bg-black overflow-hidden">
+                  <img src={`https://i.ytimg.com/vi/${v.id}/hqdefault.jpg`} alt={v.title} loading="lazy" className="block w-full h-full object-cover transition-transform duration-500 group-hover:scale-[1.03]" />
+                  {on && <span className="absolute left-2 top-2 rounded-md bg-gray-900/85 px-2 py-0.5 text-[11px] font-black text-white">재생 중</span>}
+                  <span className="absolute inset-0 flex items-center justify-center">
+                    <span className="flex h-12 w-12 items-center justify-center rounded-full bg-black/55 text-white text-lg transition-colors group-hover:bg-[#FF0000]">▶</span>
+                  </span>
+                </span>
+                <span className="block p-4">
+                  <span className="block text-[15px] font-bold text-gray-900 break-keep line-clamp-2">{v.title}</span>
+                  <span className="mt-1 block text-xs tabular-nums text-gray-500">{fmtD(v.published)}</span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        )}
+        {pages > 1 && (
+          <div className="mt-6 flex justify-center gap-1">
+            {Array.from({ length: pages }, (_, i) => i + 1).map((n) => (
+              <button key={n} onClick={() => setPage(n)}
+                className={`h-9 min-w-9 border px-3 text-sm font-bold ${n === cur ? "border-gray-700 bg-gray-700 text-white" : "border-gray-300 text-gray-600 hover:bg-gray-100"}`}>{n}</button>
+            ))}
+          </div>
+        )}
+      </section>
+    )}
+    </div>
+  );
+}
+
+// 앨범 목록: 대표 사진(첫 장) · 제목 · 날짜 · 사진 수. PC 3칸 / 태블릿 2칸 / 모바일 1칸
+function AlbumList({ c, color, A }: { c: SiteContent; color: string; A: LinkComp }) {
+  if (c.albums.length === 0) return <p className="py-16 text-center text-gray-400">아직 등록된 앨범이 없습니다.</p>;
+  return (
+    <div className="grid gap-x-6 gap-y-10 sm:grid-cols-2 lg:grid-cols-3">
+      {c.albums.map((a) => (
+        <A key={a.id} to={`/album/${a.id}`} className="group block">
+          <div className="w-full aspect-[4/3] overflow-hidden rounded-[16px]" style={{ background: `linear-gradient(160deg, ${color}10 0%, ${color}2e 100%)` }}>
+            {a.photos[0] ? (
+              <img src={a.photos[0]} alt={a.title} loading="lazy" className="block w-full h-full object-cover transition-transform duration-500 group-hover:scale-[1.03]" />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center text-sm font-bold" style={{ color: `${color}88` }}>사진 없음</div>
+            )}
+          </div>
+          <p className="mt-4 text-lg font-black text-gray-900 group-hover:underline underline-offset-4 break-keep">{a.title}</p>
+          <p className="mt-1 text-sm text-gray-400">{[a.date, `사진 ${a.photos.length}장`].filter(Boolean).join(" · ")}</p>
+        </A>
+      ))}
+    </div>
+  );
+}
+
+// 앨범 상세: 사진 격자, 누르면 크게 보기(좌우 넘기기·ESC로 닫기)
+function AlbumDetail({ c, id, color, A }: { c: SiteContent; id: string; color: string; A: LinkComp }) {
+  const album = c.albums.find((a) => a.id === id);
+  const [open, setOpen] = useState<number | null>(null);
+  const count = album?.photos.length || 0;
+  useEffect(() => {
+    if (open === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(null);
+      if (e.key === "ArrowRight") setOpen((i) => (i === null ? i : (i + 1) % count));
+      if (e.key === "ArrowLeft") setOpen((i) => (i === null ? i : (i - 1 + count) % count));
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, count]);
+  if (!album) return <p className="py-16 text-center text-gray-400">앨범을 찾을 수 없습니다.</p>;
+  return (
+    <div>
+      <h2 className="text-2xl font-black text-gray-900 break-keep">{album.title}</h2>
+      <div className="mt-2 h-px w-10" style={{ background: color }} />
+      <p className="mt-3 text-sm text-gray-400">{[album.date, `사진 ${count}장`].filter(Boolean).join(" · ")}</p>
+      {count === 0 ? (
+        <p className="py-16 text-center text-gray-400">아직 올린 사진이 없습니다.</p>
+      ) : (
+        <div className="mt-6 grid gap-2 sm:gap-3 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4">
+          {album.photos.map((src, i) => (
+            <button key={i} type="button" onClick={() => setOpen(i)} className="block w-full aspect-square overflow-hidden rounded-xl bg-gray-100">
+              <img src={src} alt={`${album.title} ${i + 1}`} loading="lazy" className="block w-full h-full object-cover transition-transform duration-500 hover:scale-[1.04]" />
+            </button>
+          ))}
+        </div>
+      )}
+      <A to="/album" className="inline-block mt-8 text-sm font-bold" style={{ color }}>← 앨범 목록으로</A>
+      {open !== null && (
+        <div className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center" onClick={() => setOpen(null)}>
+          <img src={album.photos[open]} alt="" className="max-w-[92vw] max-h-[86vh] object-contain" onClick={(e) => e.stopPropagation()} />
+          <button type="button" aria-label="닫기" className="absolute top-4 right-4 w-11 h-11 text-white text-3xl leading-none" onClick={() => setOpen(null)}>×</button>
+          {count > 1 && (
+            <>
+              <button type="button" aria-label="이전 사진" className="absolute left-2 sm:left-6 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-white/10 text-white text-2xl"
+                onClick={(e) => { e.stopPropagation(); setOpen((open - 1 + count) % count); }}>‹</button>
+              <button type="button" aria-label="다음 사진" className="absolute right-2 sm:right-6 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-white/10 text-white text-2xl"
+                onClick={(e) => { e.stopPropagation(); setOpen((open + 1) % count); }}>›</button>
+            </>
+          )}
+          <p className="absolute bottom-5 left-0 right-0 text-center text-sm text-white/70">{open + 1} / {count}</p>
+        </div>
+      )}
+    </div>
+  );
 }
 
 // 주보 미리보기(휴대폰 틀) + 바로가기 버튼 + (온라인 주보 페이지만) 고정 QR
@@ -717,7 +1771,9 @@ function NewsTable({ c, A }: { c: SiteContent; A: LinkComp }) {
   const pages = Math.max(1, Math.ceil(list.length / PAGE));
   const cur = Math.min(page, pages);
   const shown = list.slice((cur - 1) * PAGE, cur * PAGE);
+  // 제목은 "2026. 11. 29 교회 소식" 형태(날짜 없는 예전 소식만 첫 제목으로)
   const titleOf = (n: SiteContent["news"][number]) => {
+    if (n.date) return `${n.date.replace(/-/g, ". ")} 교회 소식`;
     const titles = n.items.map((i) => i.title).filter(Boolean);
     return titles.length === 0 ? "교회 소식" : titles.length === 1 ? titles[0] : `${titles[0]} 외 ${titles.length - 1}건`;
   };
@@ -729,7 +1785,7 @@ function NewsTable({ c, A }: { c: SiteContent; A: LinkComp }) {
             <tr>
               <th className="hidden sm:table-cell w-16 border-r border-gray-300 px-4 py-3 text-center font-bold">번호</th>
               <th className="border-r border-gray-300 px-4 py-3 font-bold">제목</th>
-              <th className="hidden sm:table-cell w-32 border-r border-gray-300 px-4 py-3 text-center font-bold">날짜</th>
+              <th className="hidden sm:table-cell w-32 border-r border-gray-300 px-4 py-3 text-center font-bold">작성일</th>
               <th className="w-20 px-4 py-3 text-center font-bold">보기</th>
             </tr>
           </thead>
@@ -774,7 +1830,7 @@ function NewsPost({ c, id, A }: { c: SiteContent; id: string; A: LinkComp }) {
   return (
     <div>
       <div className="border-t-2 border-gray-700">
-        <p className="border-b border-gray-300 bg-gray-50 px-4 py-4 text-lg font-bold text-gray-900">{date} 교회 소식</p>
+        <p className="border-b border-gray-300 bg-gray-50 px-4 py-4 text-lg font-bold text-gray-900">{n.date.replace(/-/g, ". ")} 교회 소식</p>
         <p className="border-b border-gray-200 px-4 py-2.5 text-sm text-gray-500">등록일 {date}</p>
         <div className="divide-y divide-gray-100 px-4">
           {n.items.map((it, i) => (
@@ -947,32 +2003,92 @@ function BulletinCards({ rows, color, fileLink }: { rows: SiteContent["paperBull
 
 // 온라인 주보: 왼쪽 주보 목록 | 가운데 스마트폰 화면 | 오른쪽 제목·버튼·QR.
 // 목록을 누르면 페이지 이동 없이 가운데 화면만 그 주보로 바뀜. QR은 항상 고정 주소(/view/교회ID)
-function JuboPage({ c, color }: { c: SiteContent; color: string }) {
-  const [selectedId, setSelectedId] = useState(c.latestBulletinId);
+// 안의 내용 높이가 바뀌면(페이지를 넘겨 줄 수가 달라질 때 등) 틱 바뀌지 않고 부드럽게 늘었다 줄었다 함(투명해지는 효과 없음)
+function SmoothHeight({ children }: { children: React.ReactNode }) {
+  const inner = useRef<HTMLDivElement>(null);
+  const [h, setH] = useState<number | undefined>(undefined);
+  useLayoutEffect(() => {
+    const el = inner.current;
+    if (!el) return;
+    setH(el.offsetHeight);
+    const ro = new ResizeObserver(() => setH(el.offsetHeight));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return (
+    <div style={{ height: h, overflow: "hidden", transition: "height 560ms cubic-bezier(0.22, 1, 0.36, 1)" }}>
+      <div ref={inner}>{children}</div>
+    </div>
+  );
+}
+
+// 페이지 번호: 한 번에 4개까지만(1~4, 5~8 …). 4개가 넘으면 양옆 < > 로 앞뒤 묶음으로 넘김
+function PageNav({ pages, cur, onChange }: { pages: number; cur: number; onChange: (n: number) => void }) {
+  if (pages <= 1) return null;
+  const SHOW = 4;
+  const start = Math.floor((cur - 1) / SHOW) * SHOW + 1;
+  const end = Math.min(pages, start + SHOW - 1);
+  const btn = "h-9 min-w-9 border px-3 text-sm font-bold";
+  return (
+    <div className="mt-5 flex justify-center gap-1">
+      {pages > SHOW && (
+        <button type="button" aria-label="이전 페이지들" disabled={start === 1} onClick={() => onChange(start - 1)}
+          className={`${btn} border-gray-300 text-gray-600 hover:bg-gray-100 disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent`}>&lt;</button>
+      )}
+      {Array.from({ length: end - start + 1 }, (_, i) => start + i).map((n) => (
+        <button key={n} type="button" onClick={() => onChange(n)}
+          className={`${btn} ${n === cur ? "border-gray-700 bg-gray-700 text-white" : "border-gray-300 text-gray-600 hover:bg-gray-100"}`}>{n}</button>
+      ))}
+      {pages > SHOW && (
+        <button type="button" aria-label="다음 페이지들" disabled={end === pages} onClick={() => onChange(end + 1)}
+          className={`${btn} border-gray-300 text-gray-600 hover:bg-gray-100 disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent`}>&gt;</button>
+      )}
+    </div>
+  );
+}
+
+function JuboPage({ c, color, initialId, A }: { c: SiteContent; color: string; initialId?: string; A: LinkComp }) {
+  const [selectedId, setSelectedId] = useState(initialId || c.latestBulletinId);
   const selected = c.bulletins.find((b) => b.id === selectedId) || c.bulletins.find((b) => b.id === c.latestBulletinId);
   const isLatest = !selected || selected.id === c.latestBulletinId;
   const url = isLatest ? fixedBulletinUrl(c.ownerId) : `https://bulletin.stayon-platform.com/view/${selected!.id}`;
+  // 왼쪽 목록: 한 화면에 7개까지, 나머지는 아래 번호로 넘김(처음엔 선택된 주보가 있는 페이지)
+  const PER = 7;
+  const pages = Math.max(1, Math.ceil(c.bulletins.length / PER));
+  const [page, setPage] = useState(() => {
+    const idx = c.bulletins.findIndex((b) => b.id === (initialId || c.latestBulletinId));
+    return idx >= 0 ? Math.floor(idx / PER) + 1 : 1;
+  });
+  const cur = Math.min(page, pages);
   return (
     <div className="grid gap-8 lg:gap-10 lg:grid-cols-[minmax(0,1fr)_360px_260px] items-start">
       {/* 왼쪽: 온라인 주보 목록 — 칸마다 선이 있는 단순한 표. 누르면 가운데 화면만 바뀜 */}
-      <div className="order-3 lg:order-1 max-h-[640px] overflow-y-auto border-y border-gray-300">
+      {/* 휴대폰: 목록 → 휴대폰 화면 → 정보 순(목록을 맨 위로). PC: 왼쪽 목록 | 가운데 휴대폰 | 오른쪽 정보 */}
+      <div className="order-1 lg:order-1">
+      {/* 표 오른쪽 위 "더보기" → 교회 주보 목록(/bulletins) */}
+      <div className="mb-2 flex justify-end">
+        <A to="/bulletins" className="text-sm font-bold text-gray-500 hover:text-gray-900">더보기 +</A>
+      </div>
+      <SmoothHeight>
+      <div className="border-y border-gray-300">
         <table className="w-full border-collapse text-sm">
-          <thead className="sticky top-0 bg-gray-100">
+          <thead className="bg-gray-100">
             <tr>
-              <th className="w-12 border-b border-r border-gray-300 px-2 py-2.5 text-center font-bold text-gray-700">번호</th>
-              <th className="w-24 border-b border-r border-gray-300 px-2 py-2.5 text-center font-bold text-gray-700">날짜</th>
-              <th className="border-b border-gray-300 px-3 py-2.5 text-left font-bold text-gray-700">제목</th>
+              <th className="w-12 border-b border-r border-gray-300 px-2 py-4 text-center font-bold text-gray-700">번호</th>
+              <th className="w-24 border-b border-r border-gray-300 px-2 py-4 text-center font-bold text-gray-700">날짜</th>
+              <th className="border-b border-gray-300 px-3 py-4 text-left font-bold text-gray-700">제목</th>
             </tr>
           </thead>
           <tbody>
-            {c.bulletins.map((b, i) => {
+            {c.bulletins.slice((cur - 1) * PER, cur * PER).map((b, k) => {
+              const i = (cur - 1) * PER + k;
               const on = b.id === (selected?.id || "");
               const live = b.status === "published"; // 지금 발행 중인 주보 = 이번 주
               return (
                 <tr key={b.id} onClick={() => setSelectedId(b.id)} className={`cursor-pointer ${on ? "bg-gray-100" : "hover:bg-gray-50"}`}>
-                  <td className="border-b border-r border-gray-200 px-2 py-2.5 text-center tabular-nums text-gray-500">{c.bulletins.length - i}</td>
-                  <td className="border-b border-r border-gray-200 px-2 py-2.5 text-center tabular-nums text-gray-600">{b.date.replace(/-/g, ".")}</td>
-                  <td className={`border-b border-gray-200 px-3 py-2.5 ${on ? "font-bold text-gray-900" : "text-gray-800"}`}>
+                  <td className="border-b border-r border-gray-200 px-2 py-4 text-center tabular-nums text-gray-500">{c.bulletins.length - i}</td>
+                  <td className="border-b border-r border-gray-200 px-2 py-4 text-center tabular-nums text-gray-600">{b.date.replace(/-/g, ".")}</td>
+                  <td className={`border-b border-gray-200 px-3 py-4 ${on ? "font-bold text-gray-900" : "text-gray-800"}`}>
                     {/* 이번 주(발행 중) 주보: 제목 앞에 작은 사각 배지 */}
                     {live && <span className="mr-1.5 inline-block align-[1px] rounded-sm px-1.5 py-px text-[11px] font-bold leading-[18px] text-white" style={{ background: color }}>이번 주</span>}
                     {b.title || "주보"}
@@ -983,12 +2099,20 @@ function JuboPage({ c, color }: { c: SiteContent; color: string }) {
           </tbody>
         </table>
       </div>
+      </SmoothHeight>
+      <PageNav pages={pages} cur={cur} onChange={setPage} />
+      {/* 휴대폰에서만: 목록을 누르면 바로 아래 휴대폰 화면에서 그 주보를 볼 수 있다는 안내 */}
+      <p className="lg:hidden mt-5 flex items-center justify-center gap-1.5 rounded-xl bg-gray-50 px-4 py-3 text-center text-[13px] font-semibold text-gray-600 break-keep">
+        목록에서 주보를 누르면 바로 아래 화면에서 실시간 주보를 볼 수 있어요
+        <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0 animate-bounce" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M12 5v14" /><path d="m19 12-7 7-7-7" /></svg>
+      </p>
+      </div>
       {/* 가운데: 스마트폰 화면 */}
-      <div className="order-1 lg:order-2 mx-auto w-[320px] sm:w-[360px] h-[640px] rounded-[2.5rem] border-[10px] border-gray-900 overflow-hidden shadow-xl bg-white">
+      <div className="order-2 lg:order-2 mx-auto w-[320px] sm:w-[360px] h-[640px] rounded-[2.5rem] border-[10px] border-gray-900 overflow-hidden shadow-xl bg-white">
         <PhoneFrame src={url} title={selected ? `${selected.date} 주보` : "온라인 주보"} />
       </div>
       {/* 오른쪽: 제목·버튼·QR */}
-      <div className="order-2 lg:order-3 flex flex-col items-start gap-5 lg:pt-4">
+      <div className="order-3 lg:order-3 flex flex-col items-start gap-5 lg:pt-4">
         <div>
           <p className="text-xs font-black tracking-[0.2em]" style={{ color }}>{isLatest ? "THIS WEEK" : "ARCHIVE"}</p>
           <p className="mt-2 text-2xl font-black text-gray-900">{isLatest ? "이번 주 온라인 주보" : "지난 주보"}</p>

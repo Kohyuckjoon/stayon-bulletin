@@ -516,6 +516,16 @@ export function AdminDashboard() {
 
             {/* 우측: 바로가기(외부사역팀 섭외/청빙 게시판) + 주보 미리보기 + 로그아웃 버튼 그룹 */}
             <div className="flex items-center gap-2">
+              {/* 교회 홈페이지 제작(빌더) 바로 열기 — 좁은 화면에선 아이콘 + "홈페이지"만. 잠시 숨김(주석 해제하면 다시 보임)
+              <button
+                onClick={() => navigate("/website-builder")}
+                className="flex items-center gap-1.5 shrink-0 bg-white text-blue-600 ring-1 ring-blue-200 px-3 sm:px-4 py-2 sm:py-2.5 rounded-full shadow-sm hover:bg-blue-50 active:scale-95 transition-all text-xs sm:text-sm font-black"
+              >
+                <Globe className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                <span className="sm:hidden">홈페이지</span>
+                <span className="hidden sm:inline">교회 사이트 제작</span>
+              </button>
+              */}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <button className="flex items-center gap-1 shrink-0 bg-blue-600 text-white px-3 sm:px-4 py-2 sm:py-2.5 rounded-full shadow-md active:scale-95 transition-all text-xs sm:text-sm font-black relative">
@@ -570,6 +580,32 @@ export function AdminDashboard() {
                       <p className="text-[11px] text-slate-400 truncate">STAYON 에서 합주실·연습실 둘러보기</p>
                     </div>
                     <ExternalLink className="w-3.5 h-3.5 text-slate-300 shrink-0" />
+                  </DropdownMenuItem>
+
+                  {/* 교회 사이트 제작: 지금은 준비 중(자물쇠+비활성, 청빙 게시판과 같은 모양).
+                      열 때는 아래 주석의 활성 버전으로 바꾸면 홈페이지 편집 화면(/website-builder)으로 이동
+                  <DropdownMenuItem
+                    onClick={() => navigate("/website-builder")}
+                    className="rounded-xl px-2.5 py-2.5 gap-3 cursor-pointer focus:bg-blue-50"
+                  >
+                    <div className="w-9 h-9 rounded-xl bg-blue-50 flex items-center justify-center text-blue-600 shrink-0">
+                      <Globe className="w-4 h-4" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-bold text-sm text-slate-900">교회 사이트 제작</p>
+                      <p className="text-[11px] text-slate-400 truncate">주보 내용으로 우리 교회 홈페이지 만들기</p>
+                    </div>
+                    <ChevronRight className="w-3.5 h-3.5 text-slate-300 shrink-0" />
+                  </DropdownMenuItem>
+                  */}
+                  <DropdownMenuItem disabled className="rounded-xl px-2.5 py-2.5 gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-gray-100 flex items-center justify-center text-gray-400 shrink-0">
+                      <Lock className="w-4 h-4" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-bold text-sm text-gray-400">교회 사이트 제작</p>
+                      <p className="text-[11px] text-gray-300 truncate">서비스 준비 중입니다</p>
+                    </div>
                   </DropdownMenuItem>
 
                   {/* 4) 청빙 게시판: 기존 기능 플래그(jobBoardEnabled)를 그대로 따름 — 켜지면 활성, 꺼지면 자물쇠+비활성 */}

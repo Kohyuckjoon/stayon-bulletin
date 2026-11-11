@@ -11,6 +11,7 @@ import { onAuthStateChanged } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import { setLoginReturnTo } from '../../../utils/loginReturn';
 import { getPublishedChurchSites, ChurchSite } from '../../../utils/churchSite';
+import { resolveDenomination, denominationLogoSrc } from '../../../utils/denominations';
 
 export function WebsiteMain() {
     const navigate = useNavigate();
@@ -56,6 +57,48 @@ export function WebsiteMain() {
         const handleScroll = () => setIsScrolled(window.scrollY > 20);
         window.addEventListener('scroll', handleScroll);
         return () => window.removeEventListener('scroll', handleScroll);
+    }, []);
+
+    // 스크롤하면 각 섹션 내용이 하나씩 떠오르며 나타남(2026-11-10). 섹션 제목 → 카드들이 차례로(살짝 시차).
+    // 처음 화면에 이미 보이는 내용은 그대로 두고(깜빡임 방지), 아래쪽 내용만 숨겼다가 화면에 들어올 때 보여 줌.
+    // "동작 줄이기"를 켠 기기에서는 효과 없음
+    useEffect(() => {
+        if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+        const root = document.querySelector('[data-website-root]');
+        if (!root) return;
+        const targets: HTMLElement[] = [];
+        root.querySelectorAll<HTMLElement>('section[id]:not(#pricing-old), section[data-reveal]').forEach((sec) => {
+            const inner = (sec.firstElementChild as HTMLElement | null)?.className.includes('max-w') && !sec.className.includes('max-w')
+                ? sec.firstElementChild as HTMLElement : sec;
+            Array.from(inner.children).forEach((child) => {
+                const el = child as HTMLElement;
+                // 카드 묶음(grid)은 카드 하나하나를 차례로
+                const grid = el.className.includes('grid') ? el : null;
+                if (grid && grid.children.length > 1) {
+                    Array.from(grid.children).forEach((c, i) => { (c as HTMLElement).dataset.revealDelay = String(i * 90); targets.push(c as HTMLElement); });
+                } else {
+                    targets.push(el);
+                }
+            });
+        });
+        const show = (el: HTMLElement) => { el.style.opacity = '1'; el.style.transform = 'none'; };
+        const io = new IntersectionObserver((entries) => {
+            entries.forEach((e) => {
+                if (!e.isIntersecting) return;
+                const el = e.target as HTMLElement;
+                el.style.transitionDelay = `${el.dataset.revealDelay || 0}ms`;
+                show(el);
+                io.unobserve(el);
+            });
+        }, { threshold: 0.15, rootMargin: '0px 0px -40px 0px' });
+        targets.forEach((el) => {
+            if (el.getBoundingClientRect().top < window.innerHeight) return; // 이미 보이는 건 그대로
+            el.style.opacity = '0';
+            el.style.transform = 'translateY(28px)';
+            el.style.transition = 'opacity 0.7s ease-out, transform 0.7s cubic-bezier(0.22, 1, 0.36, 1)';
+            io.observe(el);
+        });
+        return () => { io.disconnect(); targets.forEach(show); };
     }, []);
 
     useEffect(() => {
@@ -122,7 +165,8 @@ export function WebsiteMain() {
     ];
 
     return (
-        <div className="min-h-screen bg-[#F4F6F8] text-[#191F28] font-sans antialiased selection:bg-blue-100 selection:text-blue-900 pb-20 md:pb-0">
+        // 들어올 때 살짝 아래에서 올라오며 서서히 나타남(메인에서 "교회 홈페이지 제작"으로 넘어올 때 자연스럽게)
+        <div data-website-root className="min-h-screen bg-[#F4F6F8] text-[#191F28] font-sans antialiased selection:bg-blue-100 selection:text-blue-900 pb-20 md:pb-0 animate-in fade-in slide-in-from-bottom-2 duration-700 ease-out">
 
             {/* 토스 스타일 상단 네비게이션바 (스크롤 시 배경/그림자 전환 + 시그니처 컬러톤 적용) */}
             <header className={`sticky top-0 z-50 transition-all duration-500 ${isScrolled
@@ -256,7 +300,7 @@ export function WebsiteMain() {
                                 </div>
                                 <div className="bg-white p-3 sm:p-4 rounded-xl sm:rounded-2xl border border-gray-100 shadow-2xs">
                                     <div className="text-[10px] sm:text-xs text-gray-400 font-bold mb-1">월 이용요금</div>
-                                    <div className="text-sm sm:text-base font-black text-[#3182F6]">9,900원</div>
+                                    <div className="text-sm sm:text-base font-black text-[#3182F6]">8,000원~</div>
                                 </div>
                             </div>
 
@@ -365,7 +409,7 @@ export function WebsiteMain() {
                 검색엔진이 이 페이지를 크롤링할 때 그 교회 사이트들을 같이 발견할 수 있게 함.
                 배포된 사이트가 아직 하나도 없으면 섹션 자체를 숨김 */}
             {partnerSites.length > 0 && (
-                <section className="py-12 sm:py-20 bg-white border-y border-gray-100 px-4 sm:px-6">
+                <section data-reveal className="py-12 sm:py-20 bg-white border-y border-gray-100 px-4 sm:px-6">
                     <div className="max-w-6xl mx-auto">
                         <div className="text-center mb-8 sm:mb-12">
                             <p className="text-xs font-bold tracking-[0.25em] text-[#3182F6] mb-3">PARTNER CHURCHES</p>
@@ -373,18 +417,34 @@ export function WebsiteMain() {
                                 스테이온과 함께 하고 있는 교회
                             </h2>
                         </div>
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
-                            {partnerSites.map((site) => (
-                                <a
-                                    key={site.slug}
-                                    href={`https://${site.slug}.stayon-platform.com`}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="block bg-gray-50 hover:bg-gray-100 border border-gray-100 rounded-xl sm:rounded-2xl p-4 sm:p-6 text-center transition-colors"
-                                >
-                                    <p className="font-bold text-gray-900 break-keep">{site.churchName}</p>
-                                </a>
-                            ))}
+                        {/* 가로로 긴 직사각형 카드: 교단 마크 | 교회 이름 · 교단 이름 (2026-11-10). 교단이 없으면 교회 이름 첫 글자 */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
+                            {partnerSites.map((site) => {
+                                const denom = resolveDenomination((site as { denomination?: unknown }).denomination);
+                                return (
+                                    <a
+                                        key={site.slug}
+                                        href={`https://${site.slug}.stayon-platform.com`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="group flex items-center gap-4 bg-white border border-gray-200 hover:border-[#3182F6] rounded-lg px-5 py-4 transition-colors"
+                                    >
+                                        <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md bg-gray-50 overflow-hidden">
+                                            {denom ? (
+                                                <img src={denominationLogoSrc(denom.id)} alt={denom.name} className="h-10 w-10 object-contain" loading="lazy"
+                                                    onError={(e) => { e.currentTarget.style.display = "none"; }} />
+                                            ) : (
+                                                <span className="text-lg font-black text-gray-400">{site.churchName.slice(0, 1)}</span>
+                                            )}
+                                        </span>
+                                        <span className="min-w-0 flex-1 text-left">
+                                            <span className="block font-bold text-gray-900 truncate group-hover:text-[#3182F6] transition-colors">{site.churchName}</span>
+                                            {denom && <span className="block text-xs text-gray-400 truncate">{denom.name.replace(/\s*\(.*\)$/, "")}</span>}
+                                        </span>
+                                        <ArrowRight className="w-4 h-4 text-gray-300 group-hover:text-[#3182F6] shrink-0 transition-colors" />
+                                    </a>
+                                );
+                            })}
                         </div>
                     </div>
                 </section>
@@ -510,17 +570,184 @@ export function WebsiteMain() {
                                 </div>
                                 <div className="flex items-center gap-3 text-sm font-semibold text-white">
                                     <div className="w-6 h-6 rounded-full bg-emerald-400/20 text-emerald-400 flex items-center justify-center flex-shrink-0 text-xs font-bold">✓</div>
-                                    <span>월 9,900원의 투명하고 합리적인 비용</span>
+                                    <span>월 8,000원부터 투명하고 합리적인 비용 <span className="text-slate-400 text-xs font-normal">(관리형 9,900원)</span></span>
                                 </div>
                             </div>
                         </div>
 
                     </div>
+
+                    {/* 관리형 안내 카드: 비교 카드 두 장 아래에 따로, 눈에 띄게(2026-11-10 추가) */}
+                    <div className="max-w-5xl mx-auto mt-4 sm:mt-6 rounded-[1.75rem] sm:rounded-[2.5rem] bg-gradient-to-r from-[#3182F6] to-[#1B64DA] text-white p-6 md:p-10 relative overflow-hidden shadow-xl shadow-blue-200/60">
+                        <div className="absolute -top-10 -right-10 w-48 h-48 bg-white/10 rounded-full pointer-events-none"></div>
+                        <div className="relative grid gap-6 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+                            <div>
+                                <span className="inline-flex items-center gap-1.5 rounded-full bg-white/20 px-3 py-1 text-xs font-black">
+                                    <Sparkles className="w-3.5 h-3.5" /> 관리형 NEW
+                                </span>
+                                <h3 className="mt-3 text-xl sm:text-2xl md:text-3xl font-black tracking-tight break-keep">
+                                    관리형까지 도입!
+                                </h3>
+                                <p className="mt-2 text-sm md:text-base text-blue-50 leading-relaxed break-keep">
+                                    직접 관리하기 어려운 교회를 위해, 스테이온이 교회를 대신해서 홈페이지를 주기적으로 관리해 드립니다.
+                                </p>
+                                <ul className="mt-4 flex flex-wrap gap-2 text-xs sm:text-sm font-bold">
+                                    {['교회 소식·사진 업데이트', '예배 시간·행사 변경 반영', '주보·설교 내용 정리'].map((t) => (
+                                        <li key={t} className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1.5">
+                                            <Check className="w-3.5 h-3.5" /> {t}
+                                        </li>
+                                    ))}
+                                </ul>
+                            </div>
+                            <a href="http://pf.kakao.com/_xexmExnX/chat" target="_blank" rel="noopener noreferrer"
+                                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-white text-[#1B64DA] font-black text-sm px-6 py-4 hover:bg-blue-50 transition whitespace-nowrap">
+                                관리형 문의하기 <ArrowRight className="w-4 h-4" />
+                            </a>
+                        </div>
+                    </div>
                 </div>
             </section>
 
-            {/* 요금 안내 섹션 (PRICING) - 토스 스타일 배너 카드 조합으로 직관성 극대화 */}
+            {/* 요금 안내 (2026-11-10 새 버전): 오픈 이벤트 무료 + 스테이온 제작 대행 문의 + 항목별 비용 세분화 */}
             <section id="pricing" className="py-12 sm:py-24 bg-white border-y border-gray-100 px-4 sm:px-6">
+                <div className="max-w-6xl mx-auto">
+                    <div className="text-center max-w-2xl mx-auto mb-8 sm:mb-14">
+                        <span className="text-xs font-extrabold text-[#3182F6] bg-blue-50 px-3.5 py-1.5 rounded-full inline-block mb-3">PRICING PLAN</span>
+                        <h2 className="text-xl sm:text-2xl md:text-4xl font-black text-[#191F28] tracking-tight break-keep">
+                            지금은 무료로 시작하세요
+                        </h2>
+                        <p className="text-gray-500 mt-3 text-sm md:text-base break-keep">정식 오픈 기념 이벤트 기간에는 교회 홈페이지를 무료로 만들고 운영할 수 있어요.</p>
+                    </div>
+
+                    {/* 1) 오픈 이벤트 배너: 왼쪽 안내 / 오른쪽 가격(0원) */}
+                    <div className="max-w-5xl mx-auto bg-[#F8F9FA] rounded-[1.75rem] sm:rounded-[2.5rem] border border-gray-100 overflow-hidden mb-6 sm:mb-8">
+                        <div className="grid grid-cols-1 lg:grid-cols-12 items-stretch">
+                            <div className="lg:col-span-7 p-6 md:p-12 flex flex-col justify-center">
+                                <div className="inline-flex w-fit items-center gap-1.5 px-3 py-1.5 rounded-full bg-blue-50 text-[#3182F6] text-xs font-bold mb-4 sm:mb-6">
+                                    <Tag className="w-3.5 h-3.5 shrink-0" /> <span className="break-keep">정식 오픈 이벤트</span>
+                                </div>
+                                <h3 className="text-xl sm:text-2xl md:text-3xl font-black text-[#191F28] tracking-tight mb-3 sm:mb-4 break-keep">
+                                    오픈 이벤트 기간,<br />
+                                    <span className="text-[#3182F6]">모든 기능 무료</span>로 이용하세요
+                                </h3>
+                                <p className="text-gray-500 text-sm md:text-base leading-relaxed break-keep">
+                                    구축비·월 이용료 없이 우리 교회 공식 홈페이지를 바로 열 수 있어요. 이벤트가 끝나기 전에 미리 알려 드리고, 그 전까지는 요금이 청구되지 않습니다.
+                                </p>
+                            </div>
+                            <div className="lg:col-span-5 bg-[#191F28] text-white p-6 md:p-12 flex flex-col justify-between relative overflow-hidden">
+                                <div className="absolute top-0 right-0 w-40 h-40 bg-blue-500/20 rounded-bl-full pointer-events-none blur-xl"></div>
+                                <div>
+                                    <div className="flex items-center justify-between mb-4 gap-2">
+                                        <span className="text-xs font-bold text-blue-200 uppercase tracking-wider">Open Event</span>
+                                        <span className="text-[10px] bg-amber-400 text-gray-900 font-black px-2.5 py-1 rounded-full shrink-0 whitespace-nowrap">기간 한정</span>
+                                    </div>
+                                    {/* 요금 두 가지: 기본형(직접 편집) 월 8,000원 / 관리형(스테이온이 대신 관리) 월 9,900원.
+                                        오픈 이벤트 기간에는 무료라는 안내를 아래에 */}
+                                    <div className="space-y-2.5">
+                                        <div className="flex items-center justify-between gap-3 rounded-2xl bg-white/5 px-4 py-3">
+                                            <div className="min-w-0">
+                                                <p className="text-sm font-black text-white">기본형</p>
+                                                <p className="text-[11px] text-slate-400 break-keep">직접 편집해서 운영</p>
+                                            </div>
+                                            <p className="shrink-0 text-white"><span className="text-xs text-blue-200 mr-1">월</span><span className="text-2xl sm:text-3xl font-black tracking-tight">8,000</span><span className="text-xs text-blue-200 ml-0.5">원</span></p>
+                                        </div>
+                                        <div className="flex items-center justify-between gap-3 rounded-2xl bg-[#3182F6]/20 ring-1 ring-[#3182F6]/50 px-4 py-3">
+                                            <div className="min-w-0">
+                                                <p className="text-sm font-black text-white flex items-center gap-1.5">관리형 <span className="text-[10px] bg-amber-400 text-gray-900 font-black px-1.5 py-0.5 rounded-full">추천</span></p>
+                                                <p className="text-[11px] text-slate-400 break-keep">스테이온이 대신 관리</p>
+                                            </div>
+                                            <p className="shrink-0 text-white"><span className="text-xs text-blue-200 mr-1">월</span><span className="text-2xl sm:text-3xl font-black tracking-tight">9,900</span><span className="text-xs text-blue-200 ml-0.5">원</span></p>
+                                        </div>
+                                    </div>
+                                    <div className="mt-3 mb-5 sm:mb-6 inline-flex items-center gap-1.5 rounded-full bg-emerald-400/15 px-3 py-1 text-xs font-bold text-emerald-300">
+                                        <Sparkles className="w-3.5 h-3.5" /> 오픈 이벤트 기간에는 무료
+                                    </div>
+                                    <div className="w-full h-px bg-white/10 mb-5 sm:mb-6"></div>
+                                    <ul className="space-y-3 text-xs md:text-sm text-white font-medium mb-6 sm:mb-8">
+                                        <li className="flex items-center gap-2.5"><CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" /> 교회 공식 홈페이지 정식 운영</li>
+                                        <li className="flex items-center gap-2.5"><CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" /> 온라인 주보·설교 영상 자동 연동</li>
+                                        <li className="flex items-center gap-2.5"><CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" /> 네이버/구글 검색 최적화</li>
+                                    </ul>
+                                </div>
+                                <button
+                                    onClick={() => navigate('/website-builder')} // 바로 홈페이지 편집 화면으로(상단 "무료로 시작하기"와 같음)
+                                    className="w-full bg-[#3182F6] hover:bg-[#1B64DA] text-white font-bold py-4 rounded-2xl transition-all shadow-lg text-sm flex items-center justify-center gap-2 active:scale-98"
+                                >
+                                    <span>무료로 홈페이지 만들기</span>
+                                    <ArrowRight className="w-4 h-4" />
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* 2) 비용 세분화: 항목별로 얼마인지 한눈에 */}
+                    <div className="max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-5 mb-6 sm:mb-8">
+                        <div className="bg-white p-6 sm:p-7 rounded-[1.5rem] border border-gray-100 shadow-2xs flex flex-col">
+                            <div className="flex items-center justify-between gap-2 mb-3">
+                                <h3 className="text-sm font-extrabold text-[#17325C] break-keep">직접 만들기</h3>
+                                <span className="text-[11px] bg-blue-50 text-[#3182F6] font-bold px-2.5 py-1 rounded-full whitespace-nowrap">오픈 이벤트 무료</span>
+                            </div>
+                            <p className="text-gray-500 text-xs md:text-sm leading-relaxed break-keep flex-1">교회가 편집 화면에서 직접 내용을 넣어 만드는 방식이에요. 주보 플랫폼을 쓰면 대부분 자동으로 채워져요.</p>
+                            <div className="mt-4 pt-4 border-t border-gray-100 text-xs text-gray-500 space-y-1">
+                                <div className="flex justify-between"><span>구축비</span><b className="text-[#191F28]">0원</b></div>
+                                <div className="flex justify-between"><span>월 이용료</span><b className="text-[#3182F6]">이벤트 기간 무료</b></div>
+                                <div className="flex justify-between"><span>이벤트 종료 이후</span><b className="text-[#191F28]">월 8,000원</b></div>
+                            </div>
+                        </div>
+                        <div className="bg-white p-6 sm:p-7 rounded-[1.5rem] border-2 border-[#3182F6]/30 shadow-2xs flex flex-col">
+                            <div className="flex items-center justify-between gap-2 mb-3">
+                                <h3 className="text-sm font-extrabold text-[#17325C] break-keep">제작 대행</h3>
+                                <span className="text-[11px] bg-amber-50 text-amber-600 font-bold px-2.5 py-1 rounded-full whitespace-nowrap">문의</span>
+                            </div>
+                            <p className="text-gray-500 text-xs md:text-sm leading-relaxed break-keep flex-1">바쁘시거나 컴퓨터가 어려우시면 스테이온에 문의해 주세요. 교회 자료만 보내 주시면 홈페이지를 대신 만들어 드려요.</p>
+                            <a href="http://pf.kakao.com/_xexmExnX/chat" target="_blank" rel="noopener noreferrer"
+                                className="mt-4 w-full inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#FEE500] hover:brightness-95 text-[#191919] font-bold text-sm py-3 transition">
+                                카카오톡으로 제작 문의하기 <ArrowRight className="w-4 h-4" />
+                            </a>
+                        </div>
+                        <div className="bg-white p-6 sm:p-7 rounded-[1.5rem] border border-gray-100 shadow-2xs flex flex-col">
+                            <div className="flex items-center justify-between gap-2 mb-3">
+                                <h3 className="text-sm font-extrabold text-[#17325C] break-keep">도메인 · SSL 보안서버</h3>
+                                <span className="text-[11px] bg-emerald-50 text-emerald-600 font-bold px-2.5 py-1 rounded-full whitespace-nowrap">기본 포함</span>
+                            </div>
+                            <p className="text-gray-500 text-xs md:text-sm leading-relaxed break-keep flex-1">교회 주소(○○.stayon-platform.com)와 HTTPS 보안 인증서를 추가 비용 없이 기본으로 세팅해 드려요.</p>
+                            <div className="mt-4 pt-4 border-t border-gray-100 text-xs text-gray-500 space-y-1">
+                                <div className="flex justify-between"><span>서버 유지비</span><b className="text-[#191F28]">0원</b></div>
+                                <div className="flex justify-between"><span>SSL 인증서</span><b className="text-[#191F28]">0원</b></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* 3) 준비 중인 옵션 */}
+                    {/* 운영 관리 대행: 준비중이 아닌 제공 중인 서비스로 눈에 띄게(2026-11-10) */}
+                    <div className="max-w-5xl mx-auto rounded-[1.5rem] border-2 border-[#3182F6]/30 bg-blue-50/60 p-5 sm:p-7 flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-6">
+                        <div className="w-11 h-11 rounded-2xl bg-[#3182F6] text-white flex items-center justify-center shrink-0">
+                            <HeartHandshake className="w-5 h-5" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                                <h3 className="text-base sm:text-lg font-black text-[#191F28] break-keep">운영 관리 대행</h3>
+                                <span className="text-[11px] bg-[#3182F6] text-white font-black px-2.5 py-0.5 rounded-full whitespace-nowrap">관리형</span>
+                            </div>
+                            <p className="mt-1 text-sm md:text-[15px] text-gray-600 leading-relaxed break-keep">매주 소식·사진 업데이트까지 스테이온이 맡아 드려요. 교회는 내용만 보내 주시면 됩니다.</p>
+                        </div>
+                        <a href="http://pf.kakao.com/_xexmExnX/chat" target="_blank" rel="noopener noreferrer"
+                            className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#3182F6] hover:bg-[#1B64DA] text-white font-bold text-sm px-5 py-3 whitespace-nowrap transition">
+                            관리 대행 문의하기 <ArrowRight className="w-4 h-4" />
+                        </a>
+                    </div>
+                    <div className="max-w-5xl mx-auto pt-5 text-center">
+                        <a href="#faq" onClick={scrollToSection('faq')} className="text-xs font-bold text-gray-400 hover:text-gray-600 transition-colors inline-flex items-center gap-1">
+                            요금제 상세 약관 및 환불 규정 확인하기 <ChevronRight className="w-3.5 h-3.5" />
+                        </a>
+                    </div>
+                </div>
+            </section>
+
+            {/* [이전 요금 안내 — 보관용, 화면에 안 나옴] 2026-11-10 오픈 이벤트·제작 대행 안내로 바꾸면서 꺼 둠.
+                되살리려면 아래 `false &&` 를 지우면 됨(안쪽에 주석이 있어 주석으로는 감쌀 수 없음) */}
+            {false && (
+            <section id="pricing-old" className="py-12 sm:py-24 bg-white border-y border-gray-100 px-4 sm:px-6">
                 <div className="max-w-6xl mx-auto">
                     <div className="text-center max-w-2xl mx-auto mb-8 sm:mb-16">
                         <span className="text-xs font-extrabold text-[#3182F6] bg-blue-50 px-3.5 py-1.5 rounded-full inline-block mb-3">PRICING PLAN</span>
@@ -692,6 +919,7 @@ export function WebsiteMain() {
                     </div>
                 </div>
             </section>
+            )}
 
             {/* 자주 묻는 질문 (FAQ) */}
             <section id="faq" className="py-12 sm:py-20 px-4 sm:px-6">
@@ -728,7 +956,7 @@ export function WebsiteMain() {
             </section>
 
             {/* 하단 최종 CTA 섹션 */}
-            <section className="bg-[#17325C] text-white py-12 sm:py-20 px-4 sm:px-6 text-center">
+            <section data-reveal className="bg-[#17325C] text-white py-12 sm:py-20 px-4 sm:px-6 text-center">
                 <div className="max-w-3xl mx-auto space-y-4 sm:space-y-6">
                     <h2 className="text-xl sm:text-2xl md:text-4xl font-black break-keep">우리 교회 공식 홈페이지, 지금 바로 시작하세요</h2>
                     <p className="text-blue-200 text-sm md:text-base font-normal break-keep">첫 1개월 무료 체험 · 설치비 0원 · 보수적이고 안정적인 플랫폼</p>

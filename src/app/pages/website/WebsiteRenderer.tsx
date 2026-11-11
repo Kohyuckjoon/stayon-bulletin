@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { getChurchSite, ChurchSite, MENU_ITEMS } from "../../../utils/churchSite";
 import { applySiteFavicon } from "../../../utils/churchFavicon";
+import { readSiteCache, writeSiteCache, removeSiteCache } from "../../../utils/siteLocalCache";
 import { HomeSection } from "./sections/HomeSection";
 import { CommunitySection } from "./sections/CommunitySection";
 import { NewsSection } from "./sections/NewsSection";
@@ -28,14 +29,24 @@ interface Props {
 const siteCache = new Map<string, ChurchSite>();
 
 export function WebsiteRenderer({ slug, site: liveSite, section, pathname }: Props) {
-    const [fetchedSite, setFetchedSite] = useState<ChurchSite | null>(() => (slug ? siteCache.get(slug) ?? null : null));
+    // 지난 방문 때 이 브라우저에 저장해 둔 교회 사이트 정보가 있으면 바로 그림(최신 내용은 아래에서 다시 받아 바꿈)
+    const [fetchedSite, setFetchedSite] = useState<ChurchSite | null>(() =>
+        slug && !liveSite ? siteCache.get(slug) ?? readSiteCache<ChurchSite>(`site:${slug}`) : null);
 
     useEffect(() => {
         if (!slug || liveSite) return;
         let cancelled = false;
         getChurchSite(slug).then((s) => {
-            if (cancelled || !s) return;
+            if (cancelled) return;
+            // 사이트가 삭제됐으면 저장본도 지우고 화면을 비움(저장본으로 옛 사이트가 계속 보이지 않게)
+            if (!s) {
+                siteCache.delete(slug);
+                removeSiteCache(`site:${slug}`);
+                setFetchedSite(null);
+                return;
+            }
             siteCache.set(slug, s);
+            writeSiteCache(`site:${slug}`, s);
             setFetchedSite(s);
         });
         return () => { cancelled = true; };

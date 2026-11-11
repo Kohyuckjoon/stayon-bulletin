@@ -630,6 +630,191 @@ export const fetchYoutubeChannelName = functions.https.onRequest(
   }
 );
 
+// 교회 홈페이지 "지난 설교": 교회 유튜브 채널에 올린 영상을 자동으로 가져온다(2026-11-10).
+// 채널 주소(@아이디·/channel/·영상 주소 모두 가능)로 채널 ID를 찾고, 유튜브가 공개하는
+// 채널 RSS(최신 15개, API 키 필요 없음)를 읽어 {id,title,published}로 돌려준다.
+// 같은 채널은 30분 동안 기억해 두고 바로 돌려줌(유튜브에 매번 묻지 않게)
+const ytCache = new Map<string, {t: number; videos: unknown[]}>();
+const ytIdCache = new Map<string, string>(); // 채널 주소 → 채널 ID
+const ytLiveCache = new Map<string, {t: number; live: unknown}>();
+const YT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
+
+// 온라인 예배 화면: 지금 실시간 방송 중이면 그 영상 ID(2분 동안 기억). 채널의
+// /live 주소는 방송 중일 때만 대표 주소가 watch?v=영상ID가 된다
+const ytLiveNow = async (channelId: string) => {
+  const hit = ytLiveCache.get(channelId);
+  if (hit && Date.now() - hit.t < 2 * 60 * 1000) return hit.live;
+  let live: {id: string; title: string} | null = null;
+  try {
+    const html = await (await fetch(
+      `https://www.youtube.com/channel/${channelId}/live`,
+      {headers: {"User-Agent": YT_UA, "Accept-Language": "ko"}}
+    )).text();
+    const id = (html.match(
+      /<link rel="canonical" href="https:\/\/www\.youtube\.com\/watch\?v=([\w-]{11})"/ // eslint-disable-line max-len
+    ) || [])[1];
+    if (id && /"isLiveNow":true/.test(html)) {
+      const title = (html.match(/<meta name="title" content="([^"]*)"/) ||
+        [])[1] || "";
+      live = {id, title};
+    }
+  } catch (e) {
+    console.error("유튜브 실시간 확인 실패:", e);
+  }
+  ytLiveCache.set(channelId, {t: Date.now(), live});
+  return live;
+};
+
+// 교회 홈페이지에서 부를 때(site=주소): 받은 영상 목록을 그 교회 사이트 데이터에 저장해 둠
+// (채널 = ytVideos, 지난 설교 재생목록 = ytPlaylist) → 다음 방문자는 사이트 데이터와 함께 바로
+// 받아서 이 함수를 부르지 않음. 홈페이지는 저장본이 1시간보다 오래됐을 때만 이 함수를 부름
+// (방문이 없으면 호출도 없음). 이미 1시간 안에 같은 주소로 저장돼 있으면 다시 쓰지 않음
+const YT_SITE_TTL = 60 * 60 * 1000;
+const YT_MAX = 24; // 홈페이지에 보여 줄 영상 최대 개수(주 1개면 약 6개월치)
+type YtItem = {id: string; title: string; published: string; short: boolean};
+const saveYtToSite = async (
+  slug: string, field: "ytVideos" | "ytPlaylist", url: string, videos: unknown[]
+) => {
+  if (!slug || videos.length === 0) return;
+  try {
+    const ref = db.collection("churchSites").doc(slug);
+    const snap = await ref.get();
+    if (!snap.exists) return;
+    const cur = snap.get(field) || {};
+    if (cur.url === url && Date.now() - Number(cur.t || 0) < YT_SITE_TTL) {
+      return;
+    }
+    await ref.update({[field]: {url, t: Date.now(), videos}});
+  } catch (e) {
+    console.error("유튜브 영상 목록 저장 실패:", e);
+  }
+};
+
+const ytUnescape = (t: string) => t.replace(/&amp;/g, "&")
+  .replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+  .replace(/&quot;/g, "\"").replace(/&#39;/g, "'");
+
+// 유튜브 RSS(채널: channel_id=, 재생목록: playlist_id=). 최신 15개까지만 주고,
+// 같은 주소도 될 때와 안 될 때(404)가 섞여 있어서 몇 번 다시 시도
+const ytFeed = async (query: string): Promise<YtItem[]> => {
+  let xml = "";
+  for (let i = 0; i < 4 && !xml.includes("<entry>"); i++) {
+    if (i) await new Promise((r) => setTimeout(r, 400 * i));
+    try {
+      const r = await fetch(`https://www.youtube.com/feeds/videos.xml?${query}`,
+        {headers: {"User-Agent": YT_UA}});
+      xml = r.ok ? await r.text() : "";
+    } catch (e) {
+      xml = "";
+    }
+  }
+  return [...xml.matchAll(/<entry>([\s\S]*?)<\/entry>/g)]
+    .map((m) => ({
+      id: (m[1].match(/<yt:videoId>([^<]+)/) || [])[1] || "",
+      title: ytUnescape((m[1].match(/<title>([^<]*)/) || [])[1] || ""),
+      published: (m[1].match(/<published>([^<]+)/) || [])[1] || "",
+      // 쇼츠는 RSS 링크가 /shorts/영상ID 형태
+      short: /<link rel="alternate" href="[^"]*\/shorts\//.test(m[1]),
+    }))
+    .filter((v) => v.id);
+};
+
+// RSS가 24개가 안 되면(15개 제한·실패) 유튜브 화면(채널 "동영상" / 재생목록)에서
+// 영상 ID·제목을 더 읽어 뒤에 붙임(이렇게 붙인 영상은 날짜 없음). 최대 24개
+const ytFillFromPage = async (pageUrl: string, videos: YtItem[]) => {
+  if (videos.length >= YT_MAX) return;
+  try {
+    const html = await (await fetch(pageUrl,
+      {headers: {"User-Agent": YT_UA, "Accept-Language": "ko"}})).text();
+    const seen = new Set(videos.map((v) => v.id));
+    for (const seg of html.split("\"lockupViewModel\":{").slice(1)) {
+      const id = (seg.match(
+        /"contentId":"([\w-]{11})","contentType":"LOCKUP_CONTENT_TYPE_VIDEO"/
+      ) || [])[1];
+      const raw = (seg.match(
+        /"lockupMetadataViewModel":\{"title":\{"content":"((?:[^"\\]|\\.)*)"/
+      ) || [])[1];
+      if (!id || raw === undefined || seen.has(id)) continue;
+      seen.add(id);
+      let title = raw;
+      try {
+        title = JSON.parse(`"${raw}"`);
+      } catch (e) {
+        // 그대로 씀
+      }
+      videos.push({id, title, published: "", short: false});
+      if (videos.length >= YT_MAX) break;
+    }
+  } catch (e) {
+    console.error("유튜브 화면 읽기 실패:", e);
+  }
+};
+
+// url = 채널 주소(실시간 방송·채널 영상) 또는 재생목록 주소(playlist?list=, 지난 설교용)
+export const youtubeVideos = functions.https.onRequest(async (req, res) => {
+  res.set("Access-Control-Allow-Origin", "*");
+  const channelUrl = String(req.query.url || "");
+  const siteSlug = String(req.query.site || "").replace(/[^a-z0-9-]/g, "");
+  if (!/^https:\/\/((www|m)\.)?(youtube\.com|youtu\.be)\//.test(channelUrl)) {
+    res.status(400).json({error: "invalid url"});
+    return;
+  }
+  const playlistId = (channelUrl.match(/[?&]list=([\w-]+)/) || [])[1] || "";
+  // 재생목록은 실시간 방송 확인 없음
+  const wantLive = req.query.live === "1" && !playlistId;
+  const field = playlistId ? "ytPlaylist" : "ytVideos";
+  const hit = ytCache.get(channelUrl);
+  const cachedId = ytIdCache.get(channelUrl);
+  if (hit && Date.now() - hit.t < 30 * 60 * 1000) {
+    const live = wantLive && cachedId ? await ytLiveNow(cachedId) : null;
+    await saveYtToSite(siteSlug, field, channelUrl, hit.videos);
+    res.set("Cache-Control", wantLive ?
+      "public, max-age=60" : "public, max-age=1800");
+    res.json({videos: hit.videos, live});
+    return;
+  }
+  try {
+    let videos: YtItem[] = [];
+    let channelId = "";
+    if (playlistId) {
+      videos = await ytFeed(`playlist_id=${playlistId}`);
+      await ytFillFromPage(
+        `https://www.youtube.com/playlist?list=${playlistId}`, videos);
+    } else {
+      channelId = (channelUrl.match(/\/channel\/(UC[\w-]{22})/) || [])[1] || "";
+      if (!channelId) {
+        const html = await (await fetch(channelUrl, {
+          headers: {"User-Agent": YT_UA, "Accept-Language": "ko"},
+        })).text();
+        channelId = (
+          html.match(/"externalId":"(UC[\w-]{22})"/) ||
+          html.match(/<meta itemprop="identifier" content="(UC[\w-]{22})"/) ||
+          html.match(/"channelId":"(UC[\w-]{22})"/) || []
+        )[1] || "";
+      }
+      if (!channelId) {
+        res.json({videos: []});
+        return;
+      }
+      videos = await ytFeed(`channel_id=${channelId}`);
+      await ytFillFromPage(
+        `https://www.youtube.com/channel/${channelId}/videos`, videos);
+      ytIdCache.set(channelUrl, channelId);
+    }
+    videos = videos.slice(0, YT_MAX);
+    // 빈 결과는 기억하지 않음(다음 방문 때 다시 가져오게)
+    if (videos.length) ytCache.set(channelUrl, {t: Date.now(), videos});
+    await saveYtToSite(siteSlug, field, channelUrl, videos);
+    const live = wantLive && channelId ? await ytLiveNow(channelId) : null;
+    res.set("Cache-Control", wantLive ?
+      "public, max-age=60" : "public, max-age=1800");
+    res.json({videos, live});
+  } catch (error) {
+    console.error("유튜브 영상 목록 가져오기 실패:", error);
+    res.status(500).json({error: "fetch failed"});
+  }
+});
+
 const BOT_AGENT_REGEX =
   /kakaotalk-scrap|facebookexternalhit|twitterbot|slackbot|telegrambot/i;
 // 검색봇 전용 판별 정규식. BOT_AGENT_REGEX(메신저 링크 미리보기 봇)와는 완전히
@@ -850,7 +1035,7 @@ export const bulletinOG = functions.https.onRequest(async (req, res) => {
     const indexPath = SHELL_HTML_PATH;
     if (fs.existsSync(indexPath)) {
       const indexHtml = fs.readFileSync(indexPath, "utf8");
-      const html = seoPage ?
+      let html = seoPage ?
         injectChurchMeta(indexHtml, {
           title: escapeHtml(seoPage.title),
           description: escapeHtml(seoPage.description),
@@ -858,6 +1043,22 @@ export const bulletinOG = functions.https.onRequest(async (req, res) => {
           imageUrl: /^https?:\/\//.test(imageUrl) ? escapeHtml(imageUrl) : "",
         }) :
         indexHtml;
+      // 구글 색인 문제(2026-11-10): 성도용 HTML에도 검색봇과 같은 주보 본문·구조화
+      // 데이터를 넣음(봇/사람이 받는 내용이 같도록 - 주보 전용 주소 bulletinSite와 같은
+      // 방식). 본문은 #root 안 data-ssr 묶음에 넣고, 성도 화면(React)이 다 그려지면
+      // main.tsx가 지움 — 성도가 보는 주보 화면은 기존과 동일
+      if (seoPage) {
+        const body = seoPage.html.match(/<body>([\s\S]*)<\/body>/);
+        const style = seoPage.html.match(/<style>[\s\S]*?<\/style>/);
+        const ld = seoPage.html.match(
+          /<script type="application\/ld\+json">[\s\S]*?<\/script>/);
+        if (body) {
+          html = html.replace("<div id=\"root\"></div>",
+            `<div id="root"><div data-ssr="1">${style ? style[0] : ""}` +
+            `${body[1]}</div></div>`);
+        }
+        if (ld) html = html.replace("</head>", `${ld[0]}\n</head>`);
+      }
       res.setHeader("Content-Type", "text/html; charset=utf-8");
       res.status(200).send(html);
       return;
@@ -926,6 +1127,7 @@ const SITE_SEARCH_BOT_REGEX =
  * @param {string} html 원본 index.html 문자열
  * @param {{title: string, description: string, canonicalUrl: string,
  *   imageUrl: string}} meta 교회별 메타 값
+ * @param {boolean} forChurchSite 교회 홈페이지용이면 플랫폼 문구·결제 스크립트 정리
  * @return {string} 치환된 HTML 문자열
  */
 function injectChurchMeta(
@@ -935,7 +1137,8 @@ function injectChurchMeta(
     description: string;
     canonicalUrl: string;
     imageUrl: string;
-  }
+  },
+  forChurchSite = false
 ): string {
   let result = html
     .replace(/<title>[^<]*<\/title>/, `<title>${meta.title}</title>`)
@@ -955,11 +1158,41 @@ function injectChurchMeta(
       /<meta\s+property="og:url"\s+content="[^"]*"\s*\/?>/,
       `<meta property="og:url" content="${meta.canonicalUrl}" />`
     );
-  if (meta.imageUrl) {
-    result = result.replace(
-      /<meta\s+property="og:image"\s+content="[^"]*"\s*\/?>/,
-      `<meta property="og:image" content="${meta.imageUrl}" />`
+  // 교회 홈페이지인데 주보 플랫폼 홍보 문구(키워드 "온라인 주보, 990원 주보"·트위터 카드)와
+  // 결제 스크립트가 그대로 남아 있었음 → 구글이 보기엔 모든 교회 사이트가 같은 플랫폼 광고 페이지.
+  // 교회 것으로 바꾸고 필요 없는 건 뺌. 교회 홈페이지(검색봇용)에서만 — 주보 화면(/view, -jubo)은 그대로
+  if (!forChurchSite) {
+    return result.replace(
+      "</head>",
+      `  <link rel="canonical" href="${meta.canonicalUrl}" />\n  </head>`
     );
+  }
+  result = result
+    .replace(/\s*<meta\s+name="keywords"\s+content="[^"]*"\s*\/?>/, "")
+    .replace(/\s*<meta\s+name="author"\s+content="[^"]*"\s*\/?>/, "")
+    .replace(
+      /<meta\s+name="twitter:title"\s+content="[^"]*"\s*\/?>/,
+      `<meta name="twitter:title" content="${meta.title}" />`
+    )
+    .replace(
+      /<meta\s+name="twitter:description"\s+content="[^"]*"\s*\/?>/,
+      `<meta name="twitter:description" content="${meta.description}" />`
+    )
+    .replace(/\s*<script\s+src="https:\/\/cdn\.portone\.io[^"]*"><\/script>/,
+      "");
+  if (meta.imageUrl) {
+    result = result
+      .replace(
+        /<meta\s+property="og:image"\s+content="[^"]*"\s*\/?>/,
+        `<meta property="og:image" content="${meta.imageUrl}" />`
+      )
+      .replace(
+        /<meta\s+name="twitter:image"\s+content="[^"]*"\s*\/?>/,
+        `<meta name="twitter:image" content="${meta.imageUrl}" />`
+      );
+  } else {
+    result = result.replace(
+      /\s*<meta\s+name="twitter:image"\s+content="[^"]*"\s*\/?>/, "");
   }
   return result.replace(
     "</head>",
@@ -1148,11 +1381,34 @@ export const siteOG = functions.https.onRequest(async (req, res) => {
     }
   }
 
-  if (churchSlug && (isPreviewBot || isSearchBot)) {
+  // 일반 방문자(사람)도 교회 페이지 HTML을 받음(2026-11-10). 예전엔 사람에게는 Hosting의
+  // 주보 플랫폼 메인(제목 "온라인 주보 제작 스테이온", 대표 주소 bulletin)이 나가고 봇에게만
+  // 교회 페이지를 줘서, 구글이 "교회 주소 = bulletin 메인 복사본 + 봇에게만 다른 내용"으로 보고
+  // 색인하지 않았음. 주보플러스처럼 누구에게나 같은 HTML을 주고, 사람은 그 위에 React가 뜸
+  const isHumanVisit = !isPreviewBot && !isSearchBot;
+  if (churchSlug) {
     try {
       const siteRef = db.collection("churchSites").doc(churchSlug);
       const siteDoc = await siteRef.get();
-      if (siteDoc.exists) {
+      // 구글 색인 문제(2026-11-09): 없는 교회 주소(아무거나.stayon-platform.com)나 발행 전 사이트도
+      // 예전엔 아래 "그 외 모든 경우"로 빠져 주보 플랫폼 첫 화면을 200으로 줬음 → 구글이 보기엔 같은 내용이
+      // 주소만 바꿔 무한히 있는 사이트(저품질)로 보임. 검색봇에게는 404로 "없는 페이지"라고 정확히 알려 줌
+      const notPublished =
+        !siteDoc.exists || siteDoc.data()?.published !== true;
+      if (isSearchBot && notPublished) {
+        res.setHeader("Content-Type", "text/html; charset=utf-8");
+        res.setHeader("X-Robots-Tag", "noindex");
+        res.status(404).send("<!DOCTYPE html><html lang=\"ko\"><head>" +
+          "<meta charset=\"utf-8\" />" +
+          "<meta name=\"robots\" content=\"noindex\" />" +
+          "<title>페이지를 찾을 수 없습니다</title></head>" +
+          "<body><h1>페이지를 찾을 수 없습니다</h1></body></html>");
+        return;
+      }
+      // 사람: 발행 전·원페이지형은 예전과 똑같이 아래 기본 화면(React가 그림)으로
+      const humanFallback = isHumanVisit &&
+        (notPublished || siteDoc.data()?.layoutMode === "onepage");
+      if (siteDoc.exists && !humanFallback) {
         const site = siteDoc.data() as Record<string, unknown>;
         const rawName = site.churchName;
         const churchName =
@@ -1179,7 +1435,7 @@ export const siteOG = functions.https.onRequest(async (req, res) => {
         const safeImageUrl = imageUrl ? escapeHtml(imageUrl) : "";
 
         // 페이지 전환형 교회 홈페이지: 주소마다 그 페이지 내용(MultiPageSite와 같음)
-        if (isSearchBot && site.layoutMode !== "onepage" &&
+        if ((isSearchBot || isHumanVisit) && site.layoutMode !== "onepage" &&
           fs.existsSync(SHELL_HTML_PATH)) {
           const ownerId = typeof site.ownerId === "string" ? site.ownerId : "";
           const ctx = ownerId ? await resolveCtx(ownerId) : null;
@@ -1199,16 +1455,36 @@ export const siteOG = functions.https.onRequest(async (req, res) => {
               description: escapeHtml(page.description),
               canonicalUrl: escapeHtml(page.canonical),
               imageUrl: safeImageUrl,
-            }).replace("<div id=\"root\"></div>",
-              `<div id="root">${page.bodyHtml}</div>`) :
+            }, true).replace("<div id=\"root\"></div>",
+              `<div id="root">${page.bodyHtml}</div>`)
+              .replace("</head>", `${page.styleHtml}\n</head>`) :
             shell.replace("</head>",
               "  <meta name=\"robots\" content=\"noindex\" />\n  </head>");
           // 파비콘: 홈페이지에서 고른 교단 → 교회 계정 교단 → 스테이온 기본
           const denom = denominationId(site.denomination) ||
             (ctx ? ctx.denomination : "");
+          // 교회 정보 구조화 데이터(주보플러스와 같은 schema.org "Church")
+          const str = (v: unknown) => typeof v === "string" ? v.trim() : "";
+          const ld: Record<string, unknown> = {
+            "@context": "https://schema.org",
+            "@type": "Church",
+            "@id": `${base}/#church`,
+            "name": churchName,
+            "url": `${base}/`,
+            "description": description,
+          };
+          if (imageUrl) ld.image = imageUrl;
+          if (isRealUrl(site.logoUrl)) ld.logo = site.logoUrl;
+          if (str(site.address)) ld.address = str(site.address);
+          if (str(site.phone)) ld.telephone = str(site.phone);
+          const ldTag = page ? "<script type=\"application/ld+json\">" +
+            JSON.stringify(ld).replace(/</g, "\\u003c") + "</script>" : "";
           res.setHeader("Content-Type", "text/html; charset=utf-8");
-          res.status(200).send(withFavicon(
-            html.replace("<head>", `<head>\n${metas}`), denom));
+          // 없는 페이지(/community 같은 옛 주소, 오타 주소)는 200+noindex가 아니라 404로
+          // (200으로 주면 구글이 "내용 없는 페이지가 많은 사이트"로 봄 - soft 404)
+          res.status(page ? 200 : 404).send(withFavicon(
+            html.replace("<head>", `<head>\n${metas}`)
+              .replace("</head>", `${ldTag}\n</head>`), denom));
           return;
         }
 
@@ -1222,7 +1498,7 @@ export const siteOG = functions.https.onRequest(async (req, res) => {
               description: safeDesc,
               canonicalUrl: safeUrl,
               imageUrl: safeImageUrl,
-            });
+            }, true);
               // head 메타만 바꾸고 본문(<div id="root">)을 비워두면 검색봇
               // 첫 크롤링 시점엔 "제목/설명은 있는데 본문은 텅 빈 페이지"로
               // 읽혀서 저품질(thin content) 판정을 받기 쉽다 — 실제 방문자는
@@ -1406,24 +1682,36 @@ export const churchSitemap = functions.https.onRequest(async (_req, res) => {
       .where("published", "==", true)
       .get();
 
-    const sections = ["", "worship", "community", "news", "location"];
+    // 예전엔 모든 교회에 /worship·/community·/news·/location을 고정으로 넣었는데,
+    // /community는 지금 없는 주소(404)라 구글이 "사이트맵에 없는 페이지가 섞인 사이트"로 봄.
+    // 교회별 sitemap.xml과 같은 목록(실제로 있는 메뉴 페이지)을 그대로 씀. 원페이지형은 첫 주소만
     const urlEntries: string[] = [];
 
-    snapshot.forEach((doc) => {
+    for (const doc of snapshot.docs) {
       const site = doc.data() as Record<string, unknown>;
       const slug = doc.id;
+      const base = `https://${slug}.stayon-platform.com`;
       const updatedAt = site.updatedAt as
         admin.firestore.Timestamp | undefined;
-      const lastmod = updatedAt ?
+      const lastmod = updatedAt && typeof updatedAt.toDate === "function" ?
         updatedAt.toDate().toISOString().split("T")[0] :
         undefined;
-
-      sections.forEach((section) => {
-        const loc = `https://${slug}.stayon-platform.com/${section}`;
-        const lastmodTag = lastmod ? `<lastmod>${lastmod}</lastmod>` : "";
-        urlEntries.push(`  <url><loc>${loc}</loc>${lastmodTag}</url>`);
+      const lastmodTag = lastmod ? `<lastmod>${lastmod}</lastmod>` : "";
+      let locs = [`${base}/`];
+      if (site.layoutMode !== "onepage") {
+        try {
+          const ownerId = typeof site.ownerId === "string" ? site.ownerId : "";
+          const ctx = ownerId ? await resolveCtx(ownerId) : null;
+          locs = churchSitePaths(site, ctx, base);
+        } catch (e) {
+          console.error("교회 사이트맵 페이지 목록 실패:", slug, e);
+        }
+      }
+      locs.forEach((loc) => {
+        urlEntries.push(
+          `  <url><loc>${escapeHtml(loc)}</loc>${lastmodTag}</url>`);
       });
-    });
+    }
 
     const xml = [
       "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
@@ -1464,6 +1752,21 @@ export const bulletinSitemap = functions.https.onRequest(
         const userDocs = authorIds.length ?
           await db.getAll(...authorIds.map((id) => db.doc(`users/${id}`))) :
           [];
+        // 발행된 교회 홈페이지(교회 계정 → 홈페이지 주소). 메인 페이지에서 교회
+        // 홈페이지로 가는 진짜 링크를 걸어 구글이 교회 홈페이지를 찾아가게 함
+        // (구글 색인 문제 2026-11-09: 교회 홈페이지를 가리키는 링크가 하나도 없었음)
+        const siteSnap = await db.collection("churchSites")
+          .where("published", "==", true).get();
+        const siteByOwner = new Map<string, string>();
+        const siteNameByOwner = new Map<string, string>();
+        siteSnap.docs.forEach((d) => {
+          const owner = d.data().ownerId;
+          if (typeof owner === "string" && owner && !siteByOwner.has(owner)) {
+            siteByOwner.set(owner, `https://${d.id}.stayon-platform.com/`);
+            const nm = d.data().churchName;
+            siteNameByOwner.set(owner, typeof nm === "string" ? nm.trim() : "");
+          }
+        });
         const churches = userDocs
           .filter((u) => u.exists)
           .map((u) => ({
@@ -1472,14 +1775,32 @@ export const bulletinSitemap = functions.https.onRequest(
             // 주보 전용 주소가 있으면 그쪽으로 링크(없으면 Landing이 /view/{id})
             url: u.data()?.bulletinSearchable === true ?
               juboSiteBase(u.data()?.bulletinSlug) : "",
+            site: siteByOwner.get(u.id) || "",
           }))
-          .filter((c): c is {id: string; name: string; url: string} =>
+          .filter((c): c is {
+            id: string; name: string; url: string; site: string;
+          } =>
             typeof c.name === "string" && c.name.trim() !== "" &&
             !c.name.trim().startsWith("마스터") && // 운영자 테스트 계정 제외
             !LANDING_EXCLUDED_CHURCHES.includes(c.name.trim()));
+        // 위 목록에 안 들어간 교회 홈페이지(주보가 없거나, 운영자 계정이 만든
+        // 사이트 — 예: 스테이온교회는 "마스터" 계정 소유)도 홈페이지 링크만 추가.
+        // 이름은 홈페이지에 적힌 교회 이름
+        const listed = new Set(churches.map((c) => c.id));
+        const siteOnly = [...siteByOwner.entries()]
+          .filter(([owner]) => !listed.has(owner))
+          .map(([owner, site]) => ({
+            id: `site-${owner}`,
+            name: siteNameByOwner.get(owner) || "",
+            url: "",
+            site,
+            onlySite: true,
+          }))
+          .filter((c) => c.name !== "" &&
+            !LANDING_EXCLUDED_CHURCHES.includes(c.name));
         res.setHeader("Content-Type", "application/json; charset=utf-8");
         res.setHeader("Cache-Control", "public, max-age=600");
-        res.status(200).send(JSON.stringify(churches));
+        res.status(200).send(JSON.stringify([...churches, ...siteOnly]));
         return;
       }
 
@@ -1696,6 +2017,21 @@ export const bulletinSite = functions.https.onRequest(async (req, res) => {
       "<head>",
       `<head>\n${toView}\n${ctx ? churchVerificationMetas(ctx) : ""}`
     );
+    // 구글 색인 문제(2026-11-10): 성도용 HTML에도 검색봇과 같은 주보 본문·구조화
+    // 데이터를 넣음(봇/사람이 받는 내용이 같도록). 본문은 #root 안에 넣고, 성도 화면
+    // (React)이 다 그려지면 main.tsx가 지움 — 성도가 보는 주보 화면은 기존과 동일
+    if (page) {
+      const body = page.html.match(/<body>([\s\S]*)<\/body>/);
+      const style = page.html.match(/<style>[\s\S]*?<\/style>/);
+      const ld = page.html.match(
+        /<script type="application\/ld\+json">[\s\S]*?<\/script>/);
+      if (body) {
+        html = html.replace("<div id=\"root\"></div>",
+          `<div id="root"><div data-ssr="1">${style ? style[0] : ""}` +
+          `${body[1]}</div></div>`);
+      }
+      if (ld) html = html.replace("</head>", `${ld[0]}\n</head>`);
+    }
     // 교단 파비콘(교단을 모르면 스테이온 기본 파비콘 그대로)
     if (ctx) html = withFavicon(html, ctx.denomination);
     res.setHeader("Content-Type", "text/html; charset=utf-8");

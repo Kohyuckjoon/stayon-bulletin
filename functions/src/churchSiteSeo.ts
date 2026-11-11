@@ -19,6 +19,11 @@ interface Page {
 }
 
 const arr = (v: unknown): Doc[] => objArray(v);
+// 날짜만 뽑아 YYYY-MM-DD로(화면 쪽 churchSiteContent.ts와 같은 규칙)
+const normDate = (v: unknown): string => {
+  const m = str(v).match(/(\d{4})[.\-/]\s*(\d{1,2})[.\-/]\s*(\d{1,2})/);
+  return m ? `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}` : "";
+};
 
 const PAGES: {path: string; label: string; group: string}[] = [
   {path: "/about", label: "교회 소개", group: "교회소개"},
@@ -27,6 +32,9 @@ const PAGES: {path: string; label: string; group: string}[] = [
   {path: "/about/staff", label: "섬기는 사람들", group: "교회소개"},
   {path: "/location", label: "오시는 길", group: "교회소개"},
   {path: "/worship", label: "예배 안내", group: "예배"},
+  // 주일학교/교육부서(메뉴 이름은 교회가 정함 - 화면에선 eduLabel).
+  // 부서별 화면은 /education/1, /education/2 …
+  {path: "/education", label: "주일학교", group: "주일학교"},
   {path: "/worship/online", label: "온라인 예배", group: "예배"},
   {path: "/sermons", label: "설교", group: "예배"},
   {path: "/bulletins", label: "교회 주보", group: "주보"},
@@ -58,6 +66,8 @@ interface Content {
   paperSermons: {date: string; fileUrl: string; text: string}[];
   prayers: {id: string; title: string; date: string; content: string}[];
   history: Doc[];
+  edu: Doc[]; // 주일학교·교육부서(홈페이지 편집 화면)
+  eduLabel: string;
 }
 
 /**
@@ -67,7 +77,11 @@ interface Content {
  * @return {Content} 내용
  */
 function buildContent(site: Doc, ctx: Ctx | null): Content {
-  const b = (ctx?.bulletin?.data || {}) as Doc;
+  // 교회 정보 가져오기가 "custom"(주보와 다르게)·"website"(홈페이지만)이면 주보 정보 대신
+  // 홈페이지 입력값만 씀(src/utils/churchSiteContent.ts와 같은 규칙)
+  const useBulletinInfo = site.dataSource !== "custom" &&
+    site.dataSource !== "website";
+  const b = (useBulletinInfo ? (ctx?.bulletin?.data || {}) : {}) as Doc;
   const status = ctx?.user.status;
   const senior = (b.seniorPastorEnabled !== false && b.seniorPastor ?
     b.seniorPastor : {}) as Doc;
@@ -136,7 +150,8 @@ function buildContent(site: Doc, ctx: Ctx | null): Content {
   if (worship.length === 0) {
     arr(site.worshipServices).filter((w) => str(w.title) || str(w.time))
       .forEach((w) => worship.push({group: str(w.group) || "예배 시간",
-        title: str(w.title), time: str(w.time), place: str(w.note)}));
+        title: str(w.title), time: str(w.time),
+        place: str(w.place) || str(w.note)}));
     if (worship.length === 0 && str(site.worshipTime)) {
       worship.push({group: "예배 시간", title: "예배 안내",
         time: str(site.worshipTime), place: ""});
@@ -145,24 +160,39 @@ function buildContent(site: Doc, ctx: Ctx | null): Content {
 
   const news: Content["news"] = (ctx?.list || []).map((x) => ({
     id: x.id,
-    date: str(x.data.date),
+    date: normDate(x.data.date),
     items: arr(x.data.announcements)
       .map((a) => ({title: str(a.title), content: str(a.content)}))
       .filter((a) => a.title || a.content),
   })).filter((n) => n.items.length > 0);
+  const bulletinIds = new Set(news.map((n) => n.id));
   arr(site.newsItems).forEach((n, i) => {
-    if (str(n.title) || str(n.content)) {
-      news.push({id: `site-${i}`, date: str(n.date),
-        items: [{title: str(n.title), content: str(n.content)}]});
+    // 한 건에 1번·2번… 여러 소식(items). 예전 데이터는 title/content 한 개
+    const lines = (arr(n.items).length ? arr(n.items) :
+      [{title: n.title, content: n.content}])
+      .map((a) => ({title: str(a.title), content: str(a.content)}))
+      .filter((a) => a.title || a.content);
+    if (lines.length) {
+      news.push({id: str(n.id) || `site-${i}`, date: normDate(n.date),
+        items: lines});
     }
   });
+  // 같은 날짜에 주보 소식과 홈페이지 소식이 둘 다 있으면 홈페이지 것만
+  // (홈페이지·주보 저장 때 "반대쪽에도 반영할까요?"로 맞춤)
+  const siteDates = new Set(news.filter((n) => !bulletinIds.has(n.id))
+    .map((n) => n.date).filter(Boolean));
+  for (let i = news.length - 1; i >= 0; i--) {
+    if (bulletinIds.has(news[i].id) && siteDates.has(news[i].date)) {
+      news.splice(i, 1);
+    }
+  }
   // 종이 주보 자동 분석으로 교회가 넣은 교회 소식(주보 한 부 = 한 묶음)
   arr(site.paperBulletins).forEach((p) => {
     const items = arr(p.news)
       .map((a) => ({title: str(a.title), content: str(a.content)}))
       .filter((a) => a.title || a.content);
     if (items.length) {
-      news.push({id: `paper-${str(p.id)}`, date: str(p.date), items});
+      news.push({id: `paper-${str(p.id)}`, date: normDate(p.date), items});
     }
   });
   news.sort((a, z) => z.date.localeCompare(a.date));
@@ -188,9 +218,13 @@ function buildContent(site: Doc, ctx: Ctx | null): Content {
     ctx,
     intro: (b.churchIntroEnabled !== false && str(b.churchIntro)) ||
       str(site.intro),
-    vision: b.churchVisionEnabled !== false ? str(b.churchVision) : "",
-    mission: b.churchMissionEnabled !== false ? str(b.churchMission) : "",
-    motto: b.mottoEnabled !== false ? str(b.mottoText) : "",
+    // 주보 → 없으면 홈페이지 편집 화면 > 교회소개(화면 쪽 churchSiteContent.ts와 같은 규칙)
+    vision: (b.churchVisionEnabled !== false && str(b.churchVision)) ||
+      str(site.vision),
+    mission: (b.churchMissionEnabled !== false && str(b.churchMission)) ||
+      str(site.mission),
+    motto: (b.mottoEnabled !== false && str(b.mottoText)) ||
+      str(site.mottoText),
     pastor: pastorName || pastorText ?
       {name: pastorName, role: str(senior.role) || str(site.pastorRole) ||
         "담임목사", title: pastorTitle, text: pastorText} : null,
@@ -210,6 +244,8 @@ function buildContent(site: Doc, ctx: Ctx | null): Content {
     paperSermons,
     prayers,
     history: arr(site.historyItems),
+    edu: arr(site.eduDepartments).filter((d) => str(d.name)),
+    eduLabel: str(site.eduMenuLabel) || "주일학교",
   };
 }
 
@@ -222,8 +258,7 @@ function buildContent(site: Doc, ctx: Ctx | null): Content {
 function hasPage(path: string, c: Content): boolean {
   const list = c.ctx?.list || [];
   switch (path) {
-  case "/about": return !!(c.intro || c.vision || c.mission || c.motto ||
-    arr(c.site.visionItems).length);
+  case "/about": return !!(c.intro || c.vision || c.mission || c.motto);
   case "/about/pastor": return !!(c.pastor && (c.pastor.text ||
     c.pastor.title));
   case "/about/history": return c.history.length > 0;
@@ -240,6 +275,7 @@ function hasPage(path: string, c: Content): boolean {
   case "/news": return c.news.length > 0;
   case "/column": return (c.ctx?.columns.length || 0) > 0;
   case "/prayer": return c.prayers.length > 0;
+  case "/education": return c.edu.length > 0;
   }
   return false;
 }
@@ -274,6 +310,21 @@ function buildPage(c: Content, base: string, path: string): Page | null {
     if (list[0]) {
       parts.push("<h2>이번 주 주보</h2>" +
         `<p>${a("/jubo", label(list[0].data) || "이번 주 주보")}</p>`);
+    }
+    // 메인에서 상세 페이지로 바로 가는 링크(구글이 하위 페이지를 타고 들어가게 —
+    // 주보플러스 메인처럼 최근 주보·교회소식·부서 상세 링크를 함께 둔다)
+    if (list.length) {
+      parts.push("<h2>최근 주보</h2>" + ul(list.slice(0, 6).map((x) =>
+        a(`/bulletins/${x.id}`, label(x.data) || "주보"))));
+    }
+    if (c.news.length) {
+      parts.push("<h2>교회소식</h2>" + ul(c.news.slice(0, 6).map((n) =>
+        a(`/news/${n.id}`, `${n.date} ` + n.items.map((i) => i.title)
+          .filter(Boolean).slice(0, 2).join(" · ")))));
+    }
+    if (c.edu.length) {
+      parts.push(`<h2>${esc(c.eduLabel)}</h2>` + ul(c.edu.map((d, i) =>
+        a(`/education/${i + 1}`, str(d.name)))));
     }
     if (c.address) parts.push(`<h2>오시는 길</h2><p>${esc(c.address)}</p>`);
     return {
@@ -334,6 +385,22 @@ function buildPage(c: Content, base: string, path: string): Page | null {
     };
   }
 
+  // 주일학교 부서별 화면(/education/1 …): 부서 하나의 대상·예배 시간·장소·담당·소개
+  if (seg[0] === "education" && seg.length === 2) {
+    const d = c.edu[Number(seg[1]) - 1];
+    if (!d) return null;
+    const rows = [["대상", str(d.target)], ["예배 시간", str(d.time)],
+      ["장소", str(d.place)], ["담당", str(d.leader)]].filter(([, v]) => v);
+    return {
+      title: `${str(d.name)} | ${c.eduLabel} | ${c.name}`,
+      description: clip([str(d.name), ...rows.map(([k, v]) => `${k} ${v}`),
+        str(d.desc)].filter(Boolean).join(" · "), 150),
+      h1: str(d.name),
+      body: ul(rows.map(([k, v]) => `<strong>${esc(k)}</strong> ${esc(v)}`)) +
+        (str(d.desc) ? `<p>${nl2br(str(d.desc))}</p>` : ""),
+    };
+  }
+
   const def = PAGES.find((x) => x.path === p);
   if (!def || !hasPage(p, c)) return null;
   let body = "";
@@ -343,8 +410,6 @@ function buildPage(c: Content, base: string, path: string): Page | null {
       c.intro && `<h2>교회 소개</h2><p>${nl2br(c.intro)}</p>`,
       c.vision && `<h2>비전</h2><p>${nl2br(c.vision)}</p>`,
       c.mission && `<h2>사명</h2><p>${nl2br(c.mission)}</p>`,
-      ul(arr(c.site.visionItems).map((v) => `<strong>${esc(str(v.title))}` +
-        `</strong> ${esc(str(v.desc))}`)),
     ].filter(Boolean).join("");
     break;
   case "/about/pastor":
@@ -412,12 +477,17 @@ function buildPage(c: Content, base: string, path: string): Page | null {
     body = ul(c.prayers.map((x) => a(`/prayer/${x.id}`,
       `${x.date} ${x.title}`)));
     break;
+  case "/education":
+    body = ul(c.edu.map((d, i) => a(`/education/${i + 1}`,
+      [str(d.name), str(d.target)].filter(Boolean).join(" · "))));
+    break;
   }
+  const defLabel = p === "/education" ? c.eduLabel : def.label;
   return {
-    title: `${def.label} | ${c.name}`,
+    title: `${defLabel} | ${c.name}`,
     description: clip(body.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ")
-      .trim() || `${c.name} ${def.label}`, 150),
-    h1: def.label,
+      .trim() || `${c.name} ${defLabel}`, 150),
+    h1: defLabel,
     body,
   };
 }
@@ -433,23 +503,110 @@ function buildPage(c: Content, base: string, path: string): Page | null {
 export function churchSitePage(
   site: Doc, ctx: Ctx | null, base: string, path: string
 ): {title: string; description: string; canonical: string;
-  bodyHtml: string} | null {
+  bodyHtml: string; styleHtml: string} | null {
   const c = buildContent(site, ctx);
   const page = buildPage(c, base, path);
   if (!page) return null;
-  const nav = PAGES.filter((x) => hasPage(x.path, c))
-    .map((x) => `<a href="${base}${x.path}">${esc(x.label)}</a>`).join(" · ");
   const clean = (path.replace(/\/+$/, "") || "/");
+  const nav = PAGES.filter((x) => hasPage(x.path, c))
+    .map((x) => `<a href="${base}${x.path}"${
+      x.path === clean ? " class=\"on\"" : ""}>${
+      esc(x.path === "/education" ? c.eduLabel : x.label)}</a>`)
+    .join("");
+
+  // 디자인: 실제 홈페이지(MultiPageSite)와 같은 색·배치를 정적 HTML로 흉내 낸다
+  // (구글 렌더러에서는 앱이 안 떠서 이 HTML이 그대로 보이고 스크린샷도 이걸로 찍힘)
+  const color = /^#[0-9a-f]{3,8}$/i.test(str(site.primaryColor)) ?
+    str(site.primaryColor) : "#1B3A6B";
+  const isUrl = (v: unknown) => /^https?:\/\//.test(str(v));
+  const heroList = Array.isArray(site.heroImages) ?
+    (site.heroImages as unknown[]).filter(isUrl).map(str) : [];
+  const hero = heroList[0] || (isUrl(site.heroImageUrl) ?
+    str(site.heroImageUrl) : "");
+  const denom = str(site.denomination);
+  const mark = denom && denom !== "none" ?
+    `<img class="mark" src="/denomination-logos/${esc(denom)}.png" alt="" />` :
+    "";
+  const isHome = clean === "/";
+  const heroHtml = isHome ?
+    `<section class="hero"${hero ? " style=\"background-image:" +
+      `linear-gradient(rgba(0,0,0,.35),rgba(0,0,0,.55)),url('${
+        esc(hero)}')"` : ""}><div class="in"><p class="en">WELCOME</p>` +
+      `<h1>${esc(page.h1)}</h1></div></section>` :
+    `<section class="sub"><div class="in"><h1>${esc(page.h1)}</h1>` +
+      "</div></section>";
+
   return {
     title: page.title,
     description: page.description,
     canonical: base + (clean === "/" ? "/" : clean),
-    bodyHtml: `<header><a href="${base}/">${esc(c.name)}</a>` +
-      `<nav>${nav}</nav></header><main><h1>${esc(page.h1)}</h1>` +
-      `${page.body}</main>` +
-      `<footer><p>${esc(c.name)} ${esc(c.address)} ${esc(c.phone)}</p>` +
-      "</footer>",
+    styleHtml: `<style>${churchSiteCss(color)}</style>`,
+    bodyHtml: "<div class=\"cs\"><header><div class=\"in\">" +
+      `<a class="brand" href="${base}/">${mark}` +
+      `<span>${esc(c.name)}</span></a>` +
+      `<nav>${nav}</nav></div></header>${heroHtml}` +
+      `<main class="in">${page.body}</main>` +
+      `<footer><div class="in"><p class="fn">${esc(c.name)}</p>` +
+      `<p>${esc(c.address)}${c.phone ? ` · ${esc(c.phone)}` : ""}</p>` +
+      `<p class="pw">© ${esc(c.name)} · Powered by STAYON</p></div></footer>` +
+      "</div>",
   };
+}
+
+/**
+ * 검색봇용 교회 홈페이지 정적 HTML 스타일.
+ * @param {string} color 교회 주요 색상
+ * @return {string} CSS
+ */
+function churchSiteCss(color: string): string {
+  return [
+    ".cs{font-family:'Pretendard',-apple-system,'Apple SD Gothic Neo',",
+    "'Malgun Gothic',sans-serif;color:#1f2937;background:#fff;",
+    "word-break:keep-all;line-height:1.7}",
+    ".cs .in{max-width:1100px;margin:0 auto;padding:0 20px}",
+    ".cs a{color:inherit;text-decoration:none}",
+    ".cs header{position:sticky;top:0;z-index:5;background:#fff;",
+    "border-bottom:1px solid #f1f1f1}",
+    ".cs header .in{display:flex;align-items:center;",
+    "justify-content:space-between;gap:16px;min-height:64px;flex-wrap:wrap}",
+    ".cs .brand{display:flex;align-items:center;gap:10px;font-weight:900;",
+    "font-size:18px;color:#111827}",
+    ".cs .mark{width:36px;height:36px;object-fit:contain}",
+    ".cs nav{display:flex;flex-wrap:wrap;gap:4px}",
+    ".cs nav a{padding:8px 12px;border-radius:10px;font-size:14px;",
+    "font-weight:700;color:#374151}",
+    `.cs nav a.on{color:${color};background:#f3f4f6}`,
+    `.cs .hero{background:${color};background-size:cover;`,
+    "background-position:center;color:#fff;min-height:340px;display:flex;",
+    "align-items:flex-end;padding:56px 0}",
+    ".cs .hero .en{font-size:12px;font-weight:900;letter-spacing:.2em;",
+    "opacity:.85;margin:0}",
+    ".cs .hero h1{font-size:36px;font-weight:900;margin:6px 0 0}",
+    ".cs .sub{background:#f9fafb;border-bottom:1px solid #f1f1f1;",
+    "padding:40px 0}",
+    `.cs .sub h1{font-size:28px;font-weight:900;margin:0;color:${color}}`,
+    ".cs main{padding:40px 20px 64px}",
+    ".cs main h2{font-size:20px;font-weight:900;color:#111827;",
+    `margin:36px 0 12px;padding-left:12px;border-left:4px solid ${color}}`,
+    ".cs main h2:first-child{margin-top:0}",
+    ".cs main p{margin:8px 0;color:#4b5563}",
+    ".cs main ul{list-style:none;padding:0;margin:0;border:1px solid #e5e7eb;",
+    "border-radius:14px;overflow:hidden}",
+    ".cs main li{padding:12px 16px;border-top:1px solid #f1f1f1;",
+    "color:#374151}",
+    ".cs main li:first-child{border-top:0}",
+    `.cs main a{color:${color};font-weight:700}`,
+    ".cs main table{width:100%;border-collapse:collapse}",
+    ".cs main td,.cs main th{border:1px solid #e5e7eb;padding:10px;",
+    "text-align:left}",
+    ".cs footer{background:#1a1b3a;color:#cbd5e1;padding:32px 0;",
+    "font-size:13px}",
+    ".cs footer p{margin:4px 0}",
+    ".cs footer .fn{color:#fff;font-weight:900;font-size:15px}",
+    ".cs footer .pw{margin-top:12px;color:#94a3b8}",
+    "@media(max-width:640px){.cs .hero{min-height:260px}",
+    ".cs .hero h1{font-size:28px}.cs nav a{padding:6px 8px;font-size:13px}}",
+  ].join("");
 }
 
 /**
@@ -471,6 +628,7 @@ export function churchSitePaths(
   c.news.forEach((n) => out.push(`${base}/news/${n.id}`));
   (ctx?.columns || []).forEach((x) => out.push(`${base}/column/${x.id}`));
   c.prayers.forEach((x) => out.push(`${base}/prayer/${x.id}`));
+  c.edu.forEach((_, i) => out.push(`${base}/education/${i + 1}`));
   return out;
 }
 
