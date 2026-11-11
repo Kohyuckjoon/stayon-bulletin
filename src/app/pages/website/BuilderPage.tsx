@@ -2589,6 +2589,7 @@ export default function BuilderPage({ onBack }: Props) {
                   </div>
                 </div>
               )}
+              {/*  */}
 
               {/* 홈 화면: 디자인(색·로고·메인 사진) */}
               {activeTab === 'home' && (
