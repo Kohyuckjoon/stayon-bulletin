@@ -1,8 +1,100 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /{document=**} {
-      allow read, write: if true;
+
+    // ─────────────────────────────────────────────────────────────
+    // 운영자(스테이온) 계정 — src/utils/operator.ts 의 OPERATOR_EMAILS 와 같게 유지
+    // ─────────────────────────────────────────────────────────────
+    function isOperator() {
+      return request.auth != null
+        && request.auth.token.email in ['akhj123akhjk@gmail.com', 'stayon.platform@gmail.com'];
+    }
+
+    // 모금 프로젝트 담당자인지 — fundraisers/{pid}/meta/acl 문서 기준
+    // (담당자 이메일은 공개 문서에 두지 않으려고 acl 문서로 분리)
+    function isManager(pid) {
+      let acl = get(/databases/$(database)/documents/fundraisers/$(pid)/meta/acl).data;
+      return request.auth != null
+        && (request.auth.uid == acl.ownerUid || request.auth.token.email in acl.managerEmails);
+    }
+
+    function canManage(pid) {
+      return isOperator() || isManager(pid);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // 기존 컬렉션 전부: 지금과 똑같이 열어 둠 (fundraisers 만 제외)
+    // users, bulletins, churchSites, jobPosts, settings, notices, pastoralColumns,
+    // jobBoostRequests, *_mail_triggers, system_check 등 — 기존 주보 플랫폼 동작 그대로
+    // ─────────────────────────────────────────────────────────────
+    match /{collection}/{document=**} {
+      allow read, write: if !(collection in ['fundraisers', 'stories', 'storyMeta']);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // 함께한 이야기(/story) — 메인 화면 공개 카드. 누구나 읽기, 운영자만 쓰기
+    // ─────────────────────────────────────────────────────────────
+    match /stories/{id} {
+      allow read: if true;
+      allow write: if isOperator();
+    }
+    match /storyMeta/{id} {
+      allow read: if true;
+      allow write: if isOperator();
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // 모금 프로젝트 (러브링 등)
+    // totals / recent / raised 는 Cloud Function(관리자 권한)만 씀 → 화면에서는 못 고침
+    // ─────────────────────────────────────────────────────────────
+    match /fundraisers/{pid} {
+      // 성도 화면·9:16 화면에서 읽어야 하므로 공개
+      allow read: if true;
+      // 프로젝트 생성·삭제는 운영자만
+      allow create, delete: if isOperator();
+      // 수정: 운영자는 전부, 담당자는 합계·최근소식 필드 빼고
+      allow update: if isOperator()
+        || (isManager(pid)
+            && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['totals', 'recent']));
+
+      // 담당자 목록(ownerUid, managerEmails) — 비공개
+      match /meta/{docId} {
+        allow read: if canManage(pid);
+        allow write: if isOperator();
+      }
+
+      // 소원 항목
+      match /wishes/{wid} {
+        allow read: if true;
+        allow create: if canManage(pid)
+          && (!('raised' in request.resource.data) || request.resource.data.raised == 0);
+        allow update: if canManage(pid)
+          && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['raised']);
+        allow delete: if canManage(pid);
+      }
+
+      // 입금 알림 ("보냈어요")
+      match /donations/{did} {
+        // 누구나 추가 가능 — 단, 모금 진행 중이고 정해진 칸·범위만
+        allow create: if get(/databases/$(database)/documents/fundraisers/$(pid)).data.status == 'open'
+          && request.resource.data.keys().hasOnly(['wishId', 'amount', 'name', 'anonymous', 'status', 'createdAt'])
+          && request.resource.data.keys().hasAll(['wishId', 'amount', 'anonymous', 'status', 'createdAt'])
+          && request.resource.data.wishId is string
+          && request.resource.data.wishId.size() > 0 && request.resource.data.wishId.size() <= 64
+          && request.resource.data.amount is int
+          && request.resource.data.amount >= 1000 && request.resource.data.amount <= 10000000
+          && (!('name' in request.resource.data)
+              || (request.resource.data.name is string && request.resource.data.name.size() <= 20))
+          && request.resource.data.anonymous is bool
+          && request.resource.data.status == 'pending'
+          && request.resource.data.createdAt == request.time;
+        // 목록 보기·확인·수정·삭제는 담당자만 (이름·금액 비공개)
+        allow read: if canManage(pid);
+        allow update: if canManage(pid)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'amount', 'name'])
+          && request.resource.data.status in ['pending', 'confirmed', 'rejected'];
+        allow delete: if canManage(pid);
+      }
     }
   }
 }

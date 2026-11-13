@@ -10,6 +10,7 @@ import {
 import { onAuthStateChanged } from "firebase/auth";
 import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
+import { QuickMenu } from "../components/QuickMenu"; // 교회 이름에 마우스 올리면 로그아웃 메뉴
 import {
   Plus, FileText, History as HistoryIcon, LogOut, Calendar, Eye, Smartphone, Download, Send,
   CheckCircle2, BookOpen, Globe, Copy, Zap, ChevronRight, ShieldCheck, Lock, Megaphone,
@@ -488,8 +489,13 @@ export function AdminDashboard() {
       <div className="bg-white/80 backdrop-blur-md border-b border-slate-100 sticky top-0 z-30 shadow-xs">
         <div className="container mx-auto px-4 py-3.5 max-w-5xl">
           <div className="flex justify-between items-center relative">
-            {/* 좌측: 로고 및 사용자 정보 영역 */}
-            <div className="flex items-center gap-3">
+            {/* 좌측: 로고 및 사용자 정보 영역 — 마우스를 올리면(휴대폰은 누르면) "로그아웃" 메뉴 */}
+            <QuickMenu
+              align="left"
+              width={200}
+              items={[{ label: "로그아웃", icon: <LogOut className="w-4 h-4" />, tone: "red", onSelect: () => { void auth.signOut(); } }]}
+              button={(open) => (
+            <div className={`flex items-center gap-3 rounded-2xl -m-1.5 p-1.5 pr-3 cursor-pointer transition-colors ${open ? "bg-slate-100/80" : "hover:bg-slate-50"}`}>
               <div className="w-10 h-10 rounded-2xl bg-blue-600 flex items-center justify-center shadow-md shadow-blue-500/20 text-white">
                 <Smartphone className="w-5 h-5" />
               </div>
@@ -502,7 +508,10 @@ export function AdminDashboard() {
                 </div>
                 <p className="text-xs text-slate-500 font-medium">{userData?.department || "관리자"}</p>
               </div>
+              <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform duration-300 ${open ? "rotate-180" : ""}`} />
             </div>
+              )}
+            />
 
             {/* 중앙: 정중앙 로고 */}
             <div className="absolute left-1/2 -translate-x-1/2 hidden md:block">
@@ -640,9 +649,11 @@ export function AdminDashboard() {
                 주보 미리보기
               </Button>
 
+              {/* 로그아웃 아이콘은 왼쪽 교회 이름 메뉴로 옮김(2026-11-12)
               <Button variant="ghost" onClick={() => auth.signOut()} className="rounded-xl h-10 w-10 text-slate-400 hover:bg-red-50 hover:text-red-500">
                 <LogOut className="w-4 h-4" />
               </Button>
+              */}
             </div>
           </div>
         </div>

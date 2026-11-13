@@ -47,8 +47,22 @@ export interface SiteContent {
   // 예배
   worship: WorshipItem[];
   youtubeLink: string;
-  sermonPlaylist: string;
-  worshipPhotos: Record<string, string>; // 예배 구분별 대표 사진 // 지난 설교 재생목록 주소(편집 화면 입력, 없으면 빈 값)
+  sermonPlaylist: string; // 지난 예배 재생목록 주소(편집 화면 입력, 없으면 빈 값)
+  worshipPhotos: Record<string, string>; // 예배 구분별 대표 사진
+  praiseEnabled: boolean;
+  // 교회 일정(편집 화면 > 매주 업데이트). 꺼져 있으면(scheduleEnabled false) 메뉴·화면 모두 숨김
+  scheduleEnabled: boolean;
+  bannerMode: "photo" | "color" | "off";
+  bannerColors: [string, string] | null;
+  bannerPhotos: Record<string, string>;
+  schedules: { id: string; date: string; title: string }[];
+  praiseIntro: string;
+  praiseTeams: { name: string; time: string; place: string; leader: string; desc: string; photoUrl: string }[];
+  newcomerIntro: string;
+  newcomerSteps: { title: string; desc: string }[];
+  newcomerContact: string;
+  weeklySermonEnabled: boolean;
+  nextSermon: { title: string; scripture: string; preacher: string; date: string } | null; // 꺼져 있거나 제목이 없으면 null
   sermonVideos: { title: string; speaker?: string; scripture?: string; youtubeVideoId: string; date?: string }[];
   // 주보에서 자동으로 쌓이는 설교 목록 + 지난 주보
   sermons: BulletinSummary[];
@@ -383,6 +397,27 @@ export function buildSiteContent(site: ChurchSite, owner: OwnerData): SiteConten
     officers: bulletinOfficers.length > 0 ? bulletinOfficers : builderOfficers,
     worship,
     youtubeLink: s(b.youtubeChannelUrl) || s(site.youtubeLink),
+    praiseEnabled: site.praiseEnabled === true,
+    scheduleEnabled: site.scheduleEnabled === true,
+    bannerMode: site.bannerMode === "color" || site.bannerMode === "off" ? site.bannerMode : "photo",
+    bannerColors: Array.isArray(site.bannerColors) && site.bannerColors.length === 2 ? [s(site.bannerColors[0]), s(site.bannerColors[1])] : null,
+    bannerPhotos: Object.fromEntries(Object.entries(site.bannerPhotos && typeof site.bannerPhotos === "object" ? site.bannerPhotos : {})
+      .filter(([, v]) => typeof v === "string" && /^https?:\/\//.test(v))) as Record<string, string>,
+    schedules: arr(site.schedules)
+      .filter((x) => /^\d{4}-\d{2}-\d{2}$/.test(s(x?.date)) && s(x?.title))
+      .map((x, i) => ({ id: s(x.id) || String(i), date: s(x.date), title: s(x.title) }))
+      .sort((a, z) => a.date.localeCompare(z.date)),
+    praiseIntro: s(site.praiseIntro),
+    praiseTeams: arr(site.praiseTeams).filter((x) => s(x?.name)).map((x) => ({
+      name: s(x.name), time: s(x.time), place: s(x.place), leader: s(x.leader), desc: s(x.desc), photoUrl: isImage(x.photoUrl) ? s(x.photoUrl) : "",
+    })),
+    newcomerIntro: s(site.newcomerIntro),
+    newcomerSteps: arr(site.newcomerSteps).filter((x) => s(x?.title) || s(x?.desc)).map((x) => ({ title: s(x.title), desc: s(x.desc) })),
+    newcomerContact: s(site.newcomerContact),
+    weeklySermonEnabled: site.weeklySermonEnabled !== false,
+    nextSermon: site.nextSermonEnabled === true && s(site.nextSermon?.title)
+      ? { title: s(site.nextSermon?.title), scripture: s(site.nextSermon?.scripture), preacher: s(site.nextSermon?.preacher), date: s(site.nextSermon?.date) }
+      : null,
     worshipPhotos: Object.fromEntries(Object.entries((site.worshipGroupPhotos || {}) as Record<string, unknown>).filter(([, v]) => isImage(v)).map(([k, v]) => [k, s(v)])),
     sermonPlaylist: /[?&]list=[\w-]+/.test(s(site.sermonPlaylistUrl)) ? s(site.sermonPlaylistUrl) : "",
     sermonVideos: site.onlineWorshipEnabled === false ? [] : arr(site.sermons).filter((v) => s(v?.youtubeVideoId)),

@@ -28,10 +28,38 @@ interface Props {
 // 교회 사이트 데이터는 기억해 뒀다가 바로 보여주고 최신 내용은 뒤에서 다시 받아옴(깜빡임 방지)
 const siteCache = new Map<string, ChurchSite>();
 
+// 없는 교회 주소(ex. 오타.stayon-platform.com)로 들어왔을 때 — 흰 화면 대신 안내.
+// 검색엔진이 정상 페이지로 수집하지 않게 noindex도 붙임
+function SiteNotFound() {
+    useEffect(() => {
+        document.title = "찾을 수 없는 페이지 | STAYON";
+        const meta = document.createElement("meta");
+        meta.name = "robots";
+        meta.content = "noindex, nofollow";
+        document.head.appendChild(meta);
+        return () => { meta.remove(); };
+    }, []);
+    return (
+        <div className="min-h-screen flex items-center justify-center bg-[#F9FAFB] px-6">
+            <div className="w-full max-w-sm text-center">
+                <div className="mx-auto w-16 h-16 rounded-2xl bg-white shadow-sm flex items-center justify-center text-3xl">⛪</div>
+                <h1 className="mt-6 text-[22px] font-bold text-[#191F28]">찾으시는 교회 홈페이지가 없어요</h1>
+                <p className="mt-2 text-[15px] leading-relaxed text-[#6B7684]">주소가 맞는지 한 번 더 확인해 주세요.</p>
+                <div className="mt-8 flex flex-col gap-2">
+                    <a href="https://bulletin.stayon-platform.com/" className="rounded-xl bg-[#3182F6] py-3.5 text-[15px] font-bold text-white">STAYON 홈으로</a>
+                    <a href="https://bulletin.stayon-platform.com/website" className="rounded-xl bg-white border border-[#E5E8EB] py-3.5 text-[15px] font-bold text-[#4E5968]">우리 교회 홈페이지 만들기</a>
+                </div>
+            </div>
+        </div>
+    );
+}
+
 export function WebsiteRenderer({ slug, site: liveSite, section, pathname }: Props) {
     // 지난 방문 때 이 브라우저에 저장해 둔 교회 사이트 정보가 있으면 바로 그림(최신 내용은 아래에서 다시 받아 바꿈)
     const [fetchedSite, setFetchedSite] = useState<ChurchSite | null>(() =>
         slug && !liveSite ? siteCache.get(slug) ?? readSiteCache<ChurchSite>(`site:${slug}`) : null);
+    // 불러오기가 끝났는데 그런 교회 사이트가 없을 때만 true(불러오는 중엔 false → 기존처럼 비워 둠)
+    const [missing, setMissing] = useState(false);
 
     useEffect(() => {
         if (!slug || liveSite) return;
@@ -43,8 +71,10 @@ export function WebsiteRenderer({ slug, site: liveSite, section, pathname }: Pro
                 siteCache.delete(slug);
                 removeSiteCache(`site:${slug}`);
                 setFetchedSite(null);
+                setMissing(true);
                 return;
             }
+            setMissing(false);
             siteCache.set(slug, s);
             writeSiteCache(`site:${slug}`, s);
             setFetchedSite(s);
@@ -76,7 +106,7 @@ export function WebsiteRenderer({ slug, site: liveSite, section, pathname }: Pro
         applySiteFavicon((site as { denomination?: unknown }).denomination, site.ownerId);
     }, [site, liveSite]);
 
-    if (!site) return null;
+    if (!site) return missing ? <SiteNotFound /> : null;
 
     // 페이지 전환형(기본). 원페이지를 고른 교회만 아래 기존 한 페이지 화면을 그대로 씀
     if (site.layoutMode !== "onepage") {

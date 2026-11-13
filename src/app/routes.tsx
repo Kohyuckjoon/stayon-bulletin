@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { createBrowserRouter, Outlet, ScrollRestoration, useLocation, useNavigate } from "react-router";
 import { Landing } from "./pages/Landing";
 import { SignUp } from "./pages/SignUp";
@@ -27,6 +27,7 @@ import { WebsiteRenderer } from "./pages/website/WebsiteRenderer";
 // 사역자 청빙관 및 등록 페이지 컴포넌트 임포트
 import { JobsGate } from "./pages/JobsGate"; // /jobs 전체를 관리자 화면 관리 설정에 따라 잠그는 공통 게이트 임포트
 import { lazyPage } from "./lazyPage";
+import { isWebsiteHost, BULLETIN_ORIGIN, prefetchWebsiteUrl, websiteUrlWithLogin, bulletinUrlWithLogin, WEBSITE_PATHS } from "../utils/websiteHost";
 
 // ── 따로 떼어 내 필요할 때만 불러오는 화면(관리자·편집·청빙 등). lazyPage.tsx 참고
 // 성도 주보 화면(BulletinView 등)·결제(Pricing/Billing/Success)·메인·교회 홈페이지는 위에서 바로 불러옴
@@ -38,6 +39,16 @@ const ChurchNewsDetail = lazyPage(() => import("./pages/ChurchNewsDetail"), "Chu
 const AdminJuboManagement = lazyPage(() => import("./pages/AdminJuboManagement"), "AdminJuboManagement");
 const AdminBulletinList = lazyPage(() => import("./pages/AdminBulletinList"), "AdminBulletinList");
 const AdminAuthUsers = lazyPage(() => import("./pages/admin/AdminAuthUsers"), "AdminAuthUsers");
+const AdminFundraisers = lazyPage(() => import("./pages/admin/AdminFundraisers"), "AdminFundraisers"); // 모금 프로젝트(러브링 등) 운영자 화면
+// 모금 프로젝트 교회 관리자 화면(필요할 때만 불러옴). 기존 /admin 묶음(대시보드·결제 등)과 따로 둠
+const FundraisingAdmin = lazyPage(() => import("./pages/fundraising/FundraisingAdmin"), "FundraisingAdmin");
+const FundraisingList = lazyPage(() => import("./pages/fundraising/FundraisingAdmin"), "FundraisingList");
+// 모금 프로젝트 성도 화면(QR 연결) · 교회 입구 9:16 화면 — 필요할 때만 불러옴. 성도 주보 화면(/view)과 별개
+const GivePage = lazyPage(() => import("./pages/fundraising/Give"), "GivePage");
+const GiveDisplay = lazyPage(() => import("./pages/fundraising/Give"), "GiveDisplay");
+// "함께한 이야기"(/story) 공개 카드 화면 · 운영자 관리 화면 — 필요할 때만 불러옴
+const StoryPage = lazyPage(() => import("./pages/story/StoryPage"), "StoryPage");
+const AdminStories = lazyPage(() => import("./pages/admin/AdminStories"), "AdminStories");
 const AdminChurchSites = lazyPage(() => import("./pages/admin/AdminChurchSites"), "AdminChurchSites");
 const AdminAdSettings = lazyPage(() => import("./pages/admin/AdminAdSettings"), "AdminAdSettings");
 const AdminFeatureSettings = lazyPage(() => import("./pages/admin/AdminFeatureSettings"), "AdminFeatureSettings");
@@ -58,7 +69,9 @@ const SEOManager = () => {
   const location = useLocation();
 
   useEffect(() => {
-    const path = location.pathname;
+    // website.stayon-platform.com 첫 화면은 /website(소개 페이지)와 같은 제목·설명
+    const onWebsiteHost = isWebsiteHost();
+    const path = onWebsiteHost && location.pathname === "/" ? "/website" : location.pathname;
     let title = "온라인 주보 제작 스테이온 | 모바일 주보 월 990원 스마트 교회 주보";
     // 기존 index.html 정적 태그와 동일한 기본값 — /website 외 다른 라우트는
     // 이 값 그대로라 실제로 바뀌는 페이지는 하나도 없음
@@ -113,7 +126,8 @@ const SEOManager = () => {
     // /pricing, /website 등 다른 라우트는 지금까지 canonical이 아예 없는 것과 같았음.
     // window.location.origin을 써야 교회 서브도메인(교회이름.stayon-platform.com)에서도
     // 그 교회 자신의 주소로 canonical이 잡히고, 메인 bulletin 도메인으로 잘못 몰리지 않음
-    const canonicalUrl = `${window.location.origin}${path}`;
+    // website 주소는 같은 내용이므로 검색엔진 대표 주소는 기존 bulletin.../website 그대로
+    const canonicalUrl = onWebsiteHost ? `${BULLETIN_ORIGIN}/website` : `${window.location.origin}${path}`;
     let canonicalLink = document.querySelector('link[rel="canonical"]');
     if (!canonicalLink) {
       canonicalLink = document.createElement("link");
@@ -128,9 +142,46 @@ const SEOManager = () => {
 };
 
 // BuilderPage는 onBack 콜백을 필요로 하는 컴포넌트라, 라우터에 바로 연결할 수 있도록 얇은 래퍼로 감쌈
+// 빌더의 "뒤로" — 어디서 들어왔는지에 따라 돌아갈 곳을 정함(2026-11-12)
+//  - 주보 플랫폼 메인 "바로 가기 > 사이트 관리자"로 들어옴(state.from = "main") → 주보 플랫폼 메인(/)
+//  - website.stayon-platform.com 에서 들어옴(?from=website) → website 주소(로그인 이어 주기 포함)
+//  - 그 외(bulletin.../website 화면, 주소 직접 입력 등) → 예전처럼 /website
+// 빌더 안에서 새로고침해도 유지되게 이 탭에 기억(sessionStorage)
+const BUILDER_FROM_KEY = "stayon:builderFrom";
 const BuilderPageRoute = () => {
   const navigate = useNavigate();
-  return <BuilderPage onBack={() => navigate("/website")} />;
+  const location = useLocation();
+  const [from] = useState<string>(() => {
+    const q = new URLSearchParams(location.search).get("from");
+    const st = (location.state as { from?: string } | null)?.from;
+    const v = q === "website" ? "website" : st === "main" ? "main" : (q || st) ? "" : null;
+    try {
+      if (v) sessionStorage.setItem(BUILDER_FROM_KEY, v);
+      else if (v === "") sessionStorage.removeItem(BUILDER_FROM_KEY);
+      return v ?? sessionStorage.getItem(BUILDER_FROM_KEY) ?? "";
+    } catch { return v ?? ""; }
+  });
+  useEffect(() => {
+    // 주소창의 ?from=website 는 지움(화면엔 영향 없음)
+    const sp = new URLSearchParams(location.search);
+    if (sp.has("from")) {
+      sp.delete("from"); // ?site= 등 다른 값은 그대로 둠
+      const rest = sp.toString();
+      navigate(`/website-builder${rest ? `?${rest}` : ""}`, { replace: true, state: location.state });
+    }
+    if (from === "website") prefetchWebsiteUrl(); // 돌아갈 때 바로 넘어가게 로그인 열쇠 미리 받기
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const onBack = () => {
+    try { sessionStorage.removeItem(BUILDER_FROM_KEY); } catch { /* 무시 */ }
+    if (from === "main") { navigate("/"); window.scrollTo(0, 0); return; }
+    if (from === "website" && window.location.hostname === "bulletin.stayon-platform.com") {
+      void websiteUrlWithLogin(null).then((url) => { window.location.href = url; });
+      return;
+    }
+    navigate("/website");
+  };
+  return <BuilderPage onBack={onBack} />;
 };
 
 // 교회 서브도메인(예: stay.stayon-platform.com)에서는 WebsiteRenderer가 이미 자체 footer(교회 이름/
@@ -165,7 +216,7 @@ const getChurchSubdomain = (): string | null => {
     if (devChurch) return devChurch;
   }
   const hostname = window.location.hostname;
-  const knownSubdomains = ["www", "bulletin", "place", "stayonsbplatform"];
+  const knownSubdomains = ["www", "bulletin", "place", "stayonsbplatform", "website"];
   const parts = hostname.replace(".stayon-platform.com", "").split(".");
   const subdomain = parts[0];
 
@@ -187,7 +238,9 @@ const churchSectionRoute = (section: "home" | "worship" | "community" | "news" |
   return subdomain ? <WebsiteRenderer slug={subdomain} section={section} pathname={location.pathname} /> : <Landing />;
 };
 
-const HostRouter = churchSectionRoute("home");
+const ChurchHomeRoute = churchSectionRoute("home");
+// website.stayon-platform.com 첫 화면 = 교회 홈페이지 제작 소개(/website와 같은 화면). 그 외 주소는 기존 그대로
+const HostRouter = () => (isWebsiteHost() ? <WebsiteMain /> : <ChurchHomeRoute />);
 const ChurchWorshipRoute = churchSectionRoute("worship");
 const ChurchCommunityRoute = churchSectionRoute("community");
 const ChurchNewsRoute = churchSectionRoute("news");
@@ -197,9 +250,9 @@ const ChurchOnlineWorshipRoute = churchSectionRoute("online-worship");
 // 교회 서브도메인이 아니면(bulletin 등) 위 라우트들과 똑같이 랜딩으로 대체되어 주보 플랫폼엔 영향 없음
 const ChurchPageRoute = churchSectionRoute("home");
 const CHURCH_PAGE_PATHS = [
-  "about", "about/pastor", "about/history", "about/staff", "worship/online", "sermons",
+  "about", "about/pastor", "about/history", "about/staff", "about/newcomer", "worship/online", "sermons", "praise",
   "bulletins", "bulletins/:pageId", "jubo", "news/:pageId", "column", "column/:pageId",
-  "prayer", "prayer/:pageId", "education", "education/:pageId", // "album", "album/:pageId", (앨범 잠시 주석)
+  "prayer", "prayer/:pageId", "education", "education/:pageId", "album", "album/:pageId", "schedule",
 ];
 
 
@@ -292,6 +345,8 @@ export const router = createBrowserRouter([
           { path: "notify", Component: NoticeBoard }, // 운영자용 공지사항 관리(CRUD) 라우터 추가
           { path: "auth-users", Component: AdminAuthUsers }, // 전체 가입자 현황 라우터 연결
           { path: "church-sites", Component: AdminChurchSites }, // 교회 사이트 제작 플랫폼 발행 관리 라우터 연결
+          { path: "fundraisers", Component: AdminFundraisers }, // 모금 프로젝트(러브링 등) 생성·교회 계정 연결·열기/닫기
+          { path: "stories", Component: AdminStories }, // 메인 화면 "함께한 이야기"(/story) 카드 관리
           { path: "ads", Component: AdminAdSettings }, // 사역자 청빙 게시판 끌어올리기(광고) 설정 라우터 연결
           { path: "custom-design", Component: AdminCustomDesign }, // 커스텀 디자인 교회별 사용 권한 관리 라우터 연결
           { path: "features", Component: AdminFeatureSettings }, // 화면 노출 on/off 관리 라우터 연결
@@ -318,6 +373,13 @@ export const router = createBrowserRouter([
       </>
     ),
   },
+  // 모금 프로젝트(러브링 등) 교회 관리자 화면 — /admin 묶음 밖에 따로(/admin/editor 처럼). 기존 /admin 화면엔 영향 없음
+  { path: "/admin/fundraising", Component: FundraisingList },
+  { path: "/admin/fundraising/:projectId", Component: FundraisingAdmin },
+  { path: "/give/:projectId", Component: GivePage },
+  { path: "/give/:projectId/display", Component: GiveDisplay },
+  // 메인 화면 상단 "함께한 이야기" — STAYON과 함께한 프로젝트 카드 목록
+  { path: "/story", Component: StoryPage },
   {
     path: "/admin/editor",
     element: (
@@ -337,3 +399,18 @@ export const router = createBrowserRouter([
     ),
   },
 ]);
+
+// website.stayon-platform.com 에서 소개 페이지 안의 버튼(로그인·무료로 시작하기·만들기 등)을 누르면
+// 그 주소는 bulletin 쪽으로 넘김 — 로그인 상태가 주소마다 따로라 실제 제작은 bulletin에서 하게.
+// (처음 들어올 때의 주소는 src/main.tsx에서 같은 규칙으로 처리). bulletin 등 다른 주소에선 아무 일 없음
+if (isWebsiteHost()) {
+  router.subscribe((state) => {
+    const { pathname, search, hash } = state.location;
+    void hash;
+    if (WEBSITE_PATHS.includes(pathname)) return; // 첫 화면·로그인·회원가입은 website 주소에서 그대로
+    if (pathname === "/website") { void router.navigate("/", { replace: true }); return; }
+    // 그 밖의 화면(로그인 후 빌더·주보 관리자 등) → bulletin 주소로, 로그인했으면 열쇠를 붙여 로그인 유지.
+    // replace: 앱 안 이동 기록을 bulletin 주소로 바꿔치기(뒤로가기 때 website에 다른 화면이 남지 않게)
+    void bulletinUrlWithLogin(`${pathname}${search}`).then((url) => window.location.replace(url));
+  });
+}

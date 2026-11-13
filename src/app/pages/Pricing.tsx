@@ -9,7 +9,7 @@ import { Checkbox } from "../components/ui/checkbox";
 import { motion } from "framer-motion";
 import {
   Check, ArrowLeft, Sparkles, Info, User, LogIn, Lock, MessageCircle, Clock, Calendar, Rocket,
-  RefreshCcw, ShieldCheck,
+  RefreshCcw, ShieldCheck, FileText, Globe, Crown,
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
@@ -21,7 +21,7 @@ import { useWebsitePayment } from "../../hooks/useWebsitePayment";
 import { useBillingKey, addMonthsClamped } from "../../hooks/useBillingKey";
 // "앞으로 이런 요금제로 확장돼요" 미리보기 전용 — 교회 규모(성도 수)별로
 // 베이직/스탠다드/프로/올인원 가격이 다르게 뜨도록 통합한 매트릭스
-import { PRICING_MATRIX, type FeaturePlanKey } from "../../utils/pricingMatrix";
+import { PRICING_MATRIX, THREE_MONTH_DISCOUNT_PLANS, type FeaturePlanKey } from "../../utils/pricingMatrix";
 import { KakaoChannelButton, KAKAO_CHANNEL_URL } from "../components/KakaoChannelButton";
 import { PRICING_TIERS } from "../../utils/pricingTiers";
 import { setLoginReturnTo } from "../../utils/loginReturn";
@@ -52,6 +52,9 @@ export function Pricing() {
   // 추가. 기본값 "basic"은 지금 실제로 결제되는 금액(PRICING_TIERS)과
   // 동일한 숫자라 기존 결제 흐름과 충돌 없이 자연스럽게 이어진다.
   const [selectedFeaturePlan, setSelectedFeaturePlan] = useState<FeaturePlanKey>("basic");
+  // 통합 요금 화면(주보 & 홈페이지, 2026-11-12): 위쪽 1개월/3개월 전환 + 카드 "시작하기" → 결제 방식 고르는 창
+  const [billingCycle, setBillingCycle] = useState<"monthly" | "threeMonth">("monthly");
+  const [chooserPlan, setChooserPlan] = useState<FeaturePlanKey | null>(null);
   const [currentUserInfo, setCurrentUserInfo] = useState<{
     email: string; churchName: string; status: string; uid: string; congregationSize: string;
     hasBillingKey: boolean; // 결제 관리에서 이미 등록한 정기결제 카드가 있는지
@@ -183,20 +186,19 @@ export function Pricing() {
         "오시는길·주차안내(지도 임베드)", "기도 순서(1달치 제공)", "릴레이 기도표 = 1달치 제공", "기도 요청",
       ],
     },
+    // 프로·올인원(2026-11-12 개편): 예전 프로·올인원 기능 목록(훈련/양육, 헌금 현황, 전도 등 준비 중 항목)은 지우고
+    // "스탠다드 + 교회 웹사이트" 구성으로. 커스텀 디자인 템플릿은 프로 혜택 유지(올인원은 프로 기능 모두 포함)
     {
       name: "프로", key: "pro",
       features: [
-        "훈련 / 양육 관련", "헌금 현황(이름만)", "심방 / 모임(구역 셀 일정)", "새가족 환영", "성경 읽기표",
-        "릴레이 기도표", "제자 훈련반 / 양육과정 모집 및 신청", "성경 공부반 소그룹 시간표", "세례 입교 신청",
-        "온라인 헌금 QR", "선교사 소식 / 후원 현황", "구역 셀 리더 연락처",
+        "스탠다드 요금제 모든 기능", "교회 웹사이트(기본 기능) 이용", "커스텀 주보 디자인 템플릿",
       ],
     },
     {
       name: "올인원", key: "allinone",
       features: [
-        "전도", "관리자 계정 다중 초대", "헌금 현황(관리자 대시보드(금액포함) 표시)",
-        "온라인 주보 실시간 예배 자동 최신화", "수련회 관련 모든 기능(모집 및 신청)",
-        "새가족 온라인 등록 폼", "전도 행사 & 광고 배너 기능(띠 형태)",
+        "스탠다드 요금제 모든 기능", "교회 웹사이트(기본 기능) 이용", "프로 요금제 모든 기능 포함",
+        "스테이온이 대신 업데이트(관리형)", "교회 웹사이트 SEO 지원", "네이버 서치어드바이저·구글 서치콘솔 등록 대행", "검색 노출 점검", "검색 제목·설명 최적화 대행",
       ],
     },
   ];
@@ -216,12 +218,14 @@ export function Pricing() {
 
   // 가입 시 입력한 성도 수(congregationSize) 등급. 미로그인/미입력 시 전체 요금제를 제한 없이 볼 수 있음
   const userTier = currentUserInfo?.congregationSize || "";
-  const isTierLocked = (tierValue: string) => !!userTier && userTier !== tierValue;
+  // 단독 요금제(2026-11-12): 성도 수 등급에 따른 요금제 잠금 없음(모든 교회 같은 가격)
+  const isTierLocked = (_tierValue: string) => false;
 
   // 상단에 크게 보여줄 대표 티어: 로그인 + 성도 수 등록된 경우 본인 티어, 그 외엔 기본값(개척)을 노출
   const featuredTier = PRICING_TIERS.find((t) => t.value === userTier) || PRICING_TIERS[0];
   const otherTiers = PRICING_TIERS.filter((t) => t.value !== featuredTier.value);
-  const featuredIsEnterprise = featuredTier.monthly === null && featuredTier.threeMonth === null;
+  // 단독 요금제: "대형"도 가격표로 결제 가능(300명 이상은 안내 문구로 별도 문의 유도)
+  const featuredIsEnterprise = false;
 
   // 특정 티어 + 결제 주기(월/3개월)에 대한 결제용 plan 객체 생성. 해당 주기 가격이 없으면(대형 티어) null 반환
   const buildTierPlan = (tier: (typeof PRICING_TIERS)[number], duration: "monthly" | "threeMonth") => {
@@ -253,7 +257,8 @@ export function Pricing() {
     if (amount === null || amount === undefined) return null;
     return {
       id: `plan_${tier.value}_${featureKey}_${duration}`,
-      name: `${tier.value} ${FEATURE_PLAN_LABELS[featureKey]} ${duration === "monthly" ? "1개월" : "3개월"} 주보 플랜`,
+      // 단독 요금제: 이름에서 교회 규모(개척 등)를 뺌 — 결제창·결제 내역에 보이는 상품 이름(예: "프로 1개월 주보 플랜")
+      name: `${FEATURE_PLAN_LABELS[featureKey]} ${duration === "monthly" ? "1개월" : "3개월"} 주보 플랜`,
       price: amount.toLocaleString(),
       period: duration === "monthly" ? "월" : "3개월",
       status: "active",
@@ -317,7 +322,7 @@ export function Pricing() {
     const recurringAmount = PRICING_MATRIX[featuredTier.value]?.[selectedFeaturePlan]?.monthly;
     if (!recurringAgreed || recurringAmount === null || recurringAmount === undefined) return;
     const plan = {
-      planName: `${featuredTier.value} ${FEATURE_PLAN_LABELS[selectedFeaturePlan]} 정기결제 플랜`,
+      planName: `${FEATURE_PLAN_LABELS[selectedFeaturePlan]} 정기결제 플랜`, // 단독 요금제: 교회 규모 표기 뺌
       tierValue: featuredTier.value,
       amount: recurringAmount,
       featurePlan: selectedFeaturePlan,
@@ -361,6 +366,8 @@ export function Pricing() {
         {/* 서비스 탭: 주보 서비스(기존, PG 결제 가능) / 홈페이지 제작(안내 전용).
             선택된 쪽으로 배경이 스르륵 이동하는 토스 스타일 애니메이션
             (motion layoutId) — 요금제 토글(아래)과 같은 방식. */}
+        {/* 주보 & 홈페이지 통합(2026-11-12)으로 탭 숨김 — 한 화면에 요금제 4개. 다시 쓰려면 false 지우기 */}
+        {false && (
         <div className="flex justify-center mb-6 sm:mb-10">
           <div className="inline-flex items-center bg-white p-1.5 rounded-full shadow-sm border border-slate-200">
             {([
@@ -387,21 +394,23 @@ export function Pricing() {
             })}
           </div>
         </div>
+        )}
 
-        {activeTab === "bulletin" ? (
+        {/* 통합 화면: 항상 아래(주보 & 홈페이지 요금제). 예전 "홈페이지 제작" 탭 내용은 아래 : 뒤에 보관(화면엔 안 나옴) */}
+        {true || activeTab === "bulletin" ? (
         <>
         <div className="text-center mb-6 sm:mb-10">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-100 text-blue-600 text-xs sm:text-sm font-bold mb-3 sm:mb-4">
-            <Sparkles className="w-4 h-4" /> 모바일 주보 최저가 Beta Special Price
+            <Sparkles className="w-4 h-4" /> 주보 & 홈페이지 요금 안내
           </div>
 
           {/* 모바일에서는 텍스트를 줄이고 크기를 최적화 (스마트 주보 특별 혜택가) */}
           <h1 className="text-2xl sm:text-5xl font-black mb-2.5 sm:mb-4 bg-gradient-to-r from-blue-700 to-indigo-700 bg-clip-text text-transparent leading-tight tracking-tight">
-            스마트 주보 특별 혜택가
+            주보 & 홈페이지, 하나의 요금제로
           </h1>
 
           <p className="text-sm sm:text-xl text-slate-600 break-keep font-medium">
-            가장 경제적인 온라인 주보 제작,<br></br>교회 규모에 맞는 요금제로 시작하세요.
+            모바일 주보부터 교회 홈페이지까지,<br></br>모든 교회 같은 요금으로 간단하게 시작하세요.
           </p>
         </div>
 
@@ -436,6 +445,141 @@ export function Pricing() {
           </div>
         </motion.div>
 
+        {/* ── 주보 & 홈페이지 통합 요금제(2026-11-12) ───────────────────────────────
+            카드 4장(베이직·스탠다드 = 주보 / 프로·올인원 = 주보 + 홈페이지). 위쪽 1개월/3개월 전환으로 가격이 같이 바뀜.
+            "시작하기" → 결제 방식 고르는 창(1회 결제 / 정기결제) → 기존 결제 흐름(handlePlanSelection · handleRecurringSelection) 그대로 */}
+        <div className="max-w-6xl mx-auto mb-8 sm:mb-14">
+          {/* 300명 이상 안내 */}
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-2 sm:gap-3 mb-5 sm:mb-7 text-center">
+            <p className="text-xs sm:text-sm font-bold text-slate-500 break-keep">모든 교회 같은 요금 · <span className="text-slate-700">성도 300명 이상</span> 교회는 별도로 안내해 드려요</p>
+            <button type="button" onClick={() => window.open(KAKAO_CHANNEL_URL, "_blank")}
+              className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 hover:border-slate-300 hover:text-slate-900 transition-colors">
+              <MessageCircle className="w-3.5 h-3.5" /> 300명 이상 별도 문의
+            </button>
+          </div>
+
+          {/* 1개월 / 3개월 전환 */}
+          <div className="flex justify-center mb-6 sm:mb-9">
+            <div className="inline-flex items-center bg-white p-1.5 rounded-full shadow-sm border border-slate-200">
+              {([["monthly", "1개월"], ["threeMonth", "3개월"]] as const).map(([v, label]) => {
+                const active = billingCycle === v;
+                return (
+                  <button key={v} type="button" onClick={() => setBillingCycle(v)}
+                    className={`relative px-6 sm:px-8 py-2.5 rounded-full text-sm font-bold transition-colors ${active ? "text-white" : "text-slate-500 hover:text-slate-700"}`}>
+                    {active && <motion.div layoutId="billingCyclePill" className="absolute inset-0 bg-slate-900 rounded-full" transition={{ type: "spring", stiffness: 500, damping: 35 }} />}
+                    <span className="relative z-10 flex items-center gap-1.5">
+                      {label}
+                      {v === "threeMonth" && <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-black ${active ? "bg-amber-400 text-slate-900" : "bg-rose-50 text-rose-500"}`}>최대 16% 할인</span>}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* 요금제 카드 4장 */}
+          <div className="flex gap-3 overflow-x-auto snap-x snap-mandatory pb-3 pt-4 -mx-3 px-3 sm:mx-0 sm:px-0 sm:pb-0 sm:grid sm:grid-cols-2 lg:grid-cols-4 sm:gap-5 sm:overflow-visible">
+            {([
+              { key: "basic", web: false, icon: FileText, desc: "모바일 주보를 처음 시작하는 교회", points: ["모바일 주보 무제한 발행", "예배 순서·찬양·말씀", "지난 주보·교회 소식"] },
+              { key: "standard", web: false, icon: FileText, desc: "교회 정보까지 담은 주보", points: ["베이직 모든 기능", "교회 소개·섬기는 분·목회 칼럼", "오시는 길·SNS·카톡 미리보기"] },
+              { key: "pro", web: true, icon: Globe, desc: "주보 + 직접 꾸미는 교회 홈페이지", points: ["스탠다드 모든 기능", "교회 홈페이지 (셀프형 · 직접 편집)", "커스텀 주보 디자인"] },
+              { key: "allinone", web: true, icon: Crown, desc: "스테이온이 알아서 관리해 드려요", points: ["프로 모든 기능", "스테이온이 대신 업데이트 (관리형)", "교회 홈페이지 검색 노출(SEO) 지원"] },
+            ] as const).map((pl, i) => {
+              const row = PRICING_MATRIX[featuredTier.value]?.[pl.key];
+              const amount = row ? (billingCycle === "monthly" ? row.monthly : row.threeMonth) : null;
+              const full = row && row.monthly !== null ? row.monthly * 3 : null;
+              const off = billingCycle === "threeMonth" && THREE_MONTH_DISCOUNT_PLANS.includes(pl.key) && full !== null && amount !== null ? full - amount : 0;
+              const featured = pl.key === "allinone";
+              const Icon = pl.icon;
+              return (
+                <motion.div key={pl.key} initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.06, duration: 0.4 }}
+                  className="shrink-0 w-[78%] snap-center sm:w-auto sm:shrink">
+                  <Card className={`relative h-full flex flex-col p-5 sm:p-6 rounded-[1.75rem] border-0 transition-all duration-300 hover:-translate-y-1 ${featured ? "bg-slate-900 text-white shadow-2xl shadow-slate-300 ring-2 ring-blue-500" : "bg-white shadow-sm hover:shadow-md"}`}>
+                    {featured && (
+                      <div className="absolute -top-3 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-blue-600 px-4 py-1 text-[11px] font-black text-white shadow-lg">추천</div>
+                    )}
+                    <div className="flex items-center justify-between">
+                      <div className={`flex h-10 w-10 items-center justify-center rounded-2xl ${featured ? "bg-white/10 text-blue-300" : pl.web ? "bg-blue-50 text-blue-600" : "bg-slate-100 text-slate-600"}`}>
+                        <Icon className="w-5 h-5" />
+                      </div>
+                      {/* 포함 범위: 주보 / 주보 + 홈페이지 */}
+                      <div className="flex gap-1">
+                        <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-black ${featured ? "bg-white/10 text-white" : "bg-slate-100 text-slate-600"}`}><FileText className="w-3 h-3" /> 주보</span>
+                        {pl.web && <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-black ${featured ? "bg-blue-500 text-white" : "bg-blue-50 text-blue-600"}`}><Globe className="w-3 h-3" /> 홈페이지</span>}
+                      </div>
+                    </div>
+                    <h3 className={`mt-4 text-lg sm:text-xl font-black ${featured ? "text-white" : "text-slate-900"}`}>{FEATURE_PLAN_LABELS[pl.key]}</h3>
+                    <p className={`mt-1 text-xs font-bold break-keep ${featured ? "text-slate-400" : "text-slate-500"}`}>{pl.desc}</p>
+                    <div className="mt-4 min-h-[64px]">
+                      {amount === null ? (
+                        <p className="text-2xl font-black">별도 문의</p>
+                      ) : (
+                        <motion.div key={`${pl.key}-${billingCycle}`} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
+                          <div className="flex items-end gap-1">
+                            <span className={`text-3xl font-black tracking-tight ${featured ? "text-white" : "text-slate-900"}`}>{amount.toLocaleString()}</span>
+                            <span className={`mb-1 text-xs font-bold ${featured ? "text-slate-400" : "text-slate-400"}`}>원 / {billingCycle === "monthly" ? "월" : "3개월"}</span>
+                          </div>
+                          {off > 0 && full !== null ? (
+                            <p className="mt-1 text-[11px] font-bold"><span className={`line-through mr-1.5 ${featured ? "text-slate-500" : "text-slate-400"}`}>{full.toLocaleString()}원</span><span className="text-rose-400">{off.toLocaleString()}원 할인 ({Math.round((off / full!) * 100)}%)</span></p>
+                          ) : (
+                            <p className={`mt-1 text-[11px] font-bold ${featured ? "text-slate-500" : "text-slate-400"}`}>{billingCycle === "monthly" ? "1회 결제 또는 정기결제" : "1회 결제 · 자동 갱신 없음"}</p>
+                          )}
+                        </motion.div>
+                      )}
+                    </div>
+                    <ul className="mt-4 flex-1 space-y-2.5">
+                      {pl.points.map((pt) => (
+                        <li key={pt} className="flex items-start gap-2">
+                          <Check className={`mt-0.5 w-4 h-4 shrink-0 ${featured ? "text-blue-400" : "text-blue-500"}`} />
+                          <span className={`text-[13px] font-medium leading-snug break-keep ${featured ? "text-slate-200" : "text-slate-600"}`}>{pt}</span>
+                        </li>
+                      ))}
+                    </ul>
+                    <Button onClick={() => setChooserPlan(pl.key)}
+                      className={`mt-6 w-full rounded-[1.1rem] py-6 font-black text-sm border-none transition-all active:scale-95 ${featured ? "bg-blue-500 hover:bg-blue-600 text-white shadow-lg shadow-blue-900/30" : "bg-slate-900 hover:bg-black text-white"}`}>
+                      시작하기
+                    </Button>
+                  </Card>
+                </motion.div>
+              );
+            })}
+          </div>
+
+          {/* 한눈에 비교하기 */}
+          <div className="mt-8 sm:mt-12 overflow-x-auto rounded-[1.75rem] bg-white shadow-sm">
+            <table className="w-full min-w-[640px] text-left">
+              <thead>
+                <tr className="border-b border-slate-100">
+                  <th className="px-5 py-4 text-sm font-black text-slate-900">한눈에 비교하기</th>
+                  {(["basic", "standard", "pro", "allinone"] as const).map((k) => (
+                    <th key={k} className={`px-3 py-4 text-center text-sm font-black ${k === "allinone" ? "text-blue-600" : "text-slate-700"}`}>{FEATURE_PLAN_LABELS[k]}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="text-[13px]">
+                {([
+                  ["모바일 주보 무제한 발행", 0], ["예배 순서·찬양·말씀·교회 소식", 0], ["지난 주보·열람 통계", 0],
+                  ["교회 소개·섬기는 분·목회 칼럼", 1], ["오시는 길·SNS 링크·카톡 미리보기", 1],
+                  ["교회 홈페이지 (셀프형 · 직접 편집)", 2], ["커스텀 주보 디자인 템플릿", 2],
+                  ["스테이온이 대신 업데이트 (관리형)", 3], ["검색 노출(SEO) 지원 — 네이버·구글 등록 대행", 3], ["검색 노출 점검 · 제목·설명 최적화 대행", 3],
+                ] as const).map(([label, from]) => (
+                  <tr key={label} className="border-b border-slate-50 last:border-0">
+                    <td className="px-5 py-3 font-medium text-slate-600 break-keep">{label}</td>
+                    {[0, 1, 2, 3].map((idx) => (
+                      <td key={idx} className="px-3 py-3 text-center">
+                        {idx >= from ? <Check className={`mx-auto w-4 h-4 ${idx === 3 ? "text-blue-600" : "text-blue-500"}`} /> : <span className="text-slate-200">—</span>}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* 예전 "앞으로 이런 요금제로 확장돼요" 미리보기 — 통합 화면으로 숨김(2026-11-12) */}
+        {false && (
+        <>
         {/* 앞으로 지금의 성도 수 기준 요금제를 대체할 예정인 기능별 요금제(베이직/스탠다드/프로/올인원)
             미리보기. 아직 기능이 준비중이라 결제/선택은 막아두고 안내용으로만 노출한다. */}
         <div className="max-w-6xl mx-auto mb-6 sm:mb-12">
@@ -459,7 +603,7 @@ export function Pricing() {
                   아래 가격은 featuredTier(로그인한 교회의 실제 등급, 미로그인 시 개척)에 맞춰
                   PRICING_MATRIX에서 가져온 값이라 성도 수에 따라 달라진다 — 더 이상 고정가 아님 */}
               <p className="mt-2 text-xs font-bold text-indigo-500">
-                아래 가격은 <strong>{featuredTier.value} · {featuredTier.rangeLabel}</strong> 교회 기준이에요
+                모든 교회 같은 요금이에요 · 성도 300명 이상은 별도 문의
               </p>
             </div>
 
@@ -492,7 +636,7 @@ export function Pricing() {
                       </div>
                     )}
                     <p className="text-[10px] text-slate-300 font-bold mb-4">
-                      {isEnterprisePrice ? "대형 교회는 담당자가 안내해드려요" : `3개월 ${price.threeMonth!.toLocaleString()}원`}
+                      {isEnterprisePrice ? "대형 교회는 담당자가 안내해드려요" : `3개월 ${price.threeMonth!.toLocaleString()}원${THREE_MONTH_DISCOUNT_PLANS.includes(tier.key) ? ` (${((price.monthly! * 3) - price.threeMonth!).toLocaleString()}원 할인)` : ""}`}
                     </p>
 
                     <div className="relative flex-grow mb-4">
@@ -528,6 +672,9 @@ export function Pricing() {
           </div>
         </div>
 
+        </>
+        )}
+
         {!isAdminPath && !currentUserInfo && (
           <Card className="mb-6 sm:mb-12 p-4 sm:p-8 rounded-2xl sm:rounded-[2.5rem] bg-gradient-to-r from-blue-600 to-indigo-600 text-white border-0 shadow-xl shadow-blue-200 max-w-4xl mx-auto relative overflow-hidden group animate-in fade-in zoom-in-95 duration-500">
             <div className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
@@ -541,18 +688,21 @@ export function Pricing() {
           </Card>
         )}
 
-        {/* 가입 시 입력한 성도 수 기준으로 요금제가 자동 책정된다는 점을 분명히 안내 */}
-        <div className="max-w-3xl mx-auto mb-5 sm:mb-8 p-3.5 sm:p-5 rounded-2xl bg-blue-50 border border-blue-100 flex items-start gap-2.5 sm:gap-3">
-          <Info className="w-4 h-4 sm:w-5 sm:h-5 text-blue-600 flex-shrink-0 mt-0.5" />
-          <p className="text-xs sm:text-sm text-blue-800 font-medium leading-relaxed break-keep">
-            {userTier ? (
-              <>가입 시 입력하신 평균 출석 성도 수 기준(<strong>{userTier} · {featuredTier.rangeLabel}</strong>)으로 아래 <strong>{userTier}</strong> 요금제가 자동으로 하이라이트됩니다. 다른 등급의 요금제는 선택하실 수 없으며, 등급 변경이 필요하시면 우측 하단 1:1 문의를 이용해주세요.</>
-            ) : currentUserInfo ? (
-              <>가입 정보에 성도 수가 등록되어 있지 않아 전체 요금제를 자유롭게 선택하실 수 있습니다. 정확한 안내가 필요하시면 우측 하단 1:1 문의를 이용해주세요.</>
-            ) : (
-              <>로그인하시면 가입 시 입력하신 평균 출석 성도 수를 기준으로 이용 가능한 요금제가 자동으로 하이라이트돼요. 지금은 전체 요금제를 자유롭게 둘러보실 수 있습니다.</>
-            )}
-          </p>
+        {/* 예전 요금제 선택 토글 + 요금제별 카드 3장(1개월·3개월·정기결제) — 통합 카드(위)로 바뀌어 숨김(2026-11-12) */}
+        {false && (
+        <>
+        {/* 단독 요금제 안내(2026-11-12): 모든 교회 같은 가격 · 성도 300명 이상은 별도 문의(결제를 막지는 않음) */}
+        <div className="max-w-3xl mx-auto mb-5 sm:mb-8 p-3.5 sm:p-5 rounded-2xl bg-blue-50 border border-blue-100 flex flex-col sm:flex-row sm:items-center gap-3">
+          <div className="flex items-start gap-2.5 sm:gap-3 flex-1">
+            <Info className="w-4 h-4 sm:w-5 sm:h-5 text-blue-600 flex-shrink-0 mt-0.5" />
+            <p className="text-xs sm:text-sm text-blue-800 font-medium leading-relaxed break-keep">
+              교회 규모와 관계없이 <strong>모든 교회가 같은 요금</strong>으로 이용해요. 단, <strong>성도 300명 이상</strong> 교회는 이용 규모에 맞춰 담당자가 별도로 안내해 드려요.
+            </p>
+          </div>
+          <Button size="sm" onClick={() => window.open(KAKAO_CHANNEL_URL, "_blank")}
+            className="shrink-0 rounded-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-4 h-9 flex items-center gap-1.5 self-end sm:self-auto">
+            <MessageCircle className="w-3.5 h-3.5" /> 300명 이상 별도 문의
+          </Button>
         </div>
 
         {/* 요금제(기능 등급) 선택 토글 — 교회 규모 배지보다 먼저 노출.
@@ -589,7 +739,7 @@ export function Pricing() {
         {/* 대표 티어(로그인 + 성도 수 등록 시 본인 등급, 그 외엔 개척 기본값)를 원래의 넓은 카드 스타일로 강조 노출 */}
         <div className="text-center mb-6 sm:mb-12">
           <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-900 text-white text-xs font-bold">
-            {userTier ? `${featuredTier.value} · ${featuredTier.rangeLabel} 교회 맞춤 요금제` : `${featuredTier.value} 단계 · ${featuredTier.rangeLabel} 시작 요금제`}
+            {FEATURE_PLAN_LABELS[selectedFeaturePlan]} 요금제 · 모든 교회 같은 요금
           </span>
         </div>
 
@@ -637,9 +787,22 @@ export function Pricing() {
                     <div className={`w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br ${TIER_GRADIENT[featuredTier.value]} flex items-center justify-center text-white mb-3.5 sm:mb-5 shadow-lg shadow-blue-100`}>
                       {isThreeMonth ? <Calendar className="w-4 h-4 sm:w-5 sm:h-5" /> : <Clock className="w-4 h-4 sm:w-5 sm:h-5" />}
                     </div>
-                    <h3 className="text-base sm:text-xl font-black mb-1.5 sm:mb-2 text-slate-900">{featuredTier.value} {FEATURE_PLAN_LABELS[selectedFeaturePlan]} {plan.period} 플랜</h3>
-                    <p className="text-xs sm:text-sm mb-3.5 sm:mb-5 font-bold text-slate-500">{featuredTier.rangeLabel} 교회를 위한 요금제</p>
+                    <h3 className="text-base sm:text-xl font-black mb-1.5 sm:mb-2 text-slate-900">{FEATURE_PLAN_LABELS[selectedFeaturePlan]} {plan.period === "월" ? "1개월" : "3개월"} 플랜</h3>
+                    <p className="text-xs sm:text-sm mb-3.5 sm:mb-5 font-bold text-slate-500">모든 교회 같은 요금</p>
                     <div className="mb-1"><div className="flex items-end gap-1"><span className="text-2xl sm:text-3xl font-black text-slate-900">{plan.price}</span><span className="text-slate-400 text-xs sm:text-sm mb-1 font-bold">원 / {plan.period}</span></div></div>
+                    {/* 프로·올인원 3개월: 1개월×3 대비 할인 금액·비율 표시(베이직·스탠다드는 표시 안 함) */}
+                    {isThreeMonth && THREE_MONTH_DISCOUNT_PLANS.includes(selectedFeaturePlan) && (() => {
+                      const row = PRICING_MATRIX[featuredTier.value]?.[selectedFeaturePlan];
+                      if (!row || row.monthly === null || row.threeMonth === null) return null;
+                      const full = row.monthly * 3;
+                      const off = full - row.threeMonth;
+                      return off > 0 ? (
+                        <p className="text-[11px] sm:text-xs font-bold mb-1">
+                          <span className="text-slate-400 line-through mr-1.5">{full.toLocaleString()}원</span>
+                          <span className="text-rose-500">{off.toLocaleString()}원 할인 ({Math.round((off / full) * 100)}%)</span>
+                        </p>
+                      ) : null;
+                    })()}
                     <p className="text-[10px] sm:text-[11px] text-slate-400 font-bold mb-4 sm:mb-6">
                       {isThreeMonth ? "1회 결제 · 자동 갱신 없음" : "1회 결제 · 자동 결제 아님"}
                     </p>
@@ -680,11 +843,10 @@ export function Pricing() {
                 <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center text-white mb-3.5 sm:mb-5 shadow-lg shadow-emerald-100">
                   <RefreshCcw className="w-4 h-4 sm:w-5 sm:h-5" />
                 </div>
-                <h3 className="text-base sm:text-xl font-black mb-1.5 sm:mb-2 text-slate-900">{featuredTier.value} {FEATURE_PLAN_LABELS[selectedFeaturePlan]} 정기결제</h3>
+                <h3 className="text-base sm:text-xl font-black mb-1.5 sm:mb-2 text-slate-900">{FEATURE_PLAN_LABELS[selectedFeaturePlan]} 정기결제</h3>
                 <p className="text-xs sm:text-sm mb-2 font-bold text-slate-500">카드 등록 한 번으로 매달 자동 결제</p>
-                <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-700 text-[10px] sm:text-[11px] font-bold mb-3.5 sm:mb-5 w-fit">
-                  <Info className="w-3 h-3 shrink-0" /> 현재 정기 결제 시스템 도입중입니다
-                </div>
+                {/* "현재 정기 결제 시스템 도입중입니다" 안내 — 도입 완료(2026-11-12)로 뺌 */}
+                <div className="mb-3.5 sm:mb-5" />
                 <div className="mb-1"><div className="flex items-end gap-1"><span className="text-2xl sm:text-3xl font-black text-slate-900">{PRICING_MATRIX[featuredTier.value]?.[selectedFeaturePlan]?.monthly?.toLocaleString()}</span><span className="text-slate-400 text-xs sm:text-sm mb-1 font-bold">원 / 월</span></div></div>
                 <p className="text-[10px] sm:text-[11px] text-emerald-600 font-bold mb-4 sm:mb-6">매월 자동결제 · 언제든 해지 가능</p>
                 <Button onClick={handleRecurringSelection} className="w-full rounded-[1.3rem] py-5 sm:py-7 mb-5 sm:mb-8 font-black border-none shadow-md transition-all active:scale-95 text-sm sm:text-base bg-gradient-to-r from-emerald-500 to-teal-600 hover:opacity-90 text-white shadow-lg shadow-emerald-100 flex items-center justify-center gap-2">
@@ -719,7 +881,12 @@ export function Pricing() {
           </div>
         )}
 
-        {/* 나머지 성도 수 구간 요금제는 비교용으로 하단에 좀 더 작게 노출 */}
+        </>
+        )}
+
+        {/* 나머지 성도 수 구간 요금제(예전 규모별 가격 + 결제 버튼) — 단독 요금제 개편(2026-11-12)으로 숨김.
+            다시 쓰려면 아래 false를 지우면 됨 */}
+        {false && (
         <div className="max-w-5xl mx-auto mb-8 sm:mb-16">
           <div className="text-center mb-4 sm:mb-6">
             <h2 className="text-base sm:text-lg font-black text-slate-900 mb-1">다른 성도 수 구간 요금제</h2>
@@ -788,6 +955,8 @@ export function Pricing() {
             })}
           </div>
         </div>
+
+        )}
 
         <Card className="max-w-3xl mx-auto mb-8 sm:mb-16 p-5 sm:p-8 rounded-[2rem] border-0 bg-white shadow-sm">
           <h3 className="text-lg font-black text-slate-900 mb-5 text-center">모든 요금제 공통 혜택</h3>
@@ -900,6 +1069,58 @@ export function Pricing() {
         )}
       </div>
 
+      {/* 결제 방식 고르기(통합 요금 카드 "시작하기") — 고른 뒤엔 기존 결제 흐름을 그대로 탐:
+          1회 결제 → handlePlanSelection(기존 확인 창 → usePayment) / 정기결제 → handleRecurringSelection(기존 동의 창 → useBillingKey) */}
+      <Dialog open={!!chooserPlan} onOpenChange={(o) => { if (!o) setChooserPlan(null); }}>
+        <DialogContent className="max-w-md rounded-[2rem] p-6 sm:p-8 border-none shadow-2xl bg-white">
+          {chooserPlan && (() => {
+            const row = PRICING_MATRIX[featuredTier.value]?.[chooserPlan];
+            const oncePlan = buildFeaturePlan(featuredTier, chooserPlan, billingCycle);
+            const monthly = row?.monthly ?? null;
+            return (
+              <>
+                <DialogHeader>
+                  <DialogTitle className="text-xl font-black text-slate-900 text-center tracking-tight">{FEATURE_PLAN_LABELS[chooserPlan]} 요금제 · 결제 방식 선택</DialogTitle>
+                  <DialogDescription className="text-center text-sm text-slate-500 pt-1">원하시는 결제 방식을 골라 주세요</DialogDescription>
+                </DialogHeader>
+                <div className="mt-5 space-y-3">
+                  {oncePlan && (
+                    <button type="button" onClick={() => { setChooserPlan(null); handlePlanSelection(oncePlan, featuredTier.value); }}
+                      className="group w-full rounded-2xl border-2 border-slate-200 p-4 text-left transition-all hover:border-slate-900 hover:-translate-y-0.5">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-700">
+                          {billingCycle === "monthly" ? <Clock className="w-5 h-5" /> : <Calendar className="w-5 h-5" />}
+                        </div>
+                        <div className="flex-1">
+                          <p className="text-sm font-black text-slate-900">{billingCycle === "monthly" ? "1개월" : "3개월"} 1회 결제</p>
+                          <p className="text-xs text-slate-500 font-medium">한 번 결제 · 자동으로 다시 결제되지 않아요</p>
+                        </div>
+                        <p className="text-base font-black text-slate-900 whitespace-nowrap">{oncePlan.price}원</p>
+                      </div>
+                    </button>
+                  )}
+                  {monthly !== null && (
+                    <button type="button" onClick={() => { setSelectedFeaturePlan(chooserPlan); setChooserPlan(null); handleRecurringSelection(); }}
+                      className="group w-full rounded-2xl border-2 border-emerald-200 bg-emerald-50/40 p-4 text-left transition-all hover:border-emerald-500 hover:-translate-y-0.5">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-500 text-white">
+                          <RefreshCcw className="w-5 h-5" />
+                        </div>
+                        <div className="flex-1">
+                          <p className="text-sm font-black text-slate-900">매월 정기결제</p>
+                          <p className="text-xs text-slate-500 font-medium">카드 등록 한 번으로 매달 자동 결제 · 언제든 해지</p>
+                        </div>
+                        <p className="text-base font-black text-emerald-700 whitespace-nowrap">{monthly.toLocaleString()}원<span className="text-xs font-bold">/월</span></p>
+                      </div>
+                    </button>
+                  )}
+                </div>
+              </>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={showTrialDialog} onOpenChange={setShowTrialDialog}>
         <DialogContent className="rounded-[2rem] sm:rounded-[2.5rem] max-w-md bg-white border-none p-5 sm:p-8 font-sans">
           <DialogHeader>
@@ -933,7 +1154,7 @@ export function Pricing() {
               <div className="bg-emerald-50 p-5 rounded-[1.5rem] border border-emerald-100 space-y-1.5">
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-emerald-700 font-bold">요금제</span>
-                  <span className="text-emerald-900 font-black">{featuredTier.value} · {FEATURE_PLAN_LABELS[selectedFeaturePlan]}</span>
+                  <span className="text-emerald-900 font-black">{FEATURE_PLAN_LABELS[selectedFeaturePlan]}</span>
                 </div>
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-emerald-700 font-bold">결제 금액</span>

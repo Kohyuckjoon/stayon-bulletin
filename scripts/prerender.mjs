@@ -30,7 +30,7 @@ const CHURCH_LIST_SOURCES = [
 // (판별 기준은 routes.tsx의 getChurchSubdomain과 동일). 정리는 src/main.tsx가 함
 const CHURCH_HOST_HIDE =
   `<script data-prerender>(function(){var h=location.hostname,s=h.replace(".stayon-platform.com","").split(".")[0];` +
-  `if(/stayon-platform\\.com$/.test(h)&&s&&s!=="stayon-platform"&&["www","bulletin","place","stayonsbplatform"].indexOf(s)<0)` +
+  `if(/stayon-platform\\.com$/.test(h)&&s&&s!=="stayon-platform"&&["www","bulletin","place","stayonsbplatform","website"].indexOf(s)<0)` +
   `document.write('<style id="prerender-hide" data-prerender>#root{display:none}</style>')})()</script>`;
 
 const shell = fs.readFileSync(path.join(DIST, "index.html"), "utf8");
@@ -119,6 +119,9 @@ try {
         else s.remove();
       });
       document.querySelectorAll("iframe").forEach((el) => el.remove());
+      // 로그인 표시 자리(로그인/교회 이름 버튼)는 미리 그린 HTML에선 숨김 — 미리 그릴 땐 늘 "로그인"으로 찍혀서
+      // 로그인한 사람이 열면 앱이 뜨기 전 잠깐 "로그인"이 보였다 바뀌는 깜빡임이 생김(WebsiteMain의 data-auth-slot)
+      document.querySelectorAll("[data-auth-slot]").forEach((el) => { el.style.opacity = "0"; });
       document.querySelectorAll("style").forEach((el) => {
         if (!el.textContent.trim()) el.remove();
       });

@@ -89,6 +89,26 @@ export interface ChurchSite {
   ytVideos?: { url?: string; t?: number; videos?: { id: string; title: string; published: string; short?: boolean }[] };
   ytPlaylist?: { url?: string; t?: number; videos?: { id: string; title: string; published: string; short?: boolean }[] }; // 지난 설교 재생목록 저장본
   historyItems?: { date: string; content: string }[]; // 교회 연혁
+  // 찬양팀(위쪽 메뉴 "찬양팀"): praiseEnabled가 true일 때만 메뉴에 보임
+  praiseEnabled?: boolean;
+  // 교회 일정(위쪽 메뉴 "교회 일정", 앨범 오른쪽): scheduleEnabled가 true일 때만 메뉴·화면에 보임
+  // 홈페이지 편집 화면 > 매주 업데이트 탭에서 일정(날짜·내용)을 추가
+  scheduleEnabled?: boolean;
+  // 화면 위쪽 배너(페이지 전환형): 사진(기본) / 색상(두 색 그라데이션) / 끄기(옅은 띠) — utils/pageBanners.ts
+  bannerMode?: "photo" | "color" | "off";
+  bannerColors?: [string, string] | null; // null·없음 = 우리 교회 색으로 자동
+  bannerPhotos?: Record<string, string>; // 화면별로 교회가 올린 사진 주소(없으면 기본 사진)
+  schedules?: { id: string; date: string; title: string }[];
+  praiseIntro?: string;
+  praiseTeams?: { name: string; time: string; place: string; leader: string; desc: string; photoUrl?: string }[];
+  // 새가족 안내(교회소개 > 새가족 안내): 소개 · 등록 절차(단계) · 문의
+  newcomerIntro?: string;
+  newcomerSteps?: { title: string; desc: string }[];
+  newcomerContact?: string;
+  // 설교 화면 카드 표시 여부: 이번 주 말씀(기본 켜짐) · 다음 주 말씀(기본 꺼짐)
+  weeklySermonEnabled?: boolean;
+  nextSermon?: { title?: string; scripture?: string; preacher?: string; date?: string };
+  nextSermonEnabled?: boolean;
   prayerPosts?: { id: string; title: string; date: string; content: string }[]; // 중보기도(외부 공개해도 되는 기도제목)
   // 교회 주보(종이 주보 파일): 교회가 쓰는 한글·워드·PDF·사진 파일을 그대로 올린 목록. 온라인 주보와 별개
   // sermons/news: 교회가 "이 주보로 교회 소식·설교도 채우기"로 자동 분석해서 확인 후 넣은 내용(선택)

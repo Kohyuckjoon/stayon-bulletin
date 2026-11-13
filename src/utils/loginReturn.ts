@@ -3,9 +3,10 @@
 // sessionStorage를 쓰기 때문에 새로고침에도 유지되고, 탭을 닫으면 자동으로 사라짐.
 const KEY = "stayon_login_return_to";
 
-export type LoginReturnTarget = "/pricing" | "/website-offer" | "/website" | "/jobs/boost";
+export type LoginReturnTarget = "/pricing" | "/website-offer" | "/website" | "/jobs/boost" | "/website-builder" | "/website-create";
 
-const VALID_TARGETS: LoginReturnTarget[] = ["/pricing", "/website-offer", "/website", "/jobs/boost"];
+// /website-builder · /website-create: 교회 홈페이지 제작 화면에서 로그아웃 상태로 "무료로 시작하기"·"만들기"를 눌렀을 때 → 로그인 후 그 화면으로
+const VALID_TARGETS: LoginReturnTarget[] = ["/pricing", "/website-offer", "/website", "/jobs/boost", "/website-builder", "/website-create"];
 
 export const setLoginReturnTo = (target: LoginReturnTarget) => {
   try {

@@ -31,14 +31,21 @@ const PAGES: {path: string; label: string; group: string}[] = [
   {path: "/about/history", label: "교회 연혁", group: "교회소개"},
   {path: "/about/staff", label: "섬기는 사람들", group: "교회소개"},
   {path: "/location", label: "오시는 길", group: "교회소개"},
+  {path: "/about/newcomer", label: "새가족 안내", group: "교회소개"},
   {path: "/worship", label: "예배 안내", group: "예배"},
+  // 찬양팀: 홈페이지 편집 화면에서 켰을 때만(praiseEnabled)
+  {path: "/praise", label: "찬양팀", group: "찬양팀"},
   // 주일학교/교육부서(메뉴 이름은 교회가 정함 - 화면에선 eduLabel).
   // 부서별 화면은 /education/1, /education/2 …
   {path: "/education", label: "주일학교", group: "주일학교"},
   {path: "/worship/online", label: "온라인 예배", group: "예배"},
-  {path: "/sermons", label: "설교", group: "예배"},
+  {path: "/sermons", label: "말씀/영상", group: "말씀/영상"},
   {path: "/bulletins", label: "교회 주보", group: "주보"},
   {path: "/jubo", label: "온라인 주보", group: "주보"},
+  // 앨범(홈페이지 편집 화면 > 매주 업데이트). 앨범별 화면은 /album/{앨범 id}
+  {path: "/album", label: "앨범", group: "앨범"},
+  // 교회 일정: 홈페이지 편집 화면에서 켰을 때만(scheduleEnabled)
+  {path: "/schedule", label: "교회 일정", group: "교회 일정"},
   {path: "/news", label: "교회소식", group: "교회소식"},
   {path: "/column", label: "교회 칼럼", group: "교회소식"},
   {path: "/prayer", label: "중보기도", group: "교회소식"},
@@ -67,6 +74,7 @@ interface Content {
   prayers: {id: string; title: string; date: string; content: string}[];
   history: Doc[];
   edu: Doc[]; // 주일학교·교육부서(홈페이지 편집 화면)
+  albums: Doc[]; // 행사 사진 앨범(최신 날짜 순)
   eduLabel: string;
 }
 
@@ -245,6 +253,9 @@ function buildContent(site: Doc, ctx: Ctx | null): Content {
     prayers,
     history: arr(site.historyItems),
     edu: arr(site.eduDepartments).filter((d) => str(d.name)),
+    albums: arr(site.albums)
+      .filter((x) => str(x.id) && (str(x.title) || arr(x.photos).length))
+      .sort((x, z) => str(z.date).localeCompare(str(x.date))),
     eduLabel: str(site.eduMenuLabel) || "주일학교",
   };
 }
@@ -276,6 +287,12 @@ function hasPage(path: string, c: Content): boolean {
   case "/column": return (c.ctx?.columns.length || 0) > 0;
   case "/prayer": return c.prayers.length > 0;
   case "/education": return c.edu.length > 0;
+  case "/praise": return c.site.praiseEnabled === true;
+  case "/about/newcomer": return !!(str(c.site.newcomerIntro) ||
+    arr(c.site.newcomerSteps).length || str(c.site.newcomerContact));
+  // 홈페이지(앱)도 앨범 메뉴는 앨범이 없어도 항상 보여 주므로 404로 내지 않음
+  case "/album": return true;
+  case "/schedule": return c.site.scheduleEnabled === true;
   }
   return false;
 }
@@ -385,6 +402,25 @@ function buildPage(c: Content, base: string, path: string): Page | null {
     };
   }
 
+  // 앨범 하나(/album/{id}): 제목 · 날짜 · 사진들
+  if (seg[0] === "album" && seg.length === 2) {
+    const al = c.albums.find((x) => str(x.id) === seg[1]);
+    if (!al) return null;
+    const photos = arr(al.photos).map(str)
+      .filter((u) => /^https?:\/\//.test(u));
+    const title = str(al.title) || "앨범";
+    return {
+      title: `${title} | 앨범 | ${c.name}`,
+      description: clip([title, str(al.date), `사진 ${photos.length}장`]
+        .filter(Boolean).join(" · "), 150),
+      h1: title,
+      body: `<p>${esc([str(al.date), `사진 ${photos.length}장`]
+        .filter(Boolean).join(" · "))}</p>` +
+        photos.map((u, i) => `<img src="${esc(u)}" alt="${
+          esc(`${title} ${i + 1}`)}" loading="lazy" />`).join(""),
+    };
+  }
+
   // 주일학교 부서별 화면(/education/1 …): 부서 하나의 대상·예배 시간·장소·담당·소개
   if (seg[0] === "education" && seg.length === 2) {
     const d = c.edu[Number(seg[1]) - 1];
@@ -477,6 +513,45 @@ function buildPage(c: Content, base: string, path: string): Page | null {
     body = ul(c.prayers.map((x) => a(`/prayer/${x.id}`,
       `${x.date} ${x.title}`)));
     break;
+  case "/praise":
+    body = (str(c.site.praiseIntro) ?
+      `<p>${nl2br(str(c.site.praiseIntro))}</p>` : "") +
+      arr(c.site.praiseTeams).filter((x) => str(x.name)).map((x) =>
+        `<h2>${esc(str(x.name))}</h2>` +
+        ul([["시간", str(x.time)], ["장소", str(x.place)],
+          ["리더", str(x.leader)]].filter(([, v]) => v)
+          .map(([k, v]) => `<strong>${esc(k)}</strong> ${esc(v)}`)) +
+        (str(x.desc) ? `<p>${nl2br(str(x.desc))}</p>` : "")).join("");
+    break;
+  case "/about/newcomer":
+    body = (str(c.site.newcomerIntro) ?
+      `<p>${nl2br(str(c.site.newcomerIntro))}</p>` : "") +
+      "<ol>" + arr(c.site.newcomerSteps)
+      .filter((x) => str(x.title) || str(x.desc))
+      .map((x) => `<li><strong>${esc(str(x.title))}</strong> ${
+        nl2br(str(x.desc))}</li>`).join("") + "</ol>" +
+      (str(c.site.newcomerContact) ?
+        `<p>문의: ${nl2br(str(c.site.newcomerContact))}</p>` : "");
+    break;
+  case "/album":
+    body = c.albums.length ?
+      ul(c.albums.map((x) => a(`/album/${str(x.id)}`, [str(x.date),
+        str(x.title) || "앨범", `사진 ${arr(x.photos).length}장`]
+        .filter(Boolean).join(" · ")))) :
+      "<p>아직 등록된 앨범이 없습니다.</p>";
+    break;
+  case "/schedule": {
+    // 날짜순 일정 목록(2026.01.01 일정 내용)
+    const items = arr(c.site.schedules)
+      .filter((x) => /^\d{4}-\d{2}-\d{2}$/.test(str(x.date)) &&
+        str(x.title))
+      .sort((x, y) => str(x.date).localeCompare(str(y.date)));
+    body = items.length ?
+      ul(items.map((x) => `${esc(str(x.date).replace(/-/g, "."))} ${
+        esc(str(x.title))}`)) :
+      "<p>아직 등록된 일정이 없습니다.</p>";
+    break;
+  }
   case "/education":
     body = ul(c.edu.map((d, i) => a(`/education/${i + 1}`,
       [str(d.name), str(d.target)].filter(Boolean).join(" · "))));
@@ -629,6 +704,7 @@ export function churchSitePaths(
   (ctx?.columns || []).forEach((x) => out.push(`${base}/column/${x.id}`));
   c.prayers.forEach((x) => out.push(`${base}/prayer/${x.id}`));
   c.edu.forEach((_, i) => out.push(`${base}/education/${i + 1}`));
+  c.albums.forEach((x) => out.push(`${base}/album/${str(x.id)}`));
   return out;
 }
 

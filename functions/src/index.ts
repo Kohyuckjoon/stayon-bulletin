@@ -1070,7 +1070,10 @@ export const bulletinOG = functions.https.onRequest(async (req, res) => {
   res.status(500).send("Internal Server Error");
 });
 
-const KNOWN_SUBDOMAINS = ["www", "bulletin", "place", "stayonsbplatform"];
+// website: 교회 홈페이지 제작 소개 페이지 전용 주소(2026-11-12) — 교회 주소로 보지 않음
+const KNOWN_SUBDOMAINS = [
+  "www", "bulletin", "place", "stayonsbplatform", "website",
+];
 
 /**
  * routes.tsx의 getChurchSubdomain()과 동일한 판별 로직.
@@ -1301,7 +1304,12 @@ export const siteOG = functions.https.onRequest(async (req, res) => {
     (req.headers["x-forwarded-host"] as string | undefined) ||
     req.headers.host
   );
-  const requestPath = queryHost ? queryPath : (req.originalUrl || "/");
+  const rawPath = queryHost ? queryPath : (req.originalUrl || "/");
+  // website.stayon-platform.com 첫 화면 = bulletin.../website 와 같은 소개 페이지
+  const isWebsiteHost =
+    (originalHost || "").split(":")[0] === "website.stayon-platform.com";
+  const requestPath = isWebsiteHost && rawPath.split("?")[0] === "/" ?
+    "/website" : rawPath;
   const churchSlug = getChurchSlugFromHost(originalHost);
 
   const isPreviewBot = SITE_PREVIEW_BOT_REGEX.test(userAgent);
@@ -1405,6 +1413,33 @@ export const siteOG = functions.https.onRequest(async (req, res) => {
           "<body><h1>페이지를 찾을 수 없습니다</h1></body></html>");
         return;
       }
+      // 카카오톡 등 미리보기 봇 + 아직 없는 교회 주소(목사님께 미리 보낸 제안 주소 등):
+      // 예전엔 아래 "그 외"로 빠져 주보 플랫폼 홍보 카드가 떴음 → 홈페이지 준비 중 카드로
+      if (isPreviewBot && !siteDoc.exists) {
+        const ogTitle = "교회 홈페이지를 준비하고 있어요 | STAYON";
+        const ogDesc = "STAYON과 함께 곧 새 교회 홈페이지가 열려요.";
+        const ogUrl = escapeHtml(`https://${originalHost}/`);
+        const ogImage = "https://bulletin.stayon-platform.com/" +
+          "stayon_website_kakao_cover.png";
+        res.setHeader("Content-Type", "text/html; charset=utf-8");
+        res.status(200).send(`<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="robots" content="noindex" />
+  <title>${ogTitle}</title>
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="${ogTitle}" />
+  <meta property="og:description" content="${ogDesc}" />
+  <meta property="og:url" content="${ogUrl}" />
+  <meta property="og:image" content="${ogImage}" />
+  <meta property="og:image:width" content="1774" />
+  <meta property="og:image:height" content="887" />
+</head>
+<body><h1>${ogTitle}</h1><p>${ogDesc}</p></body>
+</html>`);
+        return;
+      }
       // 사람: 발행 전·원페이지형은 예전과 똑같이 아래 기본 화면(React가 그림)으로
       const humanFallback = isHumanVisit &&
         (notPublished || siteDoc.data()?.layoutMode === "onepage");
@@ -1427,7 +1462,8 @@ export const siteOG = functions.https.onRequest(async (req, res) => {
           (isRealUrl(site.buildingImageUrl) && site.buildingImageUrl) ||
           (isRealUrl(site.logoUrl) && site.logoUrl) ||
           "";
-        const ogTitle = `${churchName} | STAYON`;
+        // 카카오톡 등 미리보기 카드 제목: 교회 이름만(2026-11-13, 예전엔 "교회이름 | STAYON")
+        const ogTitle = churchName;
         const pageUrl = `https://${originalHost}${requestPath}`;
         const safeTitle = escapeHtml(ogTitle);
         const safeDesc = escapeHtml(description);
@@ -1589,7 +1625,10 @@ export const siteOG = functions.https.onRequest(async (req, res) => {
       const ogDesc =
         "수백만 원짜리 교회 홈페이지를 3단계면 무료로 완성해요. " +
         "디자인 몰라도 괜찮아요.";
-      const ogUrl = "https://bulletin.stayon-platform.com/website";
+      // 카톡 카드 아래 주소: website 주소로 보냈으면 그 주소 그대로
+      const ogUrl = isWebsiteHost ?
+        "https://website.stayon-platform.com/" :
+        "https://bulletin.stayon-platform.com/website";
       const ogImage =
         "https://bulletin.stayon-platform.com/stayon_website_kakao_cover.png";
       const html = `
@@ -2045,3 +2084,10 @@ export const bulletinSite = functions.https.onRequest(async (req, res) => {
 // 종이 주보 자동 분석(빌더 '교회 주보' 파일 → 설교·교회 소식·기본 정보 추출, 저장은 안 함)
 // ANTHROPIC_API_KEY 시크릿 등록 전까지 배포 제외(등록 후 아래 줄 주석 해제)
 // export {analyzePaperBulletin} from "./bulletinAnalyze";
+
+// 모금 프로젝트(러브링 등) 합계 계산 — 결제·주보 함수와 별개 파일(./fundraising.ts)
+export {fundraiserTotals, fundraiserModeChange} from "./fundraising";
+
+// bulletin → website 주소 로그인 이어 주기(일회용 로그인 열쇠)
+// 별개 파일(./websiteHandoff.ts)
+export {websiteLoginHandoff} from "./websiteHandoff";

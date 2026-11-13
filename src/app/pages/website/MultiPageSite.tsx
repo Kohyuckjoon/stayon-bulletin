@@ -7,6 +7,7 @@ import { denominationLogoSrc } from "../../../utils/denominations";
 import { fetchOwnerData, buildSiteContent, OwnerData, SiteContent, fixedBulletinUrl, trimOwnerForCache } from "../../../utils/churchSiteContent";
 import { readSiteCache, writeSiteCache } from "../../../utils/siteLocalCache";
 import { homeCardText } from "../../../utils/homeCards";
+import { defaultBannerPhoto, resolveBannerColors, bannerTextIsDark } from "../../../utils/pageBanners";
 
 // 교회 홈페이지 "페이지 전환형" 화면. 메뉴마다 주소(/about, /worship …)가 따로 있고,
 // 각 페이지가 따로 검색엔진에 걸리도록 진짜 <a href> 링크로 이동한다.
@@ -16,10 +17,10 @@ import { homeCardText } from "../../../utils/homeCards";
 type PageKey =
   | "home" | "about" | "pastor" | "history" | "staff" | "location"
   | "worship" | "online" | "sermons" | "bulletins" | "jubo"
-  | "news" | "column" | "prayer" | "education" | "album";
+  | "news" | "column" | "prayer" | "education" | "album" | "praise" | "newcomer" | "schedule";
 
 interface PageDef { key: PageKey; path: string; label: string }
-interface GroupDef { en: string; label: string; pages: PageDef[] }
+interface GroupDef { en: string; label: string; pages: PageDef[]; navHidden?: boolean } // navHidden: 위쪽 메뉴·휴대폰 메뉴에는 안 보이는 묶음(주소로는 열림)
 
 const EDU_GROUP_LABEL = "교육부서";
 
@@ -30,11 +31,20 @@ export const SITE_GROUPS: GroupDef[] = [
     { key: "history", path: "/about/history", label: "교회 연혁" },
     { key: "staff", path: "/about/staff", label: "섬기는 사람들" },
     { key: "location", path: "/location", label: "오시는 길" },
+    // 새가족 안내(등록 절차): 편집 화면 > 교회소개에 내용을 적으면 보임
+    { key: "newcomer", path: "/about/newcomer", label: "새가족 안내" },
   ] },
   { en: "WORSHIP", label: "예배", pages: [
     { key: "worship", path: "/worship", label: "예배 안내" },
     { key: "online", path: "/worship/online", label: "온라인 예배" },
-    { key: "sermons", path: "/sermons", label: "설교" },
+  ] },
+  // 말씀(2026-11-11): 예배 메뉴 안에 있던 설교 화면(이번 주 말씀 · 다음 주 말씀)을 예배 바로 오른쪽 메뉴로 따로 뺌
+  { en: "SERMON", label: "말씀/영상", pages: [
+    { key: "sermons", path: "/sermons", label: "말씀/영상" },
+  ] },
+  // 찬양팀: 편집 화면 > 예배 탭에서 켜면(ON) 메뉴에 보이고, 끄면(OFF) 메뉴에서 아예 사라짐
+  { en: "PRAISE", label: "찬양팀", pages: [
+    { key: "praise", path: "/praise", label: "찬양팀" },
   ] },
   // 주일학교/교육부서: 메뉴 이름은 교회가 정함(홈페이지 편집 화면). 여기 label은 기본값이고 화면에선 c.eduLabel로 바꿔 보여 줌
   { en: "EDUCATION", label: EDU_GROUP_LABEL, pages: [
@@ -46,16 +56,23 @@ export const SITE_GROUPS: GroupDef[] = [
     { key: "news", path: "/news", label: "교회 소식" },
     { key: "jubo", path: "/jubo", label: "온라인 주보" },
   ] },
-  { en: "NEWS", label: "교회소식", pages: [
-    { key: "news", path: "/news", label: "교회소식" },
+  // 앨범: 교회가 홈페이지 편집 화면(매주 업데이트 탭)에서 올린 행사별 사진 앨범. 메뉴 위치는 "주보" 바로 오른쪽.
+  // 사진이 없어도 메뉴는 항상 보임(안내 문구). 서버 검색봇용 페이지(churchSiteSeo)에도 /album · /album/:id 있음
+  { en: "ALBUM", label: "앨범", pages: [
+    { key: "album", path: "/album", label: "앨범" },
+  ] },
+  // 교회 일정(2026-11-12): 편집 화면 > 매주 업데이트 탭에서 켜면(ON) "앨범" 오른쪽 메뉴에 보이고, 끄면(OFF) 메뉴·화면 모두 숨김.
+  // 왼쪽 달력 + 오른쪽 "이 달의 일정" 목록. 서버 검색봇용 페이지(churchSiteSeo /schedule)도 같은 조건
+  { en: "SCHEDULE", label: "교회 일정", pages: [
+    { key: "schedule", path: "/schedule", label: "교회 일정" },
+  ] },
+  // 위쪽 "교회소식" 메뉴는 없앰(2026-11-11): 교회 소식은 "주보" 메뉴 탭(교회 주보 · 교회 소식 · 온라인 주보)에 있음.
+  // 칼럼·중보기도 화면은 주소(/column, /prayer)로는 그대로 열리게 메뉴에만 숨김
+  // (예전: { en: "NEWS", label: "교회소식", pages: [news, column, prayer] })
+  { en: "NEWS", label: "교회소식", navHidden: true, pages: [
     { key: "column", path: "/column", label: "교회 칼럼" },
     { key: "prayer", path: "/prayer", label: "중보기도" },
   ] },
-  // 앨범: 교회가 홈페이지 편집 화면에서 올린 행사별 사진 앨범. 사진이 없어도 메뉴는 항상 보임(안내 문구)
-  // (2026-11-10 잠시 주석 — 서버 검색봇용 페이지에 앨범이 아직 없어 /album이 404로 나감)
-  // { en: "ALBUM", label: "앨범", pages: [
-  //   { key: "album", path: "/album", label: "앨범" },
-  // ] },
 ];
 
 // 페이지에 보여줄 내용이 실제로 있는지 — 없는 메뉴는 숨김(눌러도 빈 화면인 죽은 링크 방지)
@@ -69,7 +86,7 @@ function hasPage(key: PageKey, c: SiteContent, site: ChurchSite): boolean {
     case "location": return !!c.address;
     case "worship": return c.worship.length > 0;
     case "online": return !!c.youtubeLink || c.sermonVideos.length > 0;
-    case "sermons": return c.sermons.length > 0 || c.sermonVideos.length > 0 || !!c.youtubeLink;
+    case "sermons": return c.sermons.length > 0 || c.sermonVideos.length > 0 || !!c.youtubeLink || !!c.nextSermon;
     // 교회 주보(올린 종이 주보 파일)는 파일이 없어도 탭을 항상 보여줌(온라인 주보 탭과 나란히)
     case "bulletins": return true;
     case "jubo": return !!(c.ownerId && c.latestBulletinId);
@@ -78,6 +95,9 @@ function hasPage(key: PageKey, c: SiteContent, site: ChurchSite): boolean {
     case "prayer": return c.prayers.length > 0;
     case "education": return c.eduDepartments.length > 0;
     case "album": return true;
+    case "praise": return c.praiseEnabled;
+    case "schedule": return c.scheduleEnabled;
+    case "newcomer": return !!(c.newcomerIntro || c.newcomerSteps.length || c.newcomerContact);
   }
 }
 
@@ -215,6 +235,7 @@ export function MultiPageSite({ site, pathname, preview }: Props) {
   const groups = useMemo(() => {
     if (!content) return [];
     return SITE_GROUPS
+      .filter((g) => !g.navHidden)
       .map((g) => ({ ...g, pages: g.pages.filter((p) => hasPage(p.key, content, site)) }))
       .filter((g) => g.pages.length > 0)
       // 교육부서 메뉴는 교회가 정한 이름(주일학교·교육부서·직접 입력)으로
@@ -343,14 +364,41 @@ export function MultiPageSite({ site, pathname, preview }: Props) {
         <HomePage c={c} color={color} A={A} groups={groups} />
       ) : (
         <>
-          {/* 페이지 제목 띠 */}
-          <section className="w-full" style={{ background: `${color}0d` }}>
-            <div className="max-w-6xl mx-auto px-4 sm:px-8 py-10 sm:py-14">
-              <p className="text-xs font-black tracking-[0.2em]" style={{ color }}>{group?.en}</p>
-              <h1 className="mt-2 text-3xl sm:text-4xl font-black text-gray-900">{pageLabel}</h1>
-              <p className="mt-3 text-xs text-gray-400"><A to="/" className="hover:underline">홈</A> › {pageLabel}</p>
-            </div>
-          </section>
+          {/* 페이지 제목 띠 — 편집 화면 "화면 위쪽 배너" 설정(utils/pageBanners.ts)
+              사진: 교회가 올린 사진 → 없으면 기본 사진(public/page-banners) → 그것도 없으면(칼럼·중보기도) 교회 색 투톤
+              색상: 고른 두 색 그라데이션 / 끄기: 예전 옅은 띠 */}
+          {(() => {
+            const photo = c.bannerMode === "photo" ? (c.bannerPhotos[key] || defaultBannerPhoto(key)) : "";
+            if (c.bannerMode === "off") {
+              return (
+                <section className="w-full" style={{ background: `${color}0d` }}>
+                  <div className="max-w-6xl mx-auto px-4 sm:px-8 py-10 sm:py-14">
+                    <p className="text-xs font-black tracking-[0.2em]" style={{ color }}>{group?.en}</p>
+                    <h1 className="mt-2 text-3xl sm:text-4xl font-black text-gray-900">{pageLabel}</h1>
+                    <p className="mt-3 text-xs text-gray-400"><A to="/" className="hover:underline">홈</A> › {pageLabel}</p>
+                  </div>
+                </section>
+              );
+            }
+            const [c1, c2] = resolveBannerColors(c.bannerMode === "color" ? c.bannerColors : null, color);
+            const dark = !photo && bannerTextIsDark(c1, c2);
+            return (
+              <section className="relative w-full overflow-hidden" style={{ background: `linear-gradient(120deg, ${c1}, ${c2})` }}>
+                {photo && (
+                  <>
+                    <div className="absolute inset-0 bg-cover bg-center animate-[bannerZoom_1.6s_ease-out_both]" style={{ backgroundImage: `url(${photo})` }} />
+                    <div className="absolute inset-0 bg-black/25" />
+                  </>
+                )}
+                <div className="relative max-w-6xl mx-auto px-4 sm:px-8 flex flex-col items-center justify-center text-center h-[170px] sm:h-[230px] lg:h-[280px]">
+                  <p className={`text-[11px] sm:text-xs font-bold tracking-[0.3em] ${dark ? "text-gray-700" : "text-white/85"}`}>{group?.en}</p>
+                  <h1 className={`mt-2 sm:mt-3 text-2xl sm:text-4xl lg:text-[42px] font-black break-keep ${dark ? "text-gray-900" : "text-white drop-shadow-sm"}`}>{pageLabel}</h1>
+                  <p className={`mt-2 sm:mt-3 text-[11px] sm:text-xs ${dark ? "text-gray-600" : "text-white/70"}`}><A to="/" className="hover:underline">홈</A> › {pageLabel}</p>
+                </div>
+                <style>{`@keyframes bannerZoom{from{transform:scale(1.06)}to{transform:scale(1)}}`}</style>
+              </section>
+            );
+          })()}
           <main className="max-w-6xl mx-auto px-4 sm:px-8 py-8 sm:py-12">
             {group && group.en !== "EDUCATION" && (groups.find((g) => g.en === group.en)?.pages.length || 0) > 1 && (
               <SubTabs pages={groups.find((g) => g.en === group.en)!.pages} activeKey={onlineBulletin ? "jubo" : key} color={color} A={A} shortBar={group.en === "BULLETIN"} />
@@ -793,8 +841,10 @@ function HomePage({ c, color, A, groups }: { c: SiteContent; color: string; A: L
   const latest = c.bulletins.find((b) => b.id === c.latestBulletinId);
   return (
     <>
-      {/* 메인 사진 높이: 참고 사이트처럼 화면 세로 길이 기준 — PC 화면의 78%(최대 720px), 휴대폰 70%(최대 560px) */}
-      <section className="group relative w-full h-[min(70vh,560px)] sm:h-[min(78vh,720px)] flex items-end overflow-hidden" style={{ background: color }}>
+      {/* 메인 사진 높이 — 휴대폰: 화면 세로의 70%(최대 560px)
+          PC: 화면 "너비" 기준으로 메인 사진 권장 비율(1920×812)에 맞춤(최소 420px·최대 820px).
+          예전엔 PC도 창 세로의 78%라 창이 낮으면(탭·북마크 줄 등) 사진 위아래가 잘려 건물 꼭대기가 안 보였음(2026-11-12) */}
+      <section className="group relative w-full h-[min(70vh,560px)] sm:h-[clamp(420px,42.3vw,820px)] flex items-end overflow-hidden" style={{ background: color }}>
         <HeroImages images={c.heroImages} mode={c.heroTransition} alt={c.churchName} />
         {/* 어두운 그라데이션·글자는 손가락 밀기·클릭을 막지 않게(pointer-events-none) */}
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/60 via-black/20 to-transparent" />
@@ -985,6 +1035,96 @@ function PageBody({ pageKey, id, c, site, color, A }: { pageKey: PageKey; id: st
                   <img src={p.photoUrl} alt={p.name} className="block w-full aspect-[4/5] object-cover object-top mix-blend-multiply" />
                 </div>
               </figure>
+            </div>
+          )}
+        </div>
+      );
+    }
+    case "praise": {
+      // 찬양팀: 소개 문구 + 팀마다 카드(주일학교 부서 카드와 같은 모양: 사진 | 이름 · 소개 · 연습/섬김 시간 · 장소 · 리더)
+      return (
+        <div>
+          {c.praiseIntro && <p className="mb-8 md:mb-12 text-[15px] md:text-[17px] leading-relaxed md:leading-[1.9] text-gray-700 break-keep">{nl(c.praiseIntro)}</p>}
+          {c.praiseTeams.length === 0 && !c.praiseIntro && <p className="py-16 text-center text-gray-400">찬양팀 소개를 준비하고 있습니다.</p>}
+          <div className="divide-y divide-gray-100">
+            {c.praiseTeams.map((d, i) => (
+              <section key={i} className={`grid gap-4 md:gap-12 md:grid-cols-2 items-start ${i ? "pt-7 md:pt-12" : ""} pb-7 md:pb-12`}>
+                <div className={`w-full overflow-hidden rounded-2xl md:rounded-[24px] bg-gray-100 ${d.photoUrl ? "" : "aspect-[16/10] md:aspect-square"}`}>
+                  {d.photoUrl ? (
+                    <img src={d.photoUrl} alt={d.name} loading="lazy" className="block w-full h-auto" />
+                  ) : (
+                    <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-center text-sm text-gray-400">
+                      <svg viewBox="0 0 24 24" className="h-7 w-7" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M9 18V5l12-2v13" /><circle cx="6" cy="18" r="3" /><circle cx="18" cy="16" r="3" /></svg>
+                      <span>찬양팀 사진</span>
+                    </div>
+                  )}
+                </div>
+                <div>
+                  <h2 className="text-2xl md:text-[34px] font-black text-gray-900 break-keep">{d.name}</h2>
+                  {d.desc && <p className="mt-2 md:mt-3 text-[15px] md:text-base leading-relaxed md:leading-[1.8] text-gray-600 break-keep">{nl(d.desc)}</p>}
+                  {(d.time || d.place) && (
+                    <div className="mt-4 md:mt-7 rounded-xl md:rounded-2xl bg-gray-100/80 px-4 py-3.5 md:px-7 md:py-6">
+                      {d.time && (
+                        <>
+                          <p className="flex items-center gap-1.5 text-sm font-bold text-gray-600">
+                            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><circle cx="12" cy="12" r="10" /><path d="M12 6v6l4 2" /></svg>
+                            섬기는 예배 · 연습 시간
+                          </p>
+                          <p className="mt-1 md:mt-2 text-xl md:text-[30px] font-black tabular-nums text-gray-900 break-keep whitespace-pre-line">{d.time}</p>
+                        </>
+                      )}
+                      {d.place && (
+                        <p className={`${d.time ? "mt-1.5 md:mt-3" : ""} flex items-center gap-1.5 text-sm md:text-[15px] text-gray-600 break-keep`}>
+                          <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z" /><circle cx="12" cy="10" r="3" /></svg>
+                          {d.place}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  {d.leader && (
+                    <div className="mt-4 md:mt-10 flex items-center gap-3 md:gap-4 border-t border-gray-200 pt-4 md:pt-6">
+                      <span className="flex h-11 w-11 md:h-16 md:w-16 shrink-0 items-center justify-center rounded-full bg-gray-100 text-gray-500">
+                        <svg viewBox="0 0 24 24" className="h-5 w-5 md:h-6 md:w-6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></svg>
+                      </span>
+                      <div>
+                        <p className="text-xs md:text-sm text-gray-500">리더</p>
+                        <p className="mt-0.5 text-base md:text-lg font-black text-gray-900 break-keep">{d.leader}</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </section>
+            ))}
+          </div>
+        </div>
+      );
+    }
+    case "newcomer": {
+      // 새가족 안내: 소개 문구 → 등록 절차(1 · 2 · 3 … 단계 카드) → 문의
+      return (
+        <div className="space-y-8 md:space-y-12">
+          {c.newcomerIntro && <p className="text-[15px] md:text-[17px] leading-relaxed md:leading-[1.9] text-gray-700 break-keep">{nl(c.newcomerIntro)}</p>}
+          {c.newcomerSteps.length > 0 && (
+            <section>
+              <p className="text-xs font-black tracking-[0.2em]" style={{ color }}>STEP</p>
+              <h2 className="mt-2 text-xl sm:text-2xl font-black text-gray-900">새가족 등록 절차</h2>
+              <ol className="mt-5 grid gap-3 sm:gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {c.newcomerSteps.map((st, i) => (
+                  <li key={i} className="flex gap-4 rounded-2xl border border-gray-200 bg-white px-5 py-5 sm:px-6 sm:py-6">
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-black text-white" style={{ background: color }}>{i + 1}</span>
+                    <div className="min-w-0">
+                      {st.title && <p className="text-[17px] font-black text-gray-900 break-keep">{st.title}</p>}
+                      {st.desc && <p className="mt-1 text-sm md:text-[15px] leading-relaxed text-gray-600 break-keep">{nl(st.desc)}</p>}
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            </section>
+          )}
+          {c.newcomerContact && (
+            <div className="rounded-2xl bg-gray-100/80 px-5 py-4 md:px-7 md:py-6">
+              <p className="text-sm font-bold text-gray-500">문의</p>
+              <p className="mt-1 text-[15px] md:text-base font-semibold text-gray-800 break-keep">{nl(c.newcomerContact)}</p>
             </div>
           )}
         </div>
@@ -1232,6 +1372,37 @@ function PageBody({ pageKey, id, c, site, color, A }: { pageKey: PageKey; id: st
             const photo = c.worshipPhotos[g.title];
             const places = [...new Set(g.items.map((w) => w.place).filter(Boolean))];
             const samePlace = places.length === 1 && g.items.every((w) => w.place === places[0]);
+            // 주일예배가 아닌 구분(주중예배·새벽기도 등): 예배마다 작은 카드로 나란히(새벽기도 · 수요예배 · 금요예배 …)
+            if (!g.title.includes("주일")) {
+              const tagOf = (t: string) => (t.includes("새벽") ? "DAWN" : t.includes("수요") ? "WEDNESDAY" : t.includes("금요") ? "FRIDAY" : t.includes("토요") ? "SATURDAY" : "WEEKDAY");
+              return (
+                <section key={g.title}>
+                  <p className="text-xs font-black tracking-[0.2em] text-gray-700">{enOf(g.title)}</p>
+                  <h2 className="mt-2 text-2xl sm:text-[28px] font-black text-gray-900">{g.title}</h2>
+                  <div className="mt-5 grid gap-3 sm:gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    {g.items.map((w, i) => (
+                      <div key={i} className="flex flex-col rounded-2xl border border-gray-200 bg-white px-5 py-5 sm:px-6 sm:py-6">
+                        <span className="self-start rounded-full px-2.5 py-1 text-[11px] font-black tracking-[0.12em]" style={{ background: `${color}14`, color }}>{tagOf(w.title)}</span>
+                        <p className="mt-3 text-lg font-black text-gray-900 break-keep">{w.title}</p>
+                        {/* 주중예배(새벽기도·수요예배·금요철야 등) 시간 글자색 #595959 — 주일예배 목록과 같게(2026-11-12 요청) */}
+                        <p className="mt-3 border-t border-gray-100 pt-3 text-xl sm:text-2xl font-black tabular-nums text-[#595959] break-keep whitespace-pre-line">{w.time}</p>
+                        {(w.place || w.note) && (
+                          <div className="mt-auto pt-3 space-y-1">
+                            {w.place && (
+                              <p className="flex items-center gap-1.5 text-sm text-gray-500 break-keep">
+                                <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z" /><circle cx="12" cy="10" r="3" /></svg>
+                                {w.place}
+                              </p>
+                            )}
+                            {w.note && <p className="text-xs sm:text-sm text-gray-500 break-keep">{w.note}</p>}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              );
+            }
             return (
               <section key={g.title} className="grid overflow-hidden rounded-[24px] border border-gray-200 bg-white md:grid-cols-2">
                 <div className="relative aspect-[16/10] md:aspect-auto md:min-h-[320px] bg-gray-100">
@@ -1251,11 +1422,12 @@ function PageBody({ pageKey, id, c, site, color, A }: { pageKey: PageKey; id: st
                     {g.items.map((w, i) => (
                       <div key={i} className="flex items-start justify-between gap-4 border-b border-gray-200 py-5">
                         <div className="min-w-0">
-                          <p className="text-[15px] sm:text-base font-bold text-gray-900 break-keep">{w.title}</p>
+                          {/* 주일 예배 목록의 예배 이름·시간 글자색 #595959 (2026-11-12 요청) */}
+                          <p className="text-[15px] sm:text-base font-bold text-[#595959] break-keep">{w.title}</p>
                           {!samePlace && w.place && <p className="mt-1 text-sm text-gray-500 break-keep">{w.place}</p>}
                           {w.note && <p className="mt-1 text-xs sm:text-sm text-gray-500 break-keep">{w.note}</p>}
                         </div>
-                        <p className="shrink-0 text-right text-lg sm:text-2xl font-black tabular-nums text-gray-900 break-keep whitespace-pre-line">{w.time}</p>
+                        <p className="shrink-0 text-right text-lg sm:text-2xl font-black tabular-nums text-[#595959] break-keep whitespace-pre-line">{w.time}</p>
                       </div>
                     ))}
                   </div>
@@ -1288,9 +1460,11 @@ function PageBody({ pageKey, id, c, site, color, A }: { pageKey: PageKey; id: st
           : <A to={s.id === c.latestBulletinId ? "/jubo" : `/bulletins/${s.id}`} className={className}>{children}</A>;
       const [latest, ...rest] = c.sermons;
       const fmt = (d: string) => d.replace(/-/g, ".");
+      const next = c.nextSermon;
       return (
         <div className="space-y-14">
-          {latest && (
+          {/* 이번 주 말씀: 편집 화면 > 매주 업데이트에서 ON/OFF */}
+          {latest && c.weeklySermonEnabled && (
             <section>
               <p className="text-xs font-black tracking-[0.2em]" style={{ color }}>THIS WEEK</p>
               <h2 className="mt-2 text-xl sm:text-2xl font-black text-gray-900">이번 주 말씀</h2>
@@ -1308,6 +1482,23 @@ function PageBody({ pageKey, id, c, site, color, A }: { pageKey: PageKey; id: st
                     {latest.id.startsWith("paper-") ? "주보 파일 보기 →" : "주보 보기 →"}
                   </SermonLink>
                 )}
+              </div>
+            </section>
+          )}
+          {/* 이번 주 말씀 아래: 가장 최근에 올라온 예배 영상 하나를 큰 화면으로 */}
+          <LatestVideo c={c} color={color} />
+          {/* 다음 주 말씀: 편집 화면 > 매주 업데이트에서 ON/OFF(켜고 설교 제목을 적었을 때만) */}
+          {next && (
+            <section>
+              <p className="text-xs font-black tracking-[0.2em]" style={{ color }}>NEXT WEEK</p>
+              <h2 className="mt-2 text-xl sm:text-2xl font-black text-gray-900">다음 주 말씀</h2>
+              <div className="mt-5 rounded-[20px] border border-gray-200 bg-white px-6 py-7 sm:px-9 sm:py-9">
+                {next.date && <p className="text-sm font-bold tabular-nums text-gray-500">{fmt(next.date)}</p>}
+                <p className="mt-2 text-2xl sm:text-3xl font-black leading-snug text-gray-900 break-keep">{next.title}</p>
+                <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[15px]">
+                  {next.scripture && <span className="font-bold" style={{ color }}>{next.scripture}</span>}
+                  {next.preacher && <span className="text-gray-600">{next.preacher}</span>}
+                </div>
               </div>
             </section>
           )}
@@ -1387,6 +1578,8 @@ function PageBody({ pageKey, id, c, site, color, A }: { pageKey: PageKey; id: st
     }
     case "album":
       return id ? <AlbumDetail c={c} id={id} color={color} A={A} /> : <AlbumList c={c} color={color} A={A} />;
+    case "schedule":
+      return <ScheduleCalendar c={c} color={color} />;
     default:
       return null;
   }
@@ -1492,6 +1685,75 @@ function SermonVideoCards({ c, color, children }: { c: SiteContent; color: strin
   );
 }
 
+// 말씀/영상 화면의 "최근 예배 영상": 가장 최근 영상 하나를 큰 화면으로(왼쪽) + 제목·날짜·유튜브 버튼(오른쪽)
+// 영상 고르는 순서: 예배 영상 직접 넣기(켜고 넣은 영상) → 지난 예배 재생목록 → 채널 최신 영상(쇼츠 제외)
+function LatestVideo({ c, color }: { c: SiteContent; color: string }) {
+  const src = c.sermonPlaylist || c.youtubeLink;
+  const [videos, setVideos] = useState<YtVideo[] | null>(() => (src ? ytMemo.get(src) ?? null : []));
+  useEffect(() => {
+    if (!src || ytMemo.has(src)) return;
+    let cancelled = false;
+    loadYt(src).then((d) => { if (!cancelled) setVideos(d.videos); });
+    return () => { cancelled = true; };
+  }, [src]);
+  const manual = c.sermonVideos[0];
+  const v: YtVideo | undefined = manual
+    ? { id: manual.youtubeVideoId, title: manual.title, published: manual.date || "" }
+    : (videos || []).find((x) => !x.short);
+  if (!v) return null;
+  const date = v.published ? v.published.slice(0, 10).replace(/-/g, ".") : "";
+  const s = c.sermons[0]; // 이번 주 설교(주보 / 편집 화면 이번 주 말씀)
+  return (
+    <section>
+      <p className="text-xs font-black tracking-[0.2em]" style={{ color }}>VIDEO</p>
+      <h2 className="mt-2 text-xl sm:text-2xl font-black text-gray-900">예배 영상</h2>
+      <div className="mt-5 grid gap-5 lg:gap-10 lg:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)] items-start">
+        <div className="relative aspect-video overflow-hidden rounded-[16px] bg-black">
+          <iframe className="block w-full h-full" src={`https://www.youtube.com/embed/${v.id}`} title={v.title || "예배 영상"}
+            allow="encrypted-media; picture-in-picture" allowFullScreen loading="lazy" />
+        </div>
+        {/* 오른쪽: 온라인 예배 화면과 같은 구성 — 이번 주 설교 제목(크게) · 본문 말씀 · 날짜 · 설교. 설교 정보가 없으면 영상 제목·날짜 */}
+        <div className="lg:pt-2">
+          <p className="text-xs font-black tracking-[0.2em]" style={{ color }}>THIS WEEK</p>
+          {s ? (
+            <>
+              <p className="mt-3 text-2xl sm:text-3xl font-black leading-snug text-gray-900 break-keep">{s.title || "말씀"}</p>
+              <dl className="mt-6 border-t-2 border-gray-800">
+                {s.scripture && (
+                  <div className="grid grid-cols-[84px_minmax(0,1fr)] gap-3 py-3.5 border-b border-gray-100">
+                    <dt className="text-sm font-bold text-gray-400 pt-0.5">본문 말씀</dt>
+                    <dd className="text-[15px] sm:text-base font-bold break-keep" style={{ color }}>{s.scripture}</dd>
+                  </div>
+                )}
+                {s.date && (
+                  <div className="grid grid-cols-[84px_minmax(0,1fr)] gap-3 py-3.5 border-b border-gray-100">
+                    <dt className="text-sm font-bold text-gray-400 pt-0.5">날짜</dt>
+                    <dd className="text-[15px] sm:text-base text-gray-800 tabular-nums">{s.date.replace(/-/g, ".")}</dd>
+                  </div>
+                )}
+                {s.preacher && (
+                  <div className="grid grid-cols-[84px_minmax(0,1fr)] gap-3 py-3.5 border-b border-gray-100">
+                    <dt className="text-sm font-bold text-gray-400 pt-0.5">설교</dt>
+                    <dd className="text-[15px] sm:text-base text-gray-800 break-keep">{s.preacher}</dd>
+                  </div>
+                )}
+              </dl>
+            </>
+          ) : (
+            <>
+              <p className="mt-3 text-lg sm:text-2xl font-black leading-snug text-gray-900 break-keep">{v.title}</p>
+              {date && <p className="mt-2 text-sm tabular-nums text-gray-500">{date}</p>}
+            </>
+          )}
+          {(c.sermonPlaylist || c.youtubeLink) && (
+            <a href={c.sermonPlaylist || c.youtubeLink} target="_blank" rel="noopener noreferrer" className="mt-6 inline-flex h-11 items-center rounded-xl bg-[#FF0000] px-5 text-sm font-bold text-white hover:opacity-90">유튜브 채널에서 보기</a>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 // 온라인 예배: 왼쪽 큰 화면 = 교회 유튜브 채널이 지금 실시간 방송 중이면 그 방송, 아니면 가장 최근 영상
 // (쇼츠 제외) → 그것도 없으면 온라인 예배에 직접 넣은 영상. 오른쪽 = 이번 주 설교 제목(가장 크게)·본문 말씀·설교자
 function OnlineWorshipLive({ c, color }: { c: SiteContent; color: string }) {
@@ -1528,8 +1790,8 @@ function OnlineWorshipLive({ c, color }: { c: SiteContent; color: string }) {
   const moreLink = pl || ch;
   const [picked, setPicked] = useState<YtVideo | null>(null);
   const [page, setPage] = useState(1);
-  // 오른쪽 위 아이콘으로 보기 전환: ⊞ 카드형(기본) / ☰ 목록형(표). 한 화면 12개, 최대 24개
-  const [view, setView] = useState<"grid" | "table">("grid");
+  // 카드형으로만 보여 줌(2026-11-11: 목록형 전환 버튼 뺌). 한 화면 12개, 최대 24개
+  const view = "grid" as "grid" | "table";
   const PER = 12;
   const pages = Math.max(1, Math.ceil(rows.length / PER));
   const cur = Math.min(page, pages);
@@ -1603,15 +1865,7 @@ function OnlineWorshipLive({ c, color }: { c: SiteContent; color: string }) {
           <div className="flex shrink-0 items-center gap-3">
           {/* 최근 24개까지만 보여 주고, 그 이전 영상은 유튜브에서(재생목록을 넣었으면 그 재생목록) */}
           {moreLink && <a href={moreLink} target="_blank" rel="noopener noreferrer" className="hidden sm:inline text-sm font-bold" style={{ color }}>유튜브 채널에서 더 보기 →</a>}
-          {/* 보기 방식 전환(교회 주보 목록과 같은 모양) */}
-          <div className="inline-flex shrink-0 rounded-2xl bg-gray-100 p-1">
-            {([["grid", LayoutGrid, "카드형으로 보기"], ["table", ListIcon, "목록형으로 보기"]] as const).map(([v, Icon, label]) => (
-              <button key={v} type="button" onClick={() => { setView(v); setPage(1); }} aria-label={label} title={label}
-                className={`flex h-10 w-11 items-center justify-center rounded-xl transition-all ${view === v ? "bg-white shadow-sm text-[#3182F6]" : "text-gray-400 hover:text-gray-600"}`}>
-                <Icon className="h-5 w-5" />
-              </button>
-            ))}
-          </div>
+          {/* 보기 방식 전환 버튼은 뺌(카드형만) */}
           </div>
         </div>
         {moreLink && <a href={moreLink} target="_blank" rel="noopener noreferrer" className="sm:hidden mt-3 inline-block text-sm font-bold" style={{ color }}>유튜브 채널에서 더 보기 →</a>}
@@ -1670,24 +1924,208 @@ function OnlineWorshipLive({ c, color }: { c: SiteContent; color: string }) {
   );
 }
 
-// 앨범 목록: 대표 사진(첫 장) · 제목 · 날짜 · 사진 수. PC 3칸 / 태블릿 2칸 / 모바일 1칸
-function AlbumList({ c, color, A }: { c: SiteContent; color: string; A: LinkComp }) {
-  if (c.albums.length === 0) return <p className="py-16 text-center text-gray-400">아직 등록된 앨범이 없습니다.</p>;
+// 교회 일정(2026-11-12 개편): 위에 가로로 꽉 찬 달력(일요일부터) + 아래 "이 달의 일정" 표(날짜 | 요일 | 일정)
+//  - PC: 날짜 칸 안에 일정 제목이 바로 보임(칸당 2개, 넘으면 "+n"). 휴대폰: 칸이 좁아 점으로 표시
+//  - 일정 있는 날을 누르면 아래 표에서 그날 일정이 강조됨(다시 누르면 해제)
+//  - ‹ › 로 달 이동(부드럽게 바뀜), "오늘" 버튼으로 이번 달로
+const pad2 = (n: number) => String(n).padStart(2, "0");
+const WEEK_KO = ["일", "월", "화", "수", "목", "금", "토"];
+function ScheduleCalendar({ c, color }: { c: SiteContent; color: string }) {
+  const today = new Date();
+  const todayKey = `${today.getFullYear()}-${pad2(today.getMonth() + 1)}-${pad2(today.getDate())}`;
+  const [ym, setYm] = useState(() => ({ y: today.getFullYear(), m: today.getMonth() })); // m: 0~11
+  const [picked, setPicked] = useState<string | null>(null);
+  const [anim, setAnim] = useState<"" | "next" | "prev">("");
+  const move = (d: number) => {
+    setAnim(d > 0 ? "next" : "prev");
+    setPicked(null);
+    setYm(({ y, m }) => { const t = new Date(y, m + d, 1); return { y: t.getFullYear(), m: t.getMonth() }; });
+  };
+  const goToday = () => { setAnim(""); setPicked(null); setYm({ y: today.getFullYear(), m: today.getMonth() }); };
+  const monthKey = `${ym.y}-${pad2(ym.m + 1)}`;
+  const monthItems = c.schedules.filter((x) => x.date.startsWith(monthKey));
+  const byDay = new Map<string, SiteContent["schedules"]>();
+  monthItems.forEach((x) => byDay.set(x.date, [...(byDay.get(x.date) || []), x]));
+  const first = new Date(ym.y, ym.m, 1).getDay();
+  const days = new Date(ym.y, ym.m + 1, 0).getDate();
+  const cells: (number | null)[] = [...Array(first).fill(null), ...Array.from({ length: days }, (_, i) => i + 1)];
+  while (cells.length % 7) cells.push(null);
+  const dot = (d: string) => d.replace(/-/g, ".");
+  const weekdayOf = (d: string) => WEEK_KO[new Date(`${d}T00:00:00`).getDay()];
+  const enter = anim === "next" ? "slide-in-from-right-4" : anim === "prev" ? "slide-in-from-left-4" : "";
+  const dayColor = (wd: number) => (wd === 0 ? "#EF4444" : wd === 6 ? "#3B82F6" : "#374151");
   return (
-    <div className="grid gap-x-6 gap-y-10 sm:grid-cols-2 lg:grid-cols-3">
-      {c.albums.map((a) => (
-        <A key={a.id} to={`/album/${a.id}`} className="group block">
-          <div className="w-full aspect-[4/3] overflow-hidden rounded-[16px]" style={{ background: `linear-gradient(160deg, ${color}10 0%, ${color}2e 100%)` }}>
-            {a.photos[0] ? (
-              <img src={a.photos[0]} alt={a.title} loading="lazy" className="block w-full h-full object-cover transition-transform duration-500 group-hover:scale-[1.03]" />
-            ) : (
-              <div className="w-full h-full flex items-center justify-center text-sm font-bold" style={{ color: `${color}88` }}>사진 없음</div>
-            )}
+    <div className="space-y-8 sm:space-y-10">
+      {/* 위: 가로로 꽉 찬 달력 */}
+      <div className="rounded-[24px] border border-gray-200 bg-white p-4 sm:p-7">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
+            <button type="button" aria-label="이전 달" onClick={() => move(-1)}
+              className="flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 text-gray-500 transition-all hover:border-gray-300 hover:text-gray-900 active:scale-90">‹</button>
+            <p className="min-w-[120px] text-center text-xl sm:text-2xl font-black text-gray-900 tabular-nums">{ym.y}. {pad2(ym.m + 1)}</p>
+            <button type="button" aria-label="다음 달" onClick={() => move(1)}
+              className="flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 text-gray-500 transition-all hover:border-gray-300 hover:text-gray-900 active:scale-90">›</button>
           </div>
-          <p className="mt-4 text-lg font-black text-gray-900 group-hover:underline underline-offset-4 break-keep">{a.title}</p>
-          <p className="mt-1 text-sm text-gray-400">{[a.date, `사진 ${a.photos.length}장`].filter(Boolean).join(" · ")}</p>
-        </A>
-      ))}
+          <button type="button" onClick={goToday} className="rounded-full border border-gray-200 px-3.5 py-1.5 text-xs sm:text-sm font-bold text-gray-500 transition-colors hover:text-gray-900">오늘</button>
+        </div>
+        <div key={monthKey} className={`mt-5 sm:mt-6 animate-in fade-in duration-300 ${enter}`}>
+          <div className="grid grid-cols-7 border-b border-gray-200 text-center text-xs sm:text-sm font-bold">
+            {WEEK_KO.map((w, i) => <div key={w} className="py-2.5" style={{ color: dayColor(i) }}>{w}</div>)}
+          </div>
+          <div className="grid grid-cols-7">
+            {cells.map((d, i) => {
+              const wd = i % 7;
+              const lastRow = i >= cells.length - 7;
+              const border = `border-gray-100 ${wd < 6 ? "border-r" : ""} ${lastRow ? "" : "border-b"}`;
+              if (!d) return <div key={i} className={`min-h-[56px] sm:min-h-[104px] bg-gray-50/40 ${border}`} />;
+              const key = `${monthKey}-${pad2(d)}`;
+              const items = byDay.get(key) || [];
+              const isToday = key === todayKey;
+              const isPicked = key === picked;
+              return (
+                <button key={i} type="button" disabled={!items.length} onClick={() => setPicked(isPicked ? null : key)}
+                  className={`relative flex flex-col items-center sm:items-stretch justify-start min-h-[56px] sm:min-h-[104px] p-1 sm:p-2 text-left transition-colors duration-200 ${border} ${items.length ? "cursor-pointer hover:bg-gray-50" : "cursor-default"}`}
+                  style={isPicked ? { background: `${color}12` } : undefined}>
+                  <span className="flex h-6 w-6 sm:h-7 sm:w-7 shrink-0 items-center justify-center rounded-full text-xs sm:text-sm font-bold"
+                    style={isToday ? { background: color, color: "#fff" } : { color: dayColor(wd) }}>{d}</span>
+                  {/* PC: 일정 제목(최대 2개 + 나머지 개수) */}
+                  <div className="mt-1 hidden sm:block space-y-1">
+                    {items.slice(0, 2).map((x) => (
+                      <p key={x.id} className="truncate rounded-md px-1.5 py-0.5 text-[12px] font-bold" style={{ background: `${color}14`, color }}>{x.title}</p>
+                    ))}
+                    {items.length > 2 && <p className="px-1.5 text-[11px] font-bold text-gray-400">+{items.length - 2}</p>}
+                  </div>
+                  {/* 휴대폰: 점 */}
+                  {items.length > 0 && <span className="sm:hidden absolute bottom-1.5 left-1/2 -translate-x-1/2 h-1.5 w-1.5 rounded-full" style={{ background: color }} />}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* 아래: 이 달의 일정 표 */}
+      <div>
+        <div className="flex items-end justify-between pb-3">
+          <h2 className="text-xl sm:text-2xl font-black text-gray-900">이 달의 일정</h2>
+          <span className="text-sm font-bold text-gray-400 tabular-nums">{ym.y}.{pad2(ym.m + 1)} · {monthItems.length}건</span>
+        </div>
+        <div className="overflow-hidden border-t-2 border-gray-800">
+          <table className="w-full text-left">
+            <thead>
+              <tr className="border-b border-gray-200 bg-gray-50 text-xs sm:text-sm font-bold text-gray-500">
+                <th className="w-[120px] sm:w-[170px] px-3 sm:px-5 py-3">날짜</th>
+                <th className="w-[52px] sm:w-[80px] px-2 sm:px-3 py-3 text-center">요일</th>
+                <th className="px-3 sm:px-5 py-3">일정</th>
+              </tr>
+            </thead>
+            <tbody key={`t-${monthKey}`}>
+              {monthItems.length === 0 ? (
+                <tr><td colSpan={3} className="py-14 text-center text-sm text-gray-400 animate-in fade-in duration-300">이 달에는 등록된 일정이 없습니다.</td></tr>
+              ) : monthItems.map((x, i) => {
+                const on = picked === x.date;
+                const wd = new Date(`${x.date}T00:00:00`).getDay();
+                return (
+                  <tr key={x.id} className="border-b border-gray-100 transition-all duration-300 animate-in fade-in slide-in-from-bottom-1 fill-mode-both"
+                    style={{ animationDelay: `${i * 35}ms`, opacity: picked && !on ? 0.35 : 1, background: on ? `${color}0d` : undefined }}>
+                    <td className="px-3 sm:px-5 py-3.5 sm:py-4 tabular-nums text-sm sm:text-[15px] font-black" style={{ color: on ? color : "#595959" }}>{dot(x.date)}</td>
+                    <td className="px-2 sm:px-3 py-3.5 sm:py-4 text-center text-sm font-bold" style={{ color: dayColor(wd) }}>{weekdayOf(x.date)}</td>
+                    <td className="px-3 sm:px-5 py-3.5 sm:py-4 text-sm sm:text-[15px] font-bold text-gray-900 break-keep">{x.title}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// 앨범 목록: 위쪽에 제목·날짜 검색 + 보기 방식 전환(⊞ 카드형 / ☰ 목록형, 교회 주보 목록과 같은 모양)
+//  - 카드형: 대표 사진(첫 장) · 제목 · 날짜 · 사진 수. PC 3칸 / 태블릿 2칸 / 모바일 1칸
+//  - 목록형: 번호 | 작은 대표 사진 + 제목 | 날짜 | 사진 수
+//  - 한 화면 12개, 넘으면 아래 번호로(4개씩 묶음 · ‹ ›)
+function AlbumList({ c, color, A }: { c: SiteContent; color: string; A: LinkComp }) {
+  const [q, setQ] = useState("");
+  const [view, setView] = useState<"grid" | "table">("grid");
+  const [page, setPage] = useState(1);
+  if (c.albums.length === 0) return <p className="py-16 text-center text-gray-400">아직 등록된 앨범이 없습니다.</p>;
+  const kw = q.trim().replace(/\s+/g, "").toLowerCase();
+  const list = kw
+    ? c.albums.filter((a) => `${a.title}${a.date}${a.date.replace(/-/g, ".")}`.replace(/\s+/g, "").toLowerCase().includes(kw))
+    : c.albums;
+  const PER = 12;
+  const pages = Math.max(1, Math.ceil(list.length / PER));
+  const cur = Math.min(page, pages);
+  const shown = list.slice((cur - 1) * PER, cur * PER);
+  const fmt = (d: string) => (d ? d.replace(/-/g, ".") : "-");
+  const Thumb = ({ a, className }: { a: SiteContent["albums"][number]; className: string }) => (
+    <div className={`overflow-hidden ${className}`} style={{ background: `linear-gradient(160deg, ${color}10 0%, ${color}2e 100%)` }}>
+      {a.photos[0] ? (
+        <img src={a.photos[0]} alt={a.title} loading="lazy" className="block w-full h-full object-cover transition-transform duration-500 group-hover:scale-[1.03]" />
+      ) : (
+        <div className="w-full h-full flex items-center justify-center text-xs font-bold" style={{ color: `${color}88` }}>사진 없음</div>
+      )}
+    </div>
+  );
+  return (
+    <div>
+      <div className="mb-5 flex items-center justify-end gap-3">
+        <div className="flex w-full sm:w-80 items-center rounded-lg border border-gray-200 bg-white focus-within:border-gray-400 transition-colors">
+          <input value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} placeholder="앨범 제목·날짜 검색"
+            className="min-w-0 flex-1 bg-transparent px-4 py-2.5 text-sm outline-none" />
+          <Search className="mr-3 h-4 w-4 text-gray-400" />
+        </div>
+        <div className="inline-flex shrink-0 rounded-2xl bg-gray-100 p-1">
+          {([["grid", LayoutGrid, "카드형으로 보기"], ["table", ListIcon, "목록형으로 보기"]] as const).map(([v, Icon, label]) => (
+            <button key={v} type="button" onClick={() => { setView(v); setPage(1); }} aria-label={label} title={label}
+              className={`flex h-10 w-11 items-center justify-center rounded-xl transition-all ${view === v ? "bg-white shadow-sm text-[#3182F6]" : "text-gray-400 hover:text-gray-600"}`}>
+              <Icon className="h-5 w-5" />
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* 카드형 ↔ 목록형 전환·페이지 넘김 때: 높이는 부드럽게 늘었다 줄었다(SmoothHeight), 새 내용은 아래에서 살짝 올라오며 나타남(디졸브 없음) */}
+      <SmoothHeight>
+      <div key={`${view}-${cur}-${kw}`} className="animate-in slide-in-from-bottom-3 duration-500 ease-out">
+      {list.length === 0 ? (
+        <p className="py-16 text-center text-gray-400">'{q}'에 맞는 앨범이 없습니다.</p>
+      ) : view === "grid" ? (
+        <div className="grid gap-x-6 gap-y-10 sm:grid-cols-2 lg:grid-cols-3">
+          {shown.map((a) => (
+            <A key={a.id} to={`/album/${a.id}`} className="group block">
+              <Thumb a={a} className="w-full aspect-[4/3] rounded-[16px]" />
+              <p className="mt-4 text-lg font-black text-gray-900 group-hover:underline underline-offset-4 break-keep">{a.title}</p>
+              <p className="mt-1 text-sm text-gray-400">{[a.date && fmt(a.date), `사진 ${a.photos.length}장`].filter(Boolean).join(" · ")}</p>
+            </A>
+          ))}
+        </div>
+      ) : (
+        <div className="border-t-2 border-gray-800">
+          <div className="hidden sm:grid grid-cols-[56px_minmax(0,1fr)_120px_88px] gap-4 px-1 py-3 border-b border-gray-200 text-sm font-bold text-gray-400">
+            <span className="text-center">번호</span><span>앨범</span><span className="text-center">날짜</span><span className="text-center">사진</span>
+          </div>
+          {shown.map((a, k) => (
+            <A key={a.id} to={`/album/${a.id}`} className="group grid grid-cols-[minmax(0,1fr)] sm:grid-cols-[56px_minmax(0,1fr)_120px_88px] items-center gap-4 px-1 py-3 border-b border-gray-100 hover:bg-gray-50/70">
+              <span className="hidden sm:block text-center text-sm tabular-nums text-gray-500">{list.length - ((cur - 1) * PER + k)}</span>
+              <span className="flex min-w-0 items-center gap-3">
+                <Thumb a={a} className="h-12 w-16 shrink-0 rounded-lg" />
+                <span className="min-w-0">
+                  <span className="block truncate text-[15px] font-bold text-gray-900 group-hover:underline underline-offset-4">{a.title}</span>
+                  <span className="sm:hidden mt-0.5 block text-xs tabular-nums text-gray-400">{[a.date && fmt(a.date), `사진 ${a.photos.length}장`].filter(Boolean).join(" · ")}</span>
+                </span>
+              </span>
+              <span className="hidden sm:block text-center text-sm tabular-nums text-gray-600">{fmt(a.date)}</span>
+              <span className="hidden sm:block text-center text-sm tabular-nums text-gray-600">{a.photos.length}장</span>
+            </A>
+          ))}
+        </div>
+      )}
+      </div>
+      </SmoothHeight>
+      <PageNav pages={pages} cur={cur} onChange={setPage} />
     </div>
   );
 }

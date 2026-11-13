@@ -9,10 +9,11 @@ import { DEFAULT_DENOMINATION, NO_DENOMINATION } from '../../../utils/denominati
 import { fetchOwnerData, builderDefaultsFromBulletin, BuilderDefaults } from '../../../utils/churchSiteContent'
 import { isOperatorEmail } from '../../../utils/operator'
 import { DenominationPicker } from '../../components/DenominationPicker'
-import { DatePickerField } from '../../components/DatePickerField'
+import { DatePickerField, TypeableDateField } from '../../components/DatePickerField'
 import { RolePicker } from '../../components/RolePicker'
 import { HOME_CARD_PRESETS, CHURCH_TOKEN, HomeCardText } from '../../../utils/homeCards'
 import { WebsiteRenderer } from './WebsiteRenderer'
+import { BANNER_PAGES, BANNER_PRESETS, defaultBannerPhoto, resolveBannerColors, bannerTextIsDark, cropToBannerBlob, type BannerMode } from '../../../utils/pageBanners'
 import { syncDate, siteNewsLines, cleanSermon, dotDate, findBulletinTargets, applyBulletinTarget, BulletinSyncTarget } from '../../../utils/weeklySync'
 
 // 미리보기 패널 안에서 실제 배포 화면(WebsiteRenderer)을 데스크톱 폭(1280px) 기준으로 그린 뒤
@@ -129,13 +130,29 @@ function NewsManager({ items: rawItems, onChange }: { items: NewsItem[]; onChang
     return { ...n, date: p.date ?? n.date, items: lines, title: lines[0]?.title || '', content: lines[0]?.content || '' }
   }))
   const remove = (id: string) => { if (confirm('이 소식을 삭제할까요? (저장해야 홈페이지에 반영돼요)')) onChange(items.filter((n) => n.id !== id)) }
-  // 복사: 그 소식(1번·2번…)을 오늘 날짜로 똑같이 하나 더 만들어 맨 위에 넣고 바로 수정 칸을 열어 줌(날짜도 거기서 바꿀 수 있음)
+  // 복사: 그 소식(1번·2번…)을 같은 날짜로 똑같이 하나 더 만들어 원래 소식 바로 **위**에 넣음
+  // → 새로 생긴 소식이 새 번호(가장 큰 번호, ex. 9건이면 10번)가 되고, 그 줄의 수정 칸이 바로 열림.
+  // 화면도 그 위치로 옮겨 주고 잠깐 파란색으로 표시. 날짜는 열린 수정 칸에서 바꾸면 됨
+  const [justCopied, setJustCopied] = useState<string | null>(null)
   const copy = (n: NewsItem) => {
     const id = `n${Date.now().toString(36)}`
-    onChange([entry(id, today(), newsLines(n)), ...items])
-    setPage(1)
+    const at = items.findIndex((x) => x.id === n.id)
+    const next = [...items]
+    next.splice(Math.max(0, at), 0, entry(id, isoDate(n.date) || n.date || today(), newsLines(n)))
+    onChange(next)
     setEditId(id)
+    setJustCopied(id)
   }
+  // 복사한 소식이 있는 페이지로 넘기고 그 줄로 스크롤
+  useEffect(() => {
+    if (!justCopied) return
+    const k = sorted.findIndex((x) => x.id === justCopied)
+    if (k >= 0 && Math.floor(k / PER) + 1 !== cur) { setPage(Math.floor(k / PER) + 1); return }
+    const el = document.getElementById(`news-row-${justCopied}`)
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    const t = setTimeout(() => setJustCopied(null), 1600)
+    return () => clearTimeout(t)
+  }, [justCopied, cur, sorted.length]) // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <>
       <h3 style={{ fontWeight: 700, color: THEME.navy, marginBottom: 6, fontSize: 16 }}>교회 소식</h3>
@@ -164,7 +181,7 @@ function NewsManager({ items: rawItems, onChange }: { items: NewsItem[]; onChang
               const open = editId === id
               const ls = newsLines(n)
               return (
-                <div key={id} style={{ borderBottom: `1px solid ${THEME.border}`, padding: '12px 4px' }}>
+                <div key={id} id={`news-row-${id}`} style={{ borderBottom: `1px solid ${THEME.border}`, padding: '12px 4px', background: justCopied === id ? '#EFF6FF' : 'transparent', transition: 'background 0.6s' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                     <span style={{ width: 32, flexShrink: 0, textAlign: 'center', fontSize: 13, fontWeight: 700, color: THEME.muted, fontVariantNumeric: 'tabular-nums' }}>{no}</span>
                     {/* 제목: "2026. 11. 08 교회 소식" + 아래 작은 글씨로 1번 소식 미리보기 */}
@@ -204,13 +221,30 @@ function NewsManager({ items: rawItems, onChange }: { items: NewsItem[]; onChang
   )
 }
 
+// ON/OFF 스위치(토스 스타일): 켜면 남색, 끄면 회색
+function OnOffSwitch({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <button type="button" role="switch" aria-checked={on} onClick={() => onChange(!on)}
+      style={{ flexShrink: 0, width: 50, height: 30, borderRadius: 999, border: 'none', padding: 3, cursor: 'pointer', background: on ? THEME.navy : '#D1D5DB', transition: 'background 0.2s', display: 'flex', justifyContent: on ? 'flex-end' : 'flex-start' }}>
+      <span style={{ width: 24, height: 24, borderRadius: 999, background: 'white', boxShadow: '0 1px 3px rgba(0,0,0,0.25)' }} />
+    </button>
+  )
+}
+
 // "매주 업데이트" 탭의 이번 주 말씀 카드. 주보 플랫폼과 연동 중인 교회는 주보 설교가 먼저 나오므로 안내만 보여 줌
-function WeeklySermonCard({ value, onChange, fromBulletin }: { value: WeeklySermon; onChange: (v: WeeklySermon) => void; fromBulletin: boolean }) {
+// heading·help를 바꿔 "다음 주 말씀" 카드로도 씀. enabled/onToggle을 주면 제목 오른쪽에 ON/OFF 스위치(끄면 홈페이지 말씀/영상 화면에서 그 카드가 안 보임)
+function WeeklySermonCard({ value, onChange, fromBulletin, heading = '이번 주 말씀', help, enabled, onToggle }: {
+  value: WeeklySermon; onChange: (v: WeeklySermon) => void; fromBulletin: boolean
+  heading?: string; help?: React.ReactNode; enabled?: boolean; onToggle?: (v: boolean) => void
+}) {
   const set = (k: keyof WeeklySermon) => (v: string) => onChange({ ...value, [k]: v })
   return (
     <div style={{ background: 'white', borderRadius: 16, border: `1px solid ${THEME.border}`, padding: '28px' }}>
-      <h3 style={{ fontWeight: 700, color: THEME.navy, marginBottom: 6, fontSize: 16 }}>이번 주 말씀</h3>
-      <p style={{ color: THEME.muted, fontSize: 13, marginBottom: fromBulletin ? 10 : 20, lineHeight: 1.6 }}>홈페이지 <b>설교</b> 화면의 "이번 주 말씀"과 <b>온라인 예배</b> 화면 오른쪽에 나와요. 매주 바꿔 주세요.</p>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, marginBottom: 6 }}>
+        <h3 style={{ fontWeight: 700, color: THEME.navy, fontSize: 16 }}>{heading}</h3>
+        {onToggle && <OnOffSwitch on={!!enabled} onChange={onToggle} />}
+      </div>
+      <p style={{ color: THEME.muted, fontSize: 13, marginBottom: fromBulletin ? 10 : 20, lineHeight: 1.6 }}>{help ?? <>홈페이지 <b>말씀/영상</b> 화면의 "이번 주 말씀"과 <b>온라인 예배</b> 화면 오른쪽에 나와요. 매주 바꿔 주세요.</>}{onToggle && !enabled && <b style={{ color: '#DC2626' }}> (지금 꺼져 있어서 홈페이지 말씀/영상 화면에 안 보여요)</b>}</p>
       {fromBulletin && (
         <p style={{ fontSize: 12.5, color: '#1E3A8A', background: '#EFF6FF', borderRadius: 8, padding: '8px 10px', marginBottom: 16, lineHeight: 1.5 }}>
           날짜가 같은 주보가 있으면 <b>여기 적은 내용</b>이 홈페이지에 나오고, 저장할 때 <b>주보에도 반영할지</b> 물어봐요. 날짜가 다르면 더 최근 날짜의 설교가 먼저 나와요.
@@ -509,6 +543,21 @@ export default function BuilderPage({ onBack }: Props) {
   const [layLeaders, setLayLeaders] = useState<LayLeader[]>([])
   const [eduMenuLabel, setEduMenuLabel] = useState('주일학교')
   const [eduDepartments, setEduDepartments] = useState<EduDepartment[]>([])
+  // 교회 연혁 · 찬양팀 · 새가족 안내 · 설교 카드 ON/OFF(다음 주 말씀)
+  const [historyItems, setHistoryItems] = useState<{ date: string; content: string }[]>([])
+  const [praiseEnabled, setPraiseEnabled] = useState(false)
+  // 교회 일정(홈페이지 위쪽 메뉴 "교회 일정", 앨범 오른쪽): ON일 때만 홈페이지에 보임
+  const [scheduleEnabled, setScheduleEnabled] = useState(false)
+  const [schedules, setSchedules] = useState<{ id: string; date: string; title: string }[]>([])
+  const [praiseIntro, setPraiseIntro] = useState('')
+  const [praiseTeams, setPraiseTeams] = useState<{ name: string; time: string; place: string; leader: string; desc: string; photoUrl: string }[]>([])
+  const [uploadingPraiseIndex, setUploadingPraiseIndex] = useState<number | null>(null)
+  const [newcomerIntro, setNewcomerIntro] = useState('')
+  const [newcomerSteps, setNewcomerSteps] = useState<{ title: string; desc: string }[]>([])
+  const [newcomerContact, setNewcomerContact] = useState('')
+  const [weeklySermonEnabled, setWeeklySermonEnabled] = useState(true)
+  const [nextSermon, setNextSermon] = useState<WeeklySermon>(EMPTY_WEEKLY)
+  const [nextSermonEnabled, setNextSermonEnabled] = useState(false)
   const [uploadingEduIndex, setUploadingEduIndex] = useState<number | null>(null)
   const [albums, setAlbums] = useState<AlbumItem[]>([])
   const [uploadingAlbumIndex, setUploadingAlbumIndex] = useState<number | null>(null)
@@ -529,6 +578,11 @@ export default function BuilderPage({ onBack }: Props) {
   const [onlineWorshipEnabled, setOnlineWorshipEnabled] = useState<boolean>(true)
   // 화면 방식: 페이지 전환형(기본, 메뉴마다 주소가 따로 있어 검색에 유리) / 원페이지(예전 한 페이지 스크롤)
   const [layoutMode, setLayoutMode] = useState<'multipage' | 'onepage'>('multipage')
+  // 화면 위쪽 배너(페이지 전환형): 사진 / 색상(투톤) / 끄기 — utils/pageBanners.ts
+  const [bannerMode, setBannerMode] = useState<BannerMode>('photo')
+  const [bannerColors, setBannerColors] = useState<[string, string] | null>(null) // null = 우리 교회 색
+  const [bannerPhotos, setBannerPhotos] = useState<Record<string, string>>({})
+  const [uploadingBannerKey, setUploadingBannerKey] = useState<string | null>(null)
   const [mainWorshipGroup, setMainWorshipGroup] = useState<string>('')
   const [worshipGroupPhotos, setWorshipGroupPhotos] = useState<Record<string, string>>({}) // 예배 구분별 대표 사진
   const [uploadingWorshipGroup, setUploadingWorshipGroup] = useState<string | null>(null)
@@ -690,6 +744,24 @@ export default function BuilderPage({ onBack }: Props) {
     ;[next[i], next[j]] = [next[j], next[i]]
     return next
   })
+
+  // 찬양팀 사진(팀마다 1장)
+  const handlePraisePhoto = async (i: number, e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    if (!uid) { alert('로그인이 필요합니다.'); return }
+    if (!file.type.startsWith('image/')) { alert('이미지 파일만 업로드할 수 있습니다.'); return }
+    setUploadingPraiseIndex(i)
+    try {
+      const url = await uploadImageAndGetUrl(file, 1200, 'image/jpeg', 0.8, uid, 'praise')
+      setPraiseTeams(prev => prev.map((x, j) => (j === i ? { ...x, photoUrl: url } : x)))
+    } catch {
+      alert('이미지를 업로드하지 못했습니다. 다시 시도해주세요.')
+    } finally {
+      setUploadingPraiseIndex(null)
+    }
+  }
 
   // 예배 안내 카드 왼쪽 대표 사진(예배 구분마다 1장)
   const handleWorshipGroupPhoto = async (group: string, e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1029,6 +1101,10 @@ export default function BuilderPage({ onBack }: Props) {
     setLayLeaders([])
     setEduMenuLabel('주일학교')
     setEduDepartments([])
+    setHistoryItems([])
+    setPraiseEnabled(false); setPraiseIntro(''); setPraiseTeams([])
+    setNewcomerIntro(''); setNewcomerSteps([]); setNewcomerContact('')
+    setWeeklySermonEnabled(true); setNextSermon(EMPTY_WEEKLY); setNextSermonEnabled(false)
     setAlbums([])
     setWeeklySermon(EMPTY_WEEKLY)
     setHomeCards(EMPTY_HOME_CARDS)
@@ -1100,6 +1176,18 @@ export default function BuilderPage({ onBack }: Props) {
     setStaffMembers((site.staffMembers || []).map(s => ({ ...s, photoUrl: s.photoUrl || '' })))
     setLayLeaders((site.layLeaders || []).map(l => ({ ...l, photoUrl: l.photoUrl || '' })))
     setEduMenuLabel(site.eduMenuLabel || '주일학교')
+    setHistoryItems((site.historyItems || []).map(h => ({ date: h.date || '', content: h.content || '' })))
+    setPraiseEnabled(site.praiseEnabled === true)
+    setScheduleEnabled(site.scheduleEnabled === true)
+    setSchedules((site.schedules || []).map((x, i) => ({ id: x.id || `sch-${i}`, date: x.date || '', title: x.title || '' })))
+    setPraiseIntro(site.praiseIntro || '')
+    setPraiseTeams((site.praiseTeams || []).map(x => ({ name: x.name || '', time: x.time || '', place: x.place || '', leader: x.leader || '', desc: x.desc || '', photoUrl: x.photoUrl || '' })))
+    setNewcomerIntro(site.newcomerIntro || '')
+    setNewcomerSteps((site.newcomerSteps || []).map(x => ({ title: x.title || '', desc: x.desc || '' })))
+    setNewcomerContact(site.newcomerContact || '')
+    setWeeklySermonEnabled(site.weeklySermonEnabled !== false)
+    setNextSermon({ ...EMPTY_WEEKLY, ...(site.nextSermon || {}) })
+    setNextSermonEnabled(site.nextSermonEnabled === true)
     setEduDepartments((site.eduDepartments || []).map(d => ({ name: d.name || '', target: d.target || '', time: d.time || '', place: d.place || '', leader: d.leader || '', desc: d.desc || '', photoUrl: d.photoUrl || '' })))
     setAlbums((site.albums || []).map((a, i) => ({ id: a.id || `al${i}`, title: a.title || '', date: a.date || '', photos: Array.isArray(a.photos) ? a.photos : [] })))
     setGalleryImages(site.galleryImages || [])
@@ -1129,6 +1217,9 @@ export default function BuilderPage({ onBack }: Props) {
     setMainWorshipGroup(site.mainWorshipGroup || '')
     setWorshipGroupPhotos({ ...(site.worshipGroupPhotos || {}) })
     setSelectedColor(site.primaryColor || '#1B3A6B')
+    setBannerMode(site.bannerMode === 'color' || site.bannerMode === 'off' ? site.bannerMode : 'photo')
+    setBannerColors(Array.isArray(site.bannerColors) && site.bannerColors.length === 2 ? [site.bannerColors[0], site.bannerColors[1]] : null)
+    setBannerPhotos(site.bannerPhotos && typeof site.bannerPhotos === 'object' ? { ...site.bannerPhotos } : {})
     setActiveMenus(site.activeMenus || ['home', 'worship', 'community', 'news', 'online-worship', 'location'])
     setActiveTab('weekly')
   }
@@ -1232,6 +1323,19 @@ export default function BuilderPage({ onBack }: Props) {
     layLeaders: layLeaders.filter(l => l.name.trim()),
     eduMenuLabel: eduMenuLabel.trim() || '주일학교',
     eduDepartments: eduDepartments.filter(d => d.name.trim()),
+    historyItems: historyItems.filter(h => h.date.trim() || h.content.trim()),
+    praiseEnabled,
+    praiseIntro,
+    scheduleEnabled,
+    // 날짜·내용 둘 다 있는 일정만, 날짜순으로 저장
+    schedules: schedules.filter(x => x.date && x.title.trim()).map(x => ({ ...x, title: x.title.trim() })).sort((a, z) => a.date.localeCompare(z.date)),
+    praiseTeams: praiseTeams.filter(x => x.name.trim()),
+    newcomerIntro,
+    newcomerSteps: newcomerSteps.filter(x => x.title.trim() || x.desc.trim()),
+    newcomerContact,
+    weeklySermonEnabled,
+    nextSermon,
+    nextSermonEnabled,
     albums: albums.filter(a => a.title.trim() || a.photos.length > 0),
     galleryImages: galleryImages.slice(0, GALLERY_MAX_IMAGES),
     sermons: sermons
@@ -1251,6 +1355,9 @@ export default function BuilderPage({ onBack }: Props) {
     primaryColor: selectedColor,
     activeMenus,
     layoutMode,
+    bannerMode,
+    bannerColors,
+    bannerPhotos,
     dataSource: effectiveSource,
   })
 
@@ -1786,37 +1893,40 @@ export default function BuilderPage({ onBack }: Props) {
                 </h2>
               </div>
 
-              {/* 교회 정보 가져오기 방식: 셋 중 하나만 체크(체크박스 모양, 하나를 고르면 나머지는 해제) */}
-              <div style={{ background: 'white', border: `1px solid ${THEME.border}`, borderRadius: 14, padding: '16px 18px', marginBottom: 16 }}>
-                <p style={{ fontSize: 14, fontWeight: 800, color: THEME.navy, marginBottom: 10 }}>교회 정보 가져오기</p>
-                {([
-                  ['bulletin', '주보 플랫폼 정보와 연동해요', '담임목사·섬기는 사람들·예배 시간·교회 소개 등을 온라인 주보에서 가져와 홈페이지에 그대로 보여 줘요.', !bulletinReady],
-                  ['custom', '주보 플랫폼을 쓰지만, 홈페이지는 주보와 다르게 할래요', '주보 내용을 가져와 채워 두되, 여기서 고친 내용이 홈페이지에 나와요.', !bulletinReady],
-                  ['website', '주보 플랫폼은 안 쓰고, 홈페이지만 사용 중이에요', '여기에 입력한 내용이 홈페이지에 나와요.', false],
-                ] as const).map(([value, label, desc, disabled]) => {
-                  const on = effectiveSource === value
-                  return (
-                    <label key={value} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '8px 0', cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.45 : 1 }}>
-                      <input
-                        type="checkbox"
-                        checked={on}
-                        disabled={disabled}
-                        onChange={() => chooseDataSource(value)}
-                        style={{ width: 16, height: 16, marginTop: 2, accentColor: THEME.navy, flexShrink: 0 }}
-                      />
-                      <span>
-                        <span style={{ display: 'block', fontSize: 13.5, fontWeight: 700, color: THEME.text }}>{label}</span>
-                        <span style={{ display: 'block', fontSize: 12, color: THEME.muted, marginTop: 2, lineHeight: 1.5 }}>{desc}</span>
-                      </span>
-                    </label>
-                  )
-                })}
-                {!bulletinReady && (
-                  <p style={{ fontSize: 11.5, color: THEME.muted, marginTop: 4 }}>※ 발행된 온라인 주보가 없어서 1·2번은 선택할 수 없어요.</p>
-                )}
+              {/* 교회 정보 가져오기 방식: 셋 중 하나를 고르는 선택 카드(고른 카드는 남색 테두리 + 연한 파랑 바탕 + 체크 표시) */}
+              <div style={{ background: 'white', border: `1px solid ${THEME.border}`, borderRadius: 16, padding: '20px 20px 18px', marginBottom: 16 }}>
+                <p style={{ fontSize: 15, fontWeight: 800, color: THEME.navy }}>교회 정보 가져오기</p>
+                <p style={{ fontSize: 12.5, color: THEME.muted, marginTop: 4, marginBottom: 14 }}>홈페이지에 보일 교회 정보(담임목사·예배 시간·교회 소개 등)를 어디서 가져올지 골라 주세요.</p>
+                <div role="radiogroup" aria-label="교회 정보 가져오기" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 10 }}>
+                  {([
+                    ['bulletin', '🔗', '주보와 연동', '온라인 주보 내용을 홈페이지에 그대로 보여 줘요. 주보만 고치면 홈페이지도 바뀌어요.', !bulletinReady],
+                    ['custom', '✏️', '주보와 다르게', '주보 내용을 채워 두되, 여기서 고친 내용이 홈페이지에 나와요.', !bulletinReady],
+                    ['website', '🌐', '홈페이지만 사용', '주보 플랫폼은 안 써요. 여기에 입력한 내용이 홈페이지에 나와요.', false],
+                  ] as const).map(([value, icon, label, desc, disabled]) => {
+                    const on = effectiveSource === value
+                    return (
+                      <button key={value} type="button" role="radio" aria-checked={on} disabled={disabled} onClick={() => chooseDataSource(value)}
+                        style={{
+                          position: 'relative', textAlign: 'left', borderRadius: 14, padding: '14px 14px 14px',
+                          border: `2px solid ${on ? THEME.navy : '#E5E7EB'}`, background: on ? '#F0F5FF' : 'white',
+                          boxShadow: on ? '0 4px 14px rgba(27,58,107,0.12)' : 'none',
+                          cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.45 : 1, transition: 'all 0.15s',
+                        }}>
+                        {/* 오른쪽 위 선택 표시: 고르면 남색 원 + 체크, 아니면 빈 원 */}
+                        <span aria-hidden style={{ position: 'absolute', top: 12, right: 12, width: 22, height: 22, borderRadius: 999, border: on ? 'none' : '2px solid #D1D5DB', background: on ? THEME.navy : 'white', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          {on && <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>}
+                        </span>
+                        <span style={{ fontSize: 22, lineHeight: 1 }}>{icon}</span>
+                        <span style={{ display: 'block', marginTop: 10, paddingRight: 24, fontSize: 14.5, fontWeight: 800, color: on ? THEME.navy : THEME.text }}>{label}</span>
+                        <span style={{ display: 'block', marginTop: 4, fontSize: 12, color: THEME.muted, lineHeight: 1.55 }}>{desc}</span>
+                        {disabled && <span style={{ display: 'inline-block', marginTop: 8, fontSize: 11, fontWeight: 700, color: '#6B7280', background: '#F3F4F6', borderRadius: 999, padding: '2px 8px' }}>발행된 주보 없음</span>}
+                      </button>
+                    )
+                  })}
+                </div>
                 {effectiveSource === 'bulletin' && (
-                  <p style={{ fontSize: 11.5, color: '#1E3A8A', background: '#EFF6FF', borderRadius: 8, padding: '8px 10px', marginTop: 6, lineHeight: 1.5 }}>
-                    아래 칸에는 주보 최신 내용이 채워져 있어요. 홈페이지에는 주보 내용이 그대로 나오니, 홈페이지만 다르게 고치려면 2번을 선택해 주세요.
+                  <p style={{ fontSize: 12, color: '#1E3A8A', background: '#EFF6FF', borderRadius: 10, padding: '9px 12px', marginTop: 12, lineHeight: 1.5 }}>
+                    아래 칸에는 주보 최신 내용이 채워져 있어요. 홈페이지에는 주보 내용이 그대로 나오니, 홈페이지만 다르게 고치려면 <b>주보와 다르게</b>를 골라 주세요.
                   </p>
                 )}
               </div>
@@ -1842,11 +1952,24 @@ export default function BuilderPage({ onBack }: Props) {
 
               {/* 매주 업데이트: 이번 주 말씀 */}
               {activeTab === 'weekly' && (
+                <>
                 <WeeklySermonCard
                   value={weeklySermon}
                   onChange={setWeeklySermon}
                   fromBulletin={effectiveSource === 'bulletin'}
+                  enabled={weeklySermonEnabled}
+                  onToggle={setWeeklySermonEnabled}
                 />
+                <WeeklySermonCard
+                  heading="다음 주 말씀"
+                  help={<>켜 두면 홈페이지 <b>말씀/영상</b> 화면의 "이번 주 말씀" 아래에 "다음 주 말씀" 카드로 나와요. 설교 제목을 적어야 보여요.</>}
+                  value={nextSermon}
+                  onChange={setNextSermon}
+                  fromBulletin={false}
+                  enabled={nextSermonEnabled}
+                  onToggle={setNextSermonEnabled}
+                />
+                </>
               )}
 
               {/* 홈 화면: 메인 바로가기 카드 문구 */}
@@ -1854,9 +1977,9 @@ export default function BuilderPage({ onBack }: Props) {
                 <HomeCardsEditor value={homeCards} onChange={setHomeCards} churchName={form.churchName.trim() || '우리 교회'} />
               )}
 
-              {/* 홈 화면: 화면 방식 */}
+              {/* 홈 화면: 화면 방식 — 홈 화면 탭 맨 위(order -2, 디자인·메인 사진(-1)보다 위) */}
               {activeTab === 'home' && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+                <div style={{ order: -2, display: 'flex', flexDirection: 'column', gap: 20 }}>
                   <div style={{ background: 'white', borderRadius: 16, border: `1px solid ${THEME.border}`, padding: '28px' }}>
                     <h3 style={{ fontWeight: 700, color: THEME.navy, marginBottom: 6, fontSize: 16 }}>화면 방식</h3>
                     <p style={{ color: THEME.muted, fontSize: 13, marginBottom: 16 }}>페이지 전환형은 메뉴마다 주소가 따로 있어서 네이버·구글 검색에 더 잘 노출돼요.</p>
@@ -1886,6 +2009,119 @@ export default function BuilderPage({ onBack }: Props) {
                       })}
                     </div>
                   </div>
+
+                  {/* 화면 위쪽 배너: 사진(기본 사진 / 화면별 우리 교회 사진) · 색상(투톤) · 끄기 — 페이지 전환형에서만 */}
+                  {layoutMode === 'multipage' && (
+                  <div style={{ background: 'white', borderRadius: 16, border: `1px solid ${THEME.border}`, padding: '28px' }}>
+                    <h3 style={{ fontWeight: 700, color: THEME.navy, marginBottom: 6, fontSize: 16 }}>화면 위쪽 배너</h3>
+                    <p style={{ color: THEME.muted, fontSize: 13, marginBottom: 16 }}>교회 소개·예배 안내 같은 각 화면 맨 위 제목 부분이에요. 오른쪽 미리보기에서 메뉴를 눌러 확인해 보세요.</p>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: bannerMode === 'off' ? 0 : 20 }}>
+                      {([['photo', '사진', '화면마다 어울리는 사진'], ['color', '색상', '두 색 그라데이션(투톤)'], ['off', '끄기', '옅은 교회 색 띠']] as const).map(([v, label, desc]) => {
+                        const on = bannerMode === v
+                        return (
+                          <button key={v} type="button" onClick={() => setBannerMode(v)}
+                            style={{ cursor: 'pointer', textAlign: 'left', padding: '12px 14px', borderRadius: 12, background: on ? THEME.skyLight : '#F9FAFB', border: `2px solid ${on ? THEME.navy : THEME.border}`, fontFamily: 'inherit', transition: 'all 0.15s' }}>
+                            <p style={{ fontWeight: 700, color: THEME.navy, fontSize: 14 }}>{label}</p>
+                            <p style={{ color: THEME.muted, fontSize: 12, marginTop: 2 }}>{desc}</p>
+                          </button>
+                        )
+                      })}
+                    </div>
+
+                    {bannerMode === 'photo' && (
+                      <div>
+                        <p style={{ color: THEME.text, fontSize: 13, fontWeight: 600, marginBottom: 10 }}>화면별 사진 <span style={{ color: THEME.muted, fontWeight: 400 }}>· 바꾸지 않으면 기본 사진이 보여요. 올린 사진은 가로로 긴 배너 모양(4:1)으로 가운데가 잘려요.</span></p>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: 10 }}>
+                          {BANNER_PAGES.map((pg) => {
+                            const custom = bannerPhotos[pg.key]
+                            const src = custom || defaultBannerPhoto(pg.key)
+                            const busy = uploadingBannerKey === pg.key
+                            return (
+                              <div key={pg.key} style={{ border: `1px solid ${THEME.border}`, borderRadius: 12, overflow: 'hidden', background: '#FAFBFC' }}>
+                                <div style={{ position: 'relative', aspectRatio: '4 / 1', background: `center / cover no-repeat url(${src})` }}>
+                                  <span style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.25)' }} />
+                                  <span style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 800, fontSize: 13 }}>{pg.label}</span>
+                                  {custom && <span style={{ position: 'absolute', top: 6, left: 6, background: THEME.navy, color: 'white', fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 6 }}>우리 교회 사진</span>}
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, padding: '8px 10px' }}>
+                                  <label style={{ cursor: busy ? 'default' : 'pointer', fontSize: 12, fontWeight: 700, color: THEME.navy }}>
+                                    {busy ? '올리는 중…' : custom ? '사진 바꾸기' : '우리 교회 사진으로'}
+                                    <input type="file" accept="image/*" style={{ display: 'none' }} disabled={busy}
+                                      onChange={async (e) => {
+                                        const file = e.target.files?.[0]
+                                        e.target.value = ''
+                                        if (!file || !uid) return
+                                        setUploadingBannerKey(pg.key)
+                                        try {
+                                          const blob = await cropToBannerBlob(file)
+                                          const fileRef = storageRef(storage, `churchSiteUploads/${uid}/banner-${pg.key}-${Date.now()}.jpg`)
+                                          await uploadBytes(fileRef, blob, { contentType: 'image/jpeg' })
+                                          const url = await getDownloadURL(fileRef)
+                                          setBannerPhotos(prev => ({ ...prev, [pg.key]: url }))
+                                        } catch (err) {
+                                          console.error('배너 사진 올리기 실패:', err)
+                                          alert('사진을 올리지 못했어요. 다시 시도해 주세요.')
+                                        } finally {
+                                          setUploadingBannerKey(null)
+                                        }
+                                      }} />
+                                  </label>
+                                  {custom && (
+                                    <button type="button" onClick={() => setBannerPhotos(prev => { const n = { ...prev }; delete n[pg.key]; return n })}
+                                      style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, color: THEME.muted, fontFamily: 'inherit' }}>기본 사진으로</button>
+                                  )}
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {bannerMode === 'color' && (() => {
+                      const [c1, c2] = resolveBannerColors(bannerColors, selectedColor)
+                      const dark = bannerTextIsDark(c1, c2)
+                      return (
+                        <div>
+                          {/* 미리보기 */}
+                          <div style={{ borderRadius: 12, height: 90, background: `linear-gradient(120deg, ${c1}, ${c2})`, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
+                            <span style={{ fontSize: 10, letterSpacing: '0.3em', fontWeight: 700, color: dark ? '#374151' : 'rgba(255,255,255,0.85)' }}>WORSHIP</span>
+                            <span style={{ fontSize: 20, fontWeight: 900, color: dark ? '#111827' : 'white' }}>예배 안내</span>
+                          </div>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: 8 }}>
+                            {BANNER_PRESETS.map((pr) => {
+                              const cols = pr.id === 'church' ? resolveBannerColors(null, selectedColor) : pr.colors
+                              const on = pr.id === 'church' ? bannerColors === null : !!bannerColors && bannerColors[0] === pr.colors[0] && bannerColors[1] === pr.colors[1]
+                              return (
+                                <button key={pr.id} type="button" onClick={() => setBannerColors(pr.id === 'church' ? null : pr.colors)}
+                                  style={{ cursor: 'pointer', padding: 6, borderRadius: 10, border: `2px solid ${on ? THEME.navy : THEME.border}`, background: 'white', fontFamily: 'inherit' }}>
+                                  <span style={{ display: 'block', height: 30, borderRadius: 6, background: `linear-gradient(120deg, ${cols[0]}, ${cols[1]})` }} />
+                                  <span style={{ display: 'block', marginTop: 5, fontSize: 12, fontWeight: 700, color: on ? THEME.navy : THEME.text }}>{pr.label}</span>
+                                </button>
+                              )
+                            })}
+                          </div>
+                          {/* 직접 고르기: 두 색이 같으면 단색 */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 14, flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: 13, fontWeight: 600, color: THEME.text }}>직접 고르기</span>
+                            {[0, 1].map((i) => (
+                              <label key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: THEME.muted }}>
+                                <input type="color" value={[c1, c2][i]} onChange={(e) => {
+                                  const next: [string, string] = [c1, c2]
+                                  next[i] = e.target.value
+                                  setBannerColors(next)
+                                }} style={{ width: 34, height: 28, border: `1px solid ${THEME.border}`, borderRadius: 6, padding: 0, background: 'none', cursor: 'pointer' }} />
+                                {i === 0 ? '왼쪽 색' : '오른쪽 색'}
+                              </label>
+                            ))}
+                            <button type="button" onClick={() => setBannerColors([c1, c1])}
+                              style={{ border: `1px solid ${THEME.border}`, background: 'white', borderRadius: 8, padding: '5px 10px', fontSize: 12, fontWeight: 600, color: THEME.text, cursor: 'pointer', fontFamily: 'inherit' }}>단색으로</button>
+                          </div>
+                        </div>
+                      )
+                    })()}
+                  </div>
+                  )}
                 </div>
               )}
 
@@ -2378,6 +2614,83 @@ export default function BuilderPage({ onBack }: Props) {
                   <div style={{ background: 'white', borderRadius: 16, border: `1px solid ${THEME.border}`, padding: '28px' }}>
                     <NewsManager items={newsItems} onChange={setNewsItems} />
                   </div>
+                  {/* 앨범: 홈페이지 위쪽 "앨범" 메뉴(주보 오른쪽). 앨범마다 제목·날짜·사진 여러 장 */}
+                  <div style={{ background: 'white', borderRadius: 16, border: `1px solid ${THEME.border}`, padding: '28px' }}>
+                    <h3 style={{ fontWeight: 700, color: THEME.navy, marginBottom: 6, fontSize: 16 }}>앨범</h3>
+                    <p style={{ color: THEME.muted, fontSize: 13, marginBottom: 20 }}>수련회·성탄절 같은 행사 사진을 앨범으로 묶어 올려 보세요. 홈페이지 위쪽 "앨범" 메뉴(주보 오른쪽)에 카드로, 최신 날짜 순으로 보여요. 앨범 하나에 사진은 최대 {ALBUM_MAX_PHOTOS}장까지 올릴 수 있어요.</p>
+                    <div className="space-y-4">
+                      {albums.map((a, i) => (
+                        <div key={a.id} className="rounded-2xl border border-slate-200 p-4 sm:p-5">
+                          <div className="flex items-center justify-between mb-3">
+                            <b className="text-[15px] text-slate-800">{a.title || `앨범 ${i + 1}`}</b>
+                            <button type="button" onClick={() => removeAlbum(i)} className="text-[13px] font-bold text-red-500 px-2 py-1 rounded-lg hover:bg-red-50">앨범 삭제</button>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_200px] gap-3">
+                            <PersonInput label="앨범 제목" placeholder="예: 2026 여름 수련회" value={a.title} onChange={v => updateAlbum(i, { title: v })} strong />
+                            <div>
+                              <span className="block text-[13px] font-bold text-slate-600 mb-1.5">날짜</span>
+                              <DatePickerField compact value={a.date} onChange={v => updateAlbum(i, { date: v })} />
+                            </div>
+                          </div>
+                          <div className="mt-4 grid grid-cols-3 sm:grid-cols-5 gap-2">
+                            {a.photos.map((src, k) => (
+                              <div key={src + k} className="relative aspect-square overflow-hidden rounded-xl bg-slate-100">
+                                <img src={src} alt="" className="w-full h-full object-cover" />
+                                {k === 0 && <span className="absolute left-1.5 top-1.5 rounded-md bg-black/60 px-1.5 py-0.5 text-[11px] font-bold text-white">대표</span>}
+                                <button type="button" aria-label="사진 삭제" onClick={() => updateAlbum(i, { photos: a.photos.filter((_, x) => x !== k) })}
+                                  className="absolute right-1.5 top-1.5 w-6 h-6 rounded-full bg-black/60 text-white text-sm leading-none">×</button>
+                              </div>
+                            ))}
+                            {a.photos.length < ALBUM_MAX_PHOTOS && (
+                              <label className={`aspect-square rounded-xl border-2 border-dashed border-slate-300 flex flex-col items-center justify-center text-slate-500 text-[13px] font-bold ${uploadingAlbumIndex === i ? 'opacity-60 cursor-wait' : 'cursor-pointer hover:border-blue-400 hover:text-blue-600'}`}>
+                                <span className="text-2xl leading-none mb-1">{uploadingAlbumIndex === i ? '…' : '+'}</span>
+                                {uploadingAlbumIndex === i ? '올리는 중' : '사진 추가'}
+                                <input type="file" accept="image/*" multiple className="hidden" disabled={uploadingAlbumIndex !== null} onChange={e => handleAlbumPhotos(i, e)} />
+                              </label>
+                            )}
+                          </div>
+                          <p className="mt-2 text-[12px] text-slate-400">첫 번째 사진이 앨범 목록의 대표 사진이 돼요. ({a.photos.length}/{ALBUM_MAX_PHOTOS}장)</p>
+                        </div>
+                      ))}
+                    </div>
+                    <PersonAddButton label="앨범 추가" onClick={addAlbum} />
+                  </div>
+                  {/* 교회 일정: ON이면 홈페이지 위쪽 메뉴 "교회 일정"(앨범 오른쪽)에 달력 + 이 달의 일정 목록으로 보임, OFF면 숨김 */}
+                  <div style={{ background: 'white', borderRadius: 16, border: `1px solid ${THEME.border}`, padding: '28px' }}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, marginBottom: 6 }}>
+                      <h3 style={{ fontWeight: 700, color: THEME.navy, fontSize: 16 }}>교회 일정</h3>
+                      <OnOffSwitch on={scheduleEnabled} onChange={setScheduleEnabled} />
+                    </div>
+                    <p style={{ color: THEME.muted, fontSize: 13, marginBottom: scheduleEnabled ? 16 : 0, lineHeight: 1.6 }}>
+                      {scheduleEnabled
+                        ? <>켜져 있어요. 홈페이지 위쪽 메뉴 <b>교회 일정</b>(앨범 오른쪽)에 달력과 <b>이 달의 일정</b> 목록으로 보여요.</>
+                        : <>꺼져 있어요. 홈페이지에 교회 일정이 <b>보이지 않아요</b>.</>}
+                    </p>
+                    {scheduleEnabled && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                        {schedules.length === 0 && (
+                          <p style={{ color: THEME.muted, fontSize: 13, padding: '14px 0', textAlign: 'center' }}>아직 일정이 없어요. 아래 "일정 추가"를 눌러 보세요.</p>
+                        )}
+                        {[...schedules].map((x, i) => (
+                          <div key={x.id} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', border: `1px solid ${THEME.border}`, borderRadius: 12, padding: 10, background: '#FAFBFC' }}>
+                            <div style={{ width: 190, flexShrink: 0 }}>
+                              <DatePickerField compact value={x.date} onChange={v => setSchedules(list => list.map((y, j) => j === i ? { ...y, date: v } : y))} />
+                            </div>
+                            <input
+                              value={x.title}
+                              onChange={e => setSchedules(list => list.map((y, j) => j === i ? { ...y, title: e.target.value } : y))}
+                              placeholder="ex. 추수감사절 연합예배"
+                              style={{ flex: 1, minWidth: 160, border: `1px solid ${THEME.border}`, borderRadius: 10, padding: '10px 12px', fontSize: 14, fontFamily: 'inherit', background: 'white', outline: 'none' }}
+                            />
+                            <button type="button" onClick={() => setSchedules(list => list.filter((_, j) => j !== i))}
+                              style={{ border: 'none', background: 'none', color: '#F04452', fontSize: 13, fontWeight: 700, cursor: 'pointer', padding: '6px 8px' }}>삭제</button>
+                          </div>
+                        ))}
+                        <PersonAddButton label="일정 추가" onClick={() => setSchedules(list => [...list, { id: `sch-${Date.now()}`, date: new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10), title: '' }])} />
+                        <p style={{ color: THEME.muted, fontSize: 12 }}>저장하면 날짜순으로 정렬돼요. 날짜와 내용이 모두 있어야 홈페이지에 보여요.</p>
+                      </div>
+                    )}
+                  </div>
 
                 </div>
               )}
@@ -2505,49 +2818,100 @@ export default function BuilderPage({ onBack }: Props) {
                     <PersonAddButton label="부서 추가" onClick={addEduDepartment} />
                   </div>
 
-                  {/* 앨범: 홈페이지 위쪽 "앨범" 메뉴(교회소식 오른쪽). 앨범마다 제목·날짜·사진 여러 장 */}
-                  {/* (2026-11-10 앨범 잠시 주석 — 홈페이지 메뉴와 같이 숨김)
+
+                </div>
+              )}
+
+              {/* 교회소개: 교회 연혁 · 새가족 안내 */}
+              {activeTab === 'about' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
                   <div style={{ background: 'white', borderRadius: 16, border: `1px solid ${THEME.border}`, padding: '28px' }}>
-                    <h3 style={{ fontWeight: 700, color: THEME.navy, marginBottom: 6, fontSize: 16 }}>앨범</h3>
-                    <p style={{ color: THEME.muted, fontSize: 13, marginBottom: 20 }}>수련회·성탄절 같은 행사 사진을 앨범으로 묶어 올려 보세요. 홈페이지 위쪽 "앨범" 메뉴에 최신 날짜 순으로 보여요. 앨범 하나에 사진은 최대 {ALBUM_MAX_PHOTOS}장까지 올릴 수 있어요.</p>
-                    <div className="space-y-4">
-                      {albums.map((a, i) => (
-                        <div key={a.id} className="rounded-2xl border border-slate-200 p-4 sm:p-5">
-                          <div className="flex items-center justify-between mb-3">
-                            <b className="text-[15px] text-slate-800">{a.title || `앨범 ${i + 1}`}</b>
-                            <button type="button" onClick={() => removeAlbum(i)} className="text-[13px] font-bold text-red-500 px-2 py-1 rounded-lg hover:bg-red-50">앨범 삭제</button>
+                    <h3 style={{ fontWeight: 700, color: THEME.navy, marginBottom: 6, fontSize: 16 }}>교회 연혁</h3>
+                    <p style={{ color: THEME.muted, fontSize: 13, marginBottom: 16, lineHeight: 1.6 }}>교회소개 &gt; <b>교회 연혁</b> 화면에 적은 순서대로 나와요. 한 줄이라도 적으면 메뉴에 보여요. 날짜는 칸에 직접 입력하거나(1998. 03 처럼 월까지만도 돼요) 오른쪽 달력에서 고를 수 있어요.</p>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      {historyItems.map((h, i) => (
+                        <div key={i} style={{ display: 'grid', gridTemplateColumns: '180px minmax(0,1fr) auto', gap: 10, alignItems: 'end' }}>
+                          <div>
+                            {i === 0 && <label style={{ fontSize: 13, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 6 }}>날짜</label>}
+                            {/* 직접 입력(1998. 03 처럼 월까지만도 OK) + 오른쪽 달력 버튼(날짜 검색 가능) */}
+                            <TypeableDateField value={h.date} onChange={v => setHistoryItems(prev => prev.map((x, j) => (j === i ? { ...x, date: v } : x)))} />
                           </div>
-                          <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_200px] gap-3">
-                            <PersonInput label="앨범 제목" placeholder="예: 2026 여름 수련회" value={a.title} onChange={v => updateAlbum(i, { title: v })} strong />
-                            <div>
-                              <span className="block text-[13px] font-bold text-slate-600 mb-1.5">날짜</span>
-                              <DatePickerField compact value={a.date} onChange={v => updateAlbum(i, { date: v })} />
-                            </div>
-                          </div>
-                          <div className="mt-4 grid grid-cols-3 sm:grid-cols-5 gap-2">
-                            {a.photos.map((src, k) => (
-                              <div key={src + k} className="relative aspect-square overflow-hidden rounded-xl bg-slate-100">
-                                <img src={src} alt="" className="w-full h-full object-cover" />
-                                {k === 0 && <span className="absolute left-1.5 top-1.5 rounded-md bg-black/60 px-1.5 py-0.5 text-[11px] font-bold text-white">대표</span>}
-                                <button type="button" aria-label="사진 삭제" onClick={() => updateAlbum(i, { photos: a.photos.filter((_, x) => x !== k) })}
-                                  className="absolute right-1.5 top-1.5 w-6 h-6 rounded-full bg-black/60 text-white text-sm leading-none">×</button>
-                              </div>
-                            ))}
-                            {a.photos.length < ALBUM_MAX_PHOTOS && (
-                              <label className={`aspect-square rounded-xl border-2 border-dashed border-slate-300 flex flex-col items-center justify-center text-slate-500 text-[13px] font-bold ${uploadingAlbumIndex === i ? 'opacity-60 cursor-wait' : 'cursor-pointer hover:border-blue-400 hover:text-blue-600'}`}>
-                                <span className="text-2xl leading-none mb-1">{uploadingAlbumIndex === i ? '…' : '+'}</span>
-                                {uploadingAlbumIndex === i ? '올리는 중' : '사진 추가'}
-                                <input type="file" accept="image/*" multiple className="hidden" disabled={uploadingAlbumIndex !== null} onChange={e => handleAlbumPhotos(i, e)} />
-                              </label>
-                            )}
-                          </div>
-                          <p className="mt-2 text-[12px] text-slate-400">첫 번째 사진이 앨범 목록의 대표 사진이 돼요. ({a.photos.length}/{ALBUM_MAX_PHOTOS}장)</p>
+                          <Field label={i === 0 ? '내용' : ''} placeholder="ex. 교회 설립 예배" value={h.content} onChange={v => setHistoryItems(prev => prev.map((x, j) => (j === i ? { ...x, content: v } : x)))} />
+                          <button type="button" onClick={() => setHistoryItems(prev => prev.filter((_, j) => j !== i))} style={{ ...removeLinkStyle, marginBottom: 12 }}>삭제</button>
                         </div>
                       ))}
                     </div>
-                    <PersonAddButton label="앨범 추가" onClick={addAlbum} />
+                    <button type="button" onClick={() => setHistoryItems(prev => [...prev, { date: '', content: '' }])} style={{ ...addLinkStyle, marginTop: 12 }}>+ 연혁 추가</button>
                   </div>
-                  */}
+
+                  <div style={{ background: 'white', borderRadius: 16, border: `1px solid ${THEME.border}`, padding: '28px' }}>
+                    <h3 style={{ fontWeight: 700, color: THEME.navy, marginBottom: 6, fontSize: 16 }}>새가족 안내</h3>
+                    <p style={{ color: THEME.muted, fontSize: 13, marginBottom: 16, lineHeight: 1.6 }}>교회소개 &gt; <b>새가족 안내</b> 화면에 나와요. 소개·등록 절차·문의 중 하나라도 적으면 메뉴에 보여요.</p>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                      <TextareaField label="안내 문구" placeholder="ex. 처음 오신 여러분을 진심으로 환영합니다. 아래 순서로 새가족 등록을 도와드려요." value={newcomerIntro} onChange={setNewcomerIntro} />
+                      <div>
+                        <label style={{ fontSize: 13, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 6 }}>등록 절차</label>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                          {newcomerSteps.map((st, i) => (
+                            <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', border: `1px solid ${THEME.border}`, borderRadius: 12, padding: 12, background: '#FAFBFC' }}>
+                              <span style={{ flexShrink: 0, width: 28, height: 28, borderRadius: 999, background: THEME.navy, color: 'white', fontSize: 13, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: 4 }}>{i + 1}</span>
+                              <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                <Field label="" placeholder={`${i + 1}단계 제목 (ex. 새가족 카드 작성)`} value={st.title} onChange={v => setNewcomerSteps(prev => prev.map((x, j) => (j === i ? { ...x, title: v } : x)))} />
+                                <TextareaField label="" placeholder="설명 (선택)" value={st.desc} onChange={v => setNewcomerSteps(prev => prev.map((x, j) => (j === i ? { ...x, desc: v } : x)))} />
+                              </div>
+                              <button type="button" onClick={() => setNewcomerSteps(prev => prev.filter((_, j) => j !== i))} style={{ ...removeLinkStyle, marginTop: 6 }}>삭제</button>
+                            </div>
+                          ))}
+                        </div>
+                        <button type="button" onClick={() => setNewcomerSteps(prev => [...prev, { title: '', desc: '' }])} style={{ ...addLinkStyle, marginTop: 10 }}>+ {newcomerSteps.length + 1}단계 추가</button>
+                      </div>
+                      <Field label="문의 (선택)" placeholder="ex. 새가족부 010-0000-0000 / 예배 후 1층 안내데스크" value={newcomerContact} onChange={setNewcomerContact} />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* 예배: 찬양팀(ON이면 홈페이지 위쪽 메뉴에 "찬양팀", OFF면 메뉴에서 아예 사라짐) */}
+              {activeTab === 'worship' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+                  <div style={{ background: 'white', borderRadius: 16, border: `1px solid ${THEME.border}`, padding: '28px' }}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, marginBottom: 6 }}>
+                      <h3 style={{ fontWeight: 700, color: THEME.navy, fontSize: 16 }}>찬양팀</h3>
+                      <OnOffSwitch on={praiseEnabled} onChange={setPraiseEnabled} />
+                    </div>
+                    <p style={{ color: THEME.muted, fontSize: 13, marginBottom: praiseEnabled ? 16 : 0, lineHeight: 1.6 }}>
+                      {praiseEnabled ? <>켜져 있어요. 홈페이지 위쪽 메뉴에 <b>찬양팀</b>이 보여요.</> : <>꺼져 있어요. 홈페이지 메뉴에 찬양팀이 <b>보이지 않아요</b>.</>}
+                    </p>
+                    {praiseEnabled && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                        <TextareaField label="찬양팀 소개 (선택)" placeholder="ex. 예배를 섬기는 찬양팀을 소개합니다." value={praiseIntro} onChange={setPraiseIntro} />
+                        {praiseTeams.map((x, i) => (
+                          <div key={i} style={{ border: `1px solid ${THEME.border}`, borderRadius: 12, padding: 14, background: '#FAFBFC', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                              <div style={{ width: 96, height: 64, borderRadius: 8, overflow: 'hidden', background: '#F3F4F6', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9CA3AF', fontSize: 11 }}>
+                                {x.photoUrl ? <img src={x.photoUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : '사진 없음'}
+                              </div>
+                              <label style={{ fontSize: 12.5, fontWeight: 700, color: '#2563EB', background: '#EFF6FF', borderRadius: 999, padding: '6px 12px', cursor: 'pointer' }}>
+                                {uploadingPraiseIndex === i ? '올리는 중…' : x.photoUrl ? '사진 바꾸기' : '사진 올리기'}
+                                <input type="file" accept="image/*" style={{ display: 'none' }} disabled={uploadingPraiseIndex !== null} onChange={e => handlePraisePhoto(i, e)} />
+                              </label>
+                              {x.photoUrl && <button type="button" onClick={() => setPraiseTeams(prev => prev.map((y, j) => (j === i ? { ...y, photoUrl: '' } : y)))} style={removeLinkStyle}>사진 삭제</button>}
+                              <span style={{ flex: 1 }} />
+                              <button type="button" onClick={() => setPraiseTeams(prev => prev.filter((_, j) => j !== i))} style={removeLinkStyle}>팀 삭제</button>
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                              <Field label="팀 이름 *" placeholder="ex. 주일 1부 찬양팀" value={x.name} onChange={v => setPraiseTeams(prev => prev.map((y, j) => (j === i ? { ...y, name: v } : y)))} />
+                              <Field label="리더 (선택)" placeholder="ex. 홍길동 집사" value={x.leader} onChange={v => setPraiseTeams(prev => prev.map((y, j) => (j === i ? { ...y, leader: v } : y)))} />
+                              <Field label="섬기는 예배 · 연습 시간" placeholder="ex. 주일 1부 / 토 오후 4시 연습" value={x.time} onChange={v => setPraiseTeams(prev => prev.map((y, j) => (j === i ? { ...y, time: v } : y)))} />
+                              <Field label="장소 (선택)" placeholder="ex. 본당" value={x.place} onChange={v => setPraiseTeams(prev => prev.map((y, j) => (j === i ? { ...y, place: v } : y)))} />
+                            </div>
+                            <TextareaField label="소개 (선택)" placeholder="ex. 주일 1부 예배를 섬기는 찬양팀입니다." value={x.desc} onChange={v => setPraiseTeams(prev => prev.map((y, j) => (j === i ? { ...y, desc: v } : y)))} />
+                          </div>
+                        ))}
+                        <button type="button" onClick={() => setPraiseTeams(prev => [...prev, { name: '', time: '', place: '', leader: '', desc: '', photoUrl: '' }])} style={addLinkStyle}>+ 찬양팀 추가</button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
 
@@ -2589,7 +2953,6 @@ export default function BuilderPage({ onBack }: Props) {
                   </div>
                 </div>
               )}
-              {/*  */}
 
               {/* 홈 화면: 디자인(색·로고·메인 사진) */}
               {activeTab === 'home' && (

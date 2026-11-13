@@ -4,7 +4,7 @@ import { db } from "../firebase";
 const RESERVED_SLUGS = [
   "bulletin", "place", "www", "api", "admin", "super",
   "login", "signup", "pricing", "success", "jobs", "notify",
-  "history", "view", "mail", "app", "assets", "static",
+  "history", "view", "mail", "app", "assets", "static", "website", "story", "give",
 ];
 
 const SLUG_PATTERN = /^[a-z0-9-]{3,30}$/;

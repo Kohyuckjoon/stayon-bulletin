@@ -10,10 +10,12 @@ import { KakaoChannelButton } from "../components/KakaoChannelButton";
 import { NoticeImageCarousel } from "../components/NoticeImageCarousel";
 import { useJobBoardEnabled } from "../../hooks/useJobBoardEnabled";
 import { clearLoginReturnTo } from "../../utils/loginReturn";
+import { websiteUrlWithLogin, prefetchWebsiteUrl } from "../../utils/websiteHost";
+import { QuickMenu } from "../components/QuickMenu";
 import {
   Smartphone, TrendingDown, Clock, Edit, Sparkles, ChevronRight, ChevronLeft, MousePointerClick,
   QrCode, UserPlus, Rocket, HelpCircle, Plus, Minus, Monitor, BellRing, CreditCard, Building, MapPin,
-  Users, Lock, MessageCircle, Volume2, Megaphone, Briefcase, ExternalLink, X
+  Users, Lock, MessageCircle, Volume2, Megaphone, Briefcase, ExternalLink, X, BookOpen, ChevronDown, LogOut
 } from "lucide-react";
 import {
   Dialog,
@@ -154,6 +156,24 @@ export function Landing() {
 
   // 페이지가 부드럽게 사라지는(디졸브) 효과를 제어할 페이드아웃 상태값
   const [isFadingOut, setIsFadingOut] = useState(false);
+  // 앱 안에서 넘어왔을 때(로그인 화면 "돌아가기" 등)만 서서히 나타남. 주소로 처음 들어온 경우는 바로 보임(미리 그린 화면 깜빡임 방지)
+  const [entered, setEntered] = useState(() => !(typeof window !== "undefined" && (window.history.state?.idx ?? 0) > 0));
+  useEffect(() => { if (entered) return; const r = requestAnimationFrame(() => setEntered(true)); return () => cancelAnimationFrame(r); }, [entered]);
+  // "교회 홈페이지 제작" → website.stayon-platform.com 으로 넘어가는 동안 보여 줄 "이동 중" 화면
+  // 넘어가는 동안 보여 줄 "이동 중" 화면 문구(null이면 안 보임) — 교회 홈페이지 제작 / 사이트 관리자
+  const [movingMsg, setMovingMsg] = useState<string | null>(null);
+  // 로그인·회원가입 화면으로 갈 때: 메인이 서서히 사라진 뒤 넘어감(로그인 화면은 서서히 나타남, 2026-11-13)
+  const goSoft = (to: string) => { setIsFadingOut(true); setTimeout(() => { navigate(to); window.scrollTo(0, 0); }, 450); };
+  const isBulletinHost = typeof window !== "undefined" && window.location.hostname === "bulletin.stayon-platform.com";
+  // website 주소 등으로 넘어갔다가 "뒤로가기"로 돌아오면 브라우저가 떠나기 직전 화면(사라진 상태)을 그대로 되살려
+  // 흰 화면만 보였음 → 되살아날 때(pageshow persisted) 사라짐 효과·이동 중 화면을 원래대로
+  useEffect(() => {
+    const onShow = (e: PageTransitionEvent) => {
+      if (e.persisted) { setIsFadingOut(false); setMovingMsg(null); }
+    };
+    window.addEventListener("pageshow", onShow);
+    return () => window.removeEventListener("pageshow", onShow);
+  }, []);
 
   // 주보 플랫폼 메인(/)에서 로그인하러 가면 로그인 후 다시 메인(/)으로.
   // /website 등에서 로그인 버튼만 눌러 두고 돌아온 경우 남아 있던 "돌아갈 곳"을 지워서, 메인에서 로그인했는데 /website로 가는 일이 없게
@@ -226,6 +246,8 @@ export function Landing() {
 
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
+        // 상단 "교회 홈페이지 제작"(website 주소) 로그인 열쇠를 미리 받아 둠 → 누르면 바로 넘어감
+        if (window.location.hostname === "bulletin.stayon-platform.com") prefetchWebsiteUrl();
         try {
           const userDocRef = doc(db, "users", user.uid);
           const userDocSnap = await getDoc(userDocRef);
@@ -532,7 +554,21 @@ export function Landing() {
   const prevStep = () => setActiveStep((prev) => (prev - 1 + tutorialSteps.length) % tutorialSteps.length);
 
   return (
-    <div className={`min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 selection:bg-blue-100 font-sans overflow-x-hidden relative transition-opacity duration-900 ${isFadingOut ? 'opacity-0' : 'opacity-100'}`}>
+    <>
+      {/* website.stayon-platform.com 으로 넘어가는 동안 "이동 중" 화면 — 사라지는(투명해지는) 메인 화면 바깥에 둬서 그대로 보임 */}
+      {movingMsg && (
+        <div className="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-white animate-in fade-in duration-300">
+          <div className="w-14 h-14 rounded-2xl bg-[#E8F3FF] flex items-center justify-center">
+            <Building className="w-7 h-7 text-[#3182F6]" />
+          </div>
+          <p className="mt-5 text-[17px] font-bold text-[#191F28]">{movingMsg}</p>
+          <div className="mt-5 h-1 w-40 overflow-hidden rounded-full bg-[#F2F4F6]">
+            <div className="h-full w-1/3 rounded-full bg-[#3182F6] animate-[stayonSlide_1s_ease-in-out_infinite]" />
+          </div>
+          <style>{`@keyframes stayonSlide{0%{transform:translateX(-100%)}100%{transform:translateX(300%)}}`}</style>
+        </div>
+      )}
+    <div className={`min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 selection:bg-blue-100 font-sans overflow-x-hidden relative transition-opacity ${entered && !isFadingOut ? 'opacity-100 duration-500' : 'opacity-0 duration-900'}`}>
       {/* 상단 헤더 - place.stayon-platform.com 참고: 떠있는 pill 바가 아니라 화면 끝까지 꽉 찬
           납작한 흰색 바 + 텍스트 위주 메뉴 스타일. 아래 container(px-4)의 바깥, 페이지 최상위
           div의 직계 자식으로 둬서 자연스럽게 풀폭으로 나온다 (transform breakout 불필요). */}
@@ -588,13 +624,35 @@ export function Landing() {
                 외부사역팀 섭외
               </Button>
 
+              {/* 함께한 이야기: STAYON과 함께한 프로젝트 카드 목록(/story) — 카드는 /super/stories에서 관리 */}
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setIsFadingOut(true);
+                  setTimeout(() => { navigate("/story"); window.scrollTo(0, 0); }, 700);
+                }}
+                className="text-slate-700 font-bold hover:text-slate-900 hover:bg-transparent rounded-md px-3 hidden md:flex items-center gap-1.5"
+              >
+                <BookOpen className="w-4 h-4 text-slate-500" />
+                함께한 이야기
+              </Button>
+
               {/* 교회 홈페이지 제작: 준비 중 해제(2026-11-10) — 누르면 홈페이지 제작 소개 화면(/website)으로 */}
               <Button
                 variant="ghost"
                 // 바로 바뀌지 않고, 주보 관리자 버튼처럼 화면이 서서히 사라진 뒤 넘어감(/website는 서서히 나타남)
+                onPointerEnter={() => { if (isBulletinHost) prefetchWebsiteUrl(); }}
                 onClick={() => {
                   setIsFadingOut(true);
-                  setTimeout(() => { navigate("/website"); window.scrollTo(0, 0); }, 700);
+                  // 실제 사이트(bulletin)에선 소개 페이지 전용 주소(website.stayon-platform.com)로.
+                  // 로그인했으면 일회용 로그인 열쇠를 같이 넘겨 그쪽에서도 로그인 유지(src/utils/websiteHost.ts)
+                  if (isBulletinHost) {
+                    setMovingMsg("교회 홈페이지 제작으로 이동하고 있어요"); // 넘어가는 동안 "이동 중" 화면 표시
+                    const wait = new Promise((r) => setTimeout(r, 350));
+                    void Promise.all([websiteUrlWithLogin(currentUser ? (currentUser.churchName || "우리 교회") : null), wait]).then(([url]) => { window.location.href = url; });
+                    return;
+                  }
+                  setTimeout(() => { navigate("/website"); window.scrollTo(0, 0); }, 700); // 개발 서버 등은 기존처럼
                 }}
                 className="text-slate-700 font-bold hover:text-slate-900 hover:bg-transparent rounded-md px-3 hidden md:flex items-center gap-1.5"
               >
@@ -614,47 +672,69 @@ export function Landing() {
 
               <span className="hidden md:block w-px h-5 bg-slate-200 mx-1.5" />
 
-              <Button
-                onClick={() => {
-                  setIsFadingOut(true);
-                  setTimeout(() => {
-                    navigate("/admin");
-                  }, 900);
-                }}
-                variant={currentUser ? undefined : "outline"}
-                className={`font-bold rounded-full px-3 md:px-5 items-center gap-1.5 transition-all duration-200 text-xs md:text-sm flex ${currentUser
-                  ? "bg-gray-900 text-white hover:bg-black border-transparent"
-                  : "border-slate-300 text-slate-700 hover:bg-slate-50"
-                  }`}
-              >
-                <ExternalLink className="w-3.5 h-3.5 opacity-90" />
-                <span className="hidden sm:inline">주보 관리자</span>
-                <span className="sm:hidden">관리자</span>
-              </Button>
+              {/* 바로 가기: 마우스를 올리면 "주보 관리자 / 사이트 관리자"(주보 플랫폼이라 주보 관리자가 먼저). 휴대폰은 눌러서 열림
+                  로그인한 상태에서만 보임(로그아웃 상태는 "로그인 / 무료 시작") */}
+              {currentUser && (
+              <QuickMenu
+                button={(open) => (
+                  <button
+                    type="button"
+                    className={`font-bold rounded-full h-9 px-3 md:px-5 items-center gap-1.5 transition-all duration-200 text-xs md:text-sm flex border ${currentUser
+                      ? `bg-gray-900 text-white hover:bg-black border-transparent ${open ? "shadow-[0_10px_22px_rgba(0,0,0,0.22)]" : ""}`
+                      : `border-slate-300 text-slate-700 hover:bg-slate-50 bg-white ${open ? "bg-slate-50" : ""}`
+                      }`}
+                  >
+                    바로 가기
+                    <ChevronDown className={`w-3.5 h-3.5 opacity-90 transition-transform duration-300 ${open ? "rotate-180" : ""}`} />
+                  </button>
+                )}
+                items={[
+                  {
+                    label: "주보 관리자", desc: "이번 주 주보 만들기·관리", icon: <BookOpen className="w-4 h-4" />, tone: "blue",
+                    onSelect: () => { setIsFadingOut(true); setTimeout(() => navigate("/admin"), 900); },
+                  },
+                  {
+                    label: "사이트 관리자", desc: "우리 교회 홈페이지 편집", icon: <Building className="w-4 h-4" />, tone: "dark",
+                    onSelect: () => {
+                      setIsFadingOut(true);
+                      setMovingMsg("웹사이트 관리자 페이지로 이동하고 있어요");
+                      // from: "main" → 빌더의 "뒤로"가 주보 플랫폼 메인으로 돌아오게(routes.tsx BuilderPageRoute)
+                      setTimeout(() => { navigate("/website-builder", { state: { from: "main" } }); window.scrollTo(0, 0); }, 900);
+                    },
+                  },
+                ]}
+              />
+              )}
 
               {currentUser ? (
-                <div className="flex items-center gap-2 bg-blue-50 border border-blue-100 px-3 py-1.5 rounded-full mr-1">
-                  <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
-                  <span className="text-xs font-bold text-blue-900 hidden sm:inline">
-                    {currentUser.churchName ? `${currentUser.churchName} 접속중` : `${currentUser.email} 접속중`}
-                  </span>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={async () => {
-                      await signOut(auth);
-                    }}
-                    className="text-xs text-red-600 hover:bg-red-50 font-bold h-7 px-2 rounded-md"
-                  >
-                    로그아웃
-                  </Button>
+                // 로그인 정보: 마우스를 올리면(휴대폰은 누르면) "로그아웃" 메뉴. 크기(h-9·여백·글자)는 옆 "바로 가기"와 같게
+                <div className="mr-1">
+                  <QuickMenu
+                    width={200}
+                    items={[{
+                      label: "로그아웃", icon: <LogOut className="w-4 h-4" />, tone: "red",
+                      onSelect: () => { void signOut(auth); },
+                    }]}
+                    button={(open) => (
+                      <button
+                        type="button"
+                        className={`flex items-center gap-2 border h-9 px-3 md:px-5 rounded-full transition-all ${open ? "bg-blue-100/70 border-blue-200" : "bg-blue-50 border-blue-100 hover:bg-blue-100/50"}`}
+                      >
+                        <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                        <span className="text-xs md:text-sm font-bold text-blue-900 hidden sm:inline">
+                          {currentUser.churchName ? `${currentUser.churchName} 접속중` : `${currentUser.email} 접속중`}
+                        </span>
+                        <ChevronDown className={`w-3.5 h-3.5 text-blue-900/60 transition-transform duration-300 ${open ? "rotate-180" : ""}`} />
+                      </button>
+                    )}
+                  />
                 </div>
               ) : (
-                <Button variant="ghost" onClick={() => navigate("/login")} className="text-slate-600 font-bold hover:text-slate-900 hover:bg-transparent rounded-md px-3 sm:px-4 text-xs sm:text-sm">로그인</Button>
+                <Button variant="ghost" onClick={() => goSoft("/login")} className="text-slate-600 font-bold hover:text-slate-900 hover:bg-transparent rounded-md px-3 sm:px-4 text-xs sm:text-sm">로그인</Button>
               )}
 
               {!currentUser && (
-                <Button onClick={() => navigate("/signup")} className="rounded-full bg-gray-900 hover:bg-black text-white font-bold px-4 sm:px-6 text-xs sm:text-sm shadow-md transition-all active:scale-95 whitespace-nowrap">무료 시작</Button>
+                <Button onClick={() => goSoft("/signup")} className="rounded-full bg-gray-900 hover:bg-black text-white font-bold px-4 sm:px-6 text-xs sm:text-sm shadow-md transition-all active:scale-95 whitespace-nowrap">무료 시작</Button>
               )}
             </div>
           </nav>
@@ -753,7 +833,7 @@ export function Landing() {
                     <ExternalLink className="w-4 h-4 shrink-0 opacity-90 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
                   </button>
                   <button
-                    onClick={() => navigate("/signup")}
+                    onClick={() => goSoft("/signup")}
                     className="inline-flex items-center justify-center gap-1.5 bg-white hover:bg-slate-50 text-slate-800 font-black px-6 sm:px-7 py-2.5 sm:py-3 rounded-full shadow-md border border-slate-200 active:scale-95 transition-all text-sm sm:text-base w-full sm:w-auto"
                   >
                     무료로 시작하기
@@ -777,7 +857,7 @@ export function Landing() {
                         setIsFadingOut(true);
                         setTimeout(() => navigate("/admin"), 900);
                       } else {
-                        navigate("/login");
+                        goSoft("/login");
                       }
                     }
                   },
@@ -829,7 +909,7 @@ export function Landing() {
               온라인 주보 <span className="text-blue-600">STAYON</span>을 만나보세요!
             </h3>
             <button
-              onClick={() => navigate("/signup")}
+              onClick={() => goSoft("/signup")}
               className="inline-flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-black px-8 py-4 rounded-full shadow-[0_0_25px_rgba(37,99,235,0.4)] hover:shadow-[0_0_35px_rgba(37,99,235,0.55)] active:scale-95 transition-all text-sm sm:text-base"
             >
               무료로 시작하기
@@ -1007,7 +1087,7 @@ export function Landing() {
                   </div>
                   <div className="flex gap-3 sm:gap-4">
                     <Button variant="ghost" onClick={prevStep} className="flex-1 rounded-2xl py-6 sm:py-7 font-bold text-gray-400">이전</Button>
-                    <Button onClick={activeStep === 2 ? () => navigate("/signup") : nextStep} className="flex-[2] rounded-2xl py-6 sm:py-7 font-black bg-blue-600 hover:bg-blue-700 shadow-lg shadow-blue-100">
+                    <Button onClick={activeStep === 2 ? () => goSoft("/signup") : nextStep} className="flex-[2] rounded-2xl py-6 sm:py-7 font-black bg-blue-600 hover:bg-blue-700 shadow-lg shadow-blue-100">
                       {activeStep === 2 ? "지금 가입하기" : "다음 단계"}
                     </Button>
                   </div>
@@ -1136,7 +1216,7 @@ export function Landing() {
             <h2 className="text-2xl sm:text-6xl font-black mb-8 tracking-tight break-keep px-2">가장 저렴한 990원 주보를 시작하세요</h2>
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
               <Button size="lg" onClick={() => navigate("/pricing")} className="rounded-2xl sm:rounded-3xl text-lg px-8 py-8 bg-white text-blue-600 hover:bg-gray-100 hover:scale-105 transition-all shadow-2xl w-full sm:w-auto font-black">주보 가격 및 상품 보기</Button>
-              <Button size="lg" onClick={() => navigate("/signup")} className="rounded-2xl sm:rounded-3xl text-lg px-8 py-8 bg-transparent border-2 border-white/50 text-white hover:bg-white/10 transition-all w-full sm:w-auto font-black">지금 무료 가입하기</Button>
+              <Button size="lg" onClick={() => goSoft("/signup")} className="rounded-2xl sm:rounded-3xl text-lg px-8 py-8 bg-transparent border-2 border-white/50 text-white hover:bg-white/10 transition-all w-full sm:w-auto font-black">지금 무료 가입하기</Button>
             </div>
           </div>
         </div>
@@ -1371,5 +1451,6 @@ export function Landing() {
       `}} />
       <KakaoChannelButton />
     </div>
+    </>
   );
 }
