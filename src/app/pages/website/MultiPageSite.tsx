@@ -81,7 +81,7 @@ function hasPage(key: PageKey, c: SiteContent, site: ChurchSite): boolean {
     case "home": return true;
     case "about": return !!(c.intro || c.vision || c.mission || c.motto || c.buildingImageUrl);
     case "pastor": return !!(c.pastor && (c.pastor.greeting || c.pastor.greetingTitle));
-    case "history": return Array.isArray((site as any).historyItems) && (site as any).historyItems.length > 0;
+    case "history": return (site as any).historyEnabled !== false && Array.isArray((site as any).historyItems) && (site as any).historyItems.length > 0;
     case "staff": return c.staff.length > 0 || c.officers.length > 0;
     case "location": return !!c.address;
     case "worship": return c.worship.length > 0;
@@ -89,7 +89,8 @@ function hasPage(key: PageKey, c: SiteContent, site: ChurchSite): boolean {
     case "sermons": return c.sermons.length > 0 || c.sermonVideos.length > 0 || !!c.youtubeLink || !!c.nextSermon;
     // 교회 주보(올린 종이 주보 파일)는 파일이 없어도 탭을 항상 보여줌(온라인 주보 탭과 나란히)
     case "bulletins": return true;
-    case "jubo": return !!(c.ownerId && c.latestBulletinId);
+    // 온라인 주보: 주보가 있고, 편집 화면 "온라인 주보 메뉴"가 켜져 있을 때만(2026-11-17)
+    case "jubo": return !!(c.ownerId && c.latestBulletinId) && c.juboMenuEnabled;
     case "news": return c.news.length > 0;
     case "column": return c.columns.length > 0;
     case "prayer": return c.prayers.length > 0;
@@ -261,7 +262,9 @@ export function MultiPageSite({ site, pathname, preview }: Props) {
   const navGroup = baseGroup;
   const groupLabel = navGroup?.en === "EDUCATION" ? (content?.eduLabel || navGroup.label) : navGroup?.label;
   // /bulletins/주보ID 는 온라인(모바일) 주보 보기라서 "교회 주보"(이미지·PDF 파일) 탭이 아니라 "온라인 주보" 탭으로 보이게
-  const onlineBulletin = key === "bulletins" && !!id;
+  // 교회 주보(올린 파일) 상세는 /bulletins/{교회 주보 id} — 이때는 "교회 주보" 탭(2026-11-17)
+  const paperDetail = key === "bulletins" && !!id && !!content?.paperBulletins.some((x) => x.id === id);
+  const onlineBulletin = key === "bulletins" && !!id && !paperDetail;
   // 주일학교 부서별 화면(/education/1 …)은 제목을 부서 이름으로
   const eduDept = key === "education" && id ? content?.eduDepartments[Number(id) - 1] : undefined;
   const pageLabel = onlineBulletin ? "온라인 주보" : eduDept ? eduDept.name : key === "education" ? (content?.eduLabel || page?.label) : page?.label;
@@ -776,6 +779,7 @@ function BulletinNewsSection({ c, color, A }: { c: SiteContent; color: string; A
   // 두 칸 높이가 같도록 똑같은 모양: 맨 위 강조 칸 1개 + 목록 4줄
   const files = c.paperBulletins;
   const news = c.news;
+  const [paperView, setPaperView] = useState<"list" | "grid">("list");
   const fmt = (d: string) => d.replace(/-/g, ".");
   // 소식 제목: "2026. 11. 29 교회 소식" (날짜가 없으면 1번 소식 제목)
   const newsTitle = (n: SiteContent["news"][number]) => n.date ? `${n.date.replace(/-/g, ". ")} 교회 소식` : (n.items.map((i) => i.title).filter(Boolean).join(" · ") || "교회 소식");
@@ -815,10 +819,48 @@ function BulletinNewsSection({ c, color, A }: { c: SiteContent; color: string; A
         <div>
           {/* 주보: 모두 "교회 주보" 목록(/bulletins)으로 */}
           <Head word="주보" to="/bulletins" />
+          {/* (2026-11-17) 맨 위 최신 주보 NEW + 그 아래 지난 주보를 카드형/목록형으로 바꿔 보기. 누르면 바로 주보가 열림 */}
           {files.length ? (
             <>
-              <Top badge="THIS WEEK" title={files[0].title || `${fmt(files[0].date)} 주보`} sub={fmt(files[0].date)} action="주보 보기 →" to="/bulletins" />
-              <ul className="mt-2">{files.slice(1, 5).map((p) => <Row key={p.id} text={p.title || `${fmt(p.date)} 주보`} date={fmt(p.date)} to="/bulletins" />)}<Pad n={4 - files.slice(1, 5).length} /></ul>
+              <A to={paperPath(files[0])} className="group mt-4 flex h-[104px] items-center justify-between gap-4 rounded-2xl px-5 transition-colors" style={{ background: tint }}>
+                <span className="min-w-0">
+                  <span className="inline-block rounded-full px-2.5 py-0.5 text-[11px] font-black text-white" style={{ background: color }}>NEW</span>
+                  <span className="mt-2 block truncate text-lg font-black text-gray-900 group-hover:underline underline-offset-4">{files[0].title || `${fmt(files[0].date)} 주보`}</span>
+                  <span className="mt-0.5 block truncate text-sm text-gray-500">{fmt(files[0].date)} · {fileLabel(files[0].fileType)}</span>
+                </span>
+                <span className="shrink-0 text-sm font-bold" style={{ color }}>주보 보기 →</span>
+              </A>
+              <div className="mt-3 flex justify-end">
+                <div className="inline-flex rounded-xl bg-gray-100 p-0.5">
+                  {([["list", ListIcon, "목록형으로 보기"], ["grid", LayoutGrid, "카드형으로 보기"]] as const).map(([v, Icon, label]) => (
+                    <button key={v} type="button" onClick={() => setPaperView(v)} aria-label={label} title={label}
+                      className={`flex h-8 w-9 items-center justify-center rounded-lg transition-all ${paperView === v ? "bg-white shadow-sm" : "text-gray-400 hover:text-gray-600"}`}
+                      style={paperView === v ? { color } : undefined}>
+                      <Icon className="h-4 w-4" />
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {paperView === "list" ? (
+                <ul className="mt-1">{files.slice(1, 5).map((p) => (
+                  <li key={p.id}>
+                    <A to={paperPath(p)} className="flex h-14 items-center justify-between gap-3 border-b border-gray-100 hover:bg-gray-50/70 px-1">
+                      <span className="truncate text-[15px] font-bold text-gray-800">{p.title || `${fmt(p.date)} 주보`}</span>
+                      <span className="shrink-0 text-sm tabular-nums text-gray-400">{fmt(p.date)}</span>
+                    </A>
+                  </li>
+                ))}<Pad n={4 - files.slice(1, 5).length} /></ul>
+              ) : (
+                <ul className="mt-1 grid grid-cols-2 gap-2">{files.slice(1, 5).map((p) => (
+                  <li key={p.id}>
+                    <A to={paperPath(p)} className="group flex h-[104px] flex-col justify-between rounded-xl border border-gray-100 bg-white p-3.5 transition hover:-translate-y-0.5 hover:shadow-md">
+                      <span className="text-xs font-bold tabular-nums" style={{ color }}>{fmt(p.date)}</span>
+                      <span className="line-clamp-2 text-sm font-bold text-gray-800 group-hover:underline underline-offset-2">{p.title || `${fmt(p.date)} 주보`}</span>
+                      <span className="text-[11px] text-gray-400">{fileLabel(p.fileType)} · {openLabel(p.fileType)}</span>
+                    </A>
+                  </li>
+                ))}{files.slice(1, 5).length === 0 && <li className="col-span-2 flex h-[104px] items-center justify-center rounded-xl bg-gray-50 text-sm text-gray-400">지난 주보가 없어요</li>}</ul>
+              )}
             </>
           ) : <Empty text="아직 올린 교회 주보가 없습니다." />}
         </div>
@@ -827,7 +869,9 @@ function BulletinNewsSection({ c, color, A }: { c: SiteContent; color: string; A
           {news.length ? (
             <>
               <Top badge="NEW" title={newsTitle(news[0])} sub={newsSub(news[0])} action="소식 보기 →" to={`/news/${news[0].id}`} />
-              <ul className="mt-2">{news.slice(1, 5).map((n) => <Row key={n.id} text={newsTitle(n)} date={fmt(n.date)} to={`/news/${n.id}`} />)}<Pad n={4 - news.slice(1, 5).length} /></ul>
+              {/* 왼쪽 주보 칸의 카드형/목록형 버튼 줄과 높이를 맞추는 빈 줄(PC에서 두 칸 목록 줄이 나란히) */}
+              <div aria-hidden className="mt-3 hidden h-9 md:block" />
+              <ul className="mt-1">{news.slice(1, 5).map((n) => <Row key={n.id} text={newsTitle(n)} date={fmt(n.date)} to={`/news/${n.id}`} />)}<Pad n={4 - news.slice(1, 5).length} /></ul>
             </>
           ) : <Empty text="아직 등록된 교회 소식이 없습니다." />}
         </div>
@@ -1534,6 +1578,8 @@ function PageBody({ pageKey, id, c, site, color, A }: { pageKey: PageKey; id: st
     }
     case "bulletins": {
       if (id) {
+        const paper = c.paperBulletins.find((x) => x.id === id);
+        if (paper) return <PaperPost c={c} b={paper} A={A} color={color} />;
         const b = c.bulletins.find((x) => x.id === id);
         if (!b) return <p className="py-16 text-center text-gray-400">주보를 찾을 수 없습니다.</p>;
         // "온라인 주보" 탭과 같은 화면(왼쪽 목록·가운데 휴대폰·오른쪽 정보)에 이 주보를 선택해서 보여 줌
@@ -2289,11 +2335,69 @@ function NewsPost({ c, id, A }: { c: SiteContent; id: string; A: LinkComp }) {
 // 교회 주보 = 교회가 빌더에서 올린 종이 주보 파일(한글·워드·PDF·사진). 누르면 그 파일이 열림
 // (PDF·사진은 새 창에서 바로 보기, 한글·워드는 내려받기). 온라인 주보로 넘어가지 않음.
 // 오른쪽 위 아이콘으로 보기 방식 전환: ☰ 목록형(기본, 딱딱한 표) / ⊞ 카드형(월별 묶음 + 날짜 칩)
-const VIEWABLE = ["pdf", "jpg", "jpeg", "png"];
-const fileLabel = (t: string) => (t === "hwp" || t === "hwpx" ? "한글" : t === "doc" || t === "docx" ? "워드" : t === "pdf" ? "PDF" : "사진");
-const openLabel = (t: string) => (VIEWABLE.includes(t) ? "보기" : "내려받기");
+const VIEWABLE = ["pdf", "jpg", "jpeg", "png", "webp", "images", "link"];
+const fileLabel = (t: string) => (t === "hwp" || t === "hwpx" ? "한글" : t === "doc" || t === "docx" ? "워드" : t === "pdf" ? "PDF" : t === "link" ? "링크" : "사진");
+const openLabel = (t: string) => (t === "link" ? "열기" : VIEWABLE.includes(t) ? "보기" : "내려받기");
+// 교회 주보 상세(2026-11-17): 목록·홈 화면에서 누르면 교회 소식처럼 별도 화면(/bulletins/{주보 id})으로 이동.
+// 사진은 위→아래로 이어서, PDF는 화면 안에 펼쳐서(+새 창 열기), 링크는 바로가기 버튼, 한글·워드는 내려받기
+type PaperItem = SiteContent["paperBulletins"][number];
+const paperPath = (b: PaperItem) => `/bulletins/${b.id}`;
+const isPhotoPaper = (b: PaperItem) => b.fileType === "images" || ["jpg", "jpeg", "png", "webp"].includes(b.fileType);
+function PaperPost({ c, b, A, color }: { c: SiteContent; b: PaperItem; A: LinkComp; color: string }) {
+  const date = b.date.replace(/-/g, ".");
+  const imgs = b.images.length ? b.images : [b.fileUrl];
+  // 이전·다음 주보(날짜순)
+  const list = [...c.paperBulletins].sort((x, z) => z.date.localeCompare(x.date));
+  const idx = list.findIndex((x) => x.id === b.id);
+  const newer = idx > 0 ? list[idx - 1] : null;
+  const older = idx >= 0 && idx < list.length - 1 ? list[idx + 1] : null;
+  const btn = "inline-flex items-center justify-center gap-1.5 rounded-lg px-5 py-3 text-sm font-bold text-white transition hover:brightness-110";
+  return (
+    <div>
+      <div className="border-t-2 border-gray-700">
+        <p className="border-b border-gray-300 bg-gray-50 px-4 py-4 text-lg font-bold text-gray-900">{b.title || `${date} 주보`}</p>
+        <p className="border-b border-gray-200 px-4 py-2.5 text-sm text-gray-500">주보 날짜 {date} · {fileLabel(b.fileType)}{b.fileType === "images" && imgs.length > 1 ? ` ${imgs.length}장` : ""}</p>
+        <div className="px-0 sm:px-4 py-6">
+          {isPhotoPaper(b) ? (
+            <div className="mx-auto flex max-w-3xl flex-col gap-4">
+              {imgs.map((u, i) => <img key={u + i} src={u} alt={`${b.title || "주보"} ${i + 1}`} loading={i < 2 ? "eager" : "lazy"} className="block w-full rounded-lg border border-gray-100 shadow-sm" />)}
+            </div>
+          ) : b.fileType === "pdf" ? (
+            <div>
+              {/* PC는 화면 안에 펼쳐서, 휴대폰은 화면 안 보기가 잘 안 돼서 새 창 버튼 위주 */}
+              <iframe src={b.fileUrl} title={b.title || "주보"} className="hidden md:block h-[80vh] w-full rounded-lg border border-gray-200 bg-gray-50" />
+              <div className="mt-4 text-center">
+                <a href={b.fileUrl} target="_blank" rel="noopener noreferrer" className={btn} style={{ background: color }}>PDF 새 창에서 보기 →</a>
+              </div>
+            </div>
+          ) : b.fileType === "link" ? (
+            <div className="rounded-2xl bg-gray-50 px-6 py-10 text-center">
+              <p className="text-gray-600">이 주보는 아래 주소에 올려져 있어요.</p>
+              <p className="mt-1 truncate text-sm text-gray-400">{b.fileUrl}</p>
+              <a href={b.fileUrl} target="_blank" rel="noopener noreferrer" className={`${btn} mt-5`} style={{ background: color }}>주보 보러 가기 →</a>
+            </div>
+          ) : (
+            <div className="rounded-2xl bg-gray-50 px-6 py-10 text-center">
+              <p className="text-gray-600">{fileLabel(b.fileType)} 파일이라 내려받아서 볼 수 있어요.</p>
+              <p className="mt-1 truncate text-sm text-gray-400">{b.fileName}</p>
+              <a href={b.fileUrl} download={b.fileName} className={`${btn} mt-5`} style={{ background: color }}>주보 내려받기</a>
+            </div>
+          )}
+        </div>
+      </div>
+      {/* 이전·다음 주보 + 목록 */}
+      <div className="mt-6 border-t border-gray-300">
+        {newer && <A to={paperPath(newer)} className="flex gap-4 border-b border-gray-100 px-2 py-3 text-sm hover:bg-gray-50"><span className="w-14 shrink-0 font-bold text-gray-400">다음 주보</span><span className="truncate text-gray-800">{newer.title || `${newer.date.replace(/-/g, ".")} 주보`}</span></A>}
+        {older && <A to={paperPath(older)} className="flex gap-4 border-b border-gray-100 px-2 py-3 text-sm hover:bg-gray-50"><span className="w-14 shrink-0 font-bold text-gray-400">이전 주보</span><span className="truncate text-gray-800">{older.title || `${older.date.replace(/-/g, ".")} 주보`}</span></A>}
+        <div className="pt-6 text-right">
+          <A to="/bulletins" className="inline-block border border-gray-300 bg-white px-5 py-2 text-sm font-bold text-gray-700 hover:bg-gray-100">목록</A>
+        </div>
+      </div>
+    </div>
+  );
+}
 
-function BulletinTable({ c, color }: { c: SiteContent; color: string; A: LinkComp }) {
+function BulletinTable({ c, color, A }: { c: SiteContent; color: string; A: LinkComp }) {
   const PAGE = 10;
   const [view, setView] = useState<"table" | "grid">("table");
   const [q, setQ] = useState("");
@@ -2307,7 +2411,6 @@ function BulletinTable({ c, color }: { c: SiteContent; color: string; A: LinkCom
   const cur = Math.min(page, pages);
   const shown = rows.slice((cur - 1) * PAGE, cur * PAGE);
   const fmtDate = (d: string) => d.replace(/-/g, ".");
-  const fileLink = (b: SiteContent["paperBulletins"][number]) => ({ href: b.fileUrl, target: "_blank", rel: "noopener noreferrer", download: VIEWABLE.includes(b.fileType) ? undefined : b.fileName });
 
   return (
     <div>
@@ -2353,15 +2456,15 @@ function BulletinTable({ c, color }: { c: SiteContent; color: string; A: LinkCom
                     <tr key={b.id} className="hover:bg-gray-50 transition-colors">
                       <td className="hidden sm:table-cell px-4 py-4 text-center tabular-nums text-gray-400">{no}</td>
                       <td className="px-4 py-4">
-                        <a {...fileLink(b)} className="block">
+                        <A to={paperPath(b)} className="block">
                           <span className="font-bold text-gray-900 hover:underline break-keep">{b.title || `${fmtDate(b.date)} 주보`}</span>
                           <span className="sm:hidden mt-0.5 block text-xs tabular-nums text-gray-400">{fmtDate(b.date)} · {fileLabel(b.fileType)}</span>
-                        </a>
+                        </A>
                       </td>
                       <td className="hidden md:table-cell px-4 py-4 text-gray-600">{fileLabel(b.fileType)}</td>
                       <td className="hidden sm:table-cell px-4 py-4 tabular-nums text-gray-500">{fmtDate(b.date)}</td>
                       <td className="px-4 py-4 text-center">
-                        <a {...fileLink(b)} className="inline-block border border-gray-300 bg-white px-3 py-1 text-xs font-bold text-gray-700 hover:bg-gray-100">{openLabel(b.fileType)}</a>
+                        <A to={paperPath(b)} className="inline-block border border-gray-300 bg-white px-3 py-1 text-xs font-bold text-gray-700 hover:bg-gray-100">보기</A>
                       </td>
                     </tr>
                   );
@@ -2380,14 +2483,14 @@ function BulletinTable({ c, color }: { c: SiteContent; color: string; A: LinkCom
           )}
         </>
       ) : (
-        <BulletinCards rows={rows} color={color} fileLink={fileLink} />
+        <BulletinCards rows={rows} color={color} A={A} />
       )}
     </div>
   );
 }
 
 // 카드형 보기: 월별 묶음 + 줄 앞 날짜 칩(날짜·요일) + 제목·파일 형식, 줄 전체가 파일 링크. 12개씩 "이전 주보 더 보기"
-function BulletinCards({ rows, color, fileLink }: { rows: SiteContent["paperBulletins"]; color: string; fileLink: (b: SiteContent["paperBulletins"][number]) => React.AnchorHTMLAttributes<HTMLAnchorElement> }) {
+function BulletinCards({ rows, color, A }: { rows: SiteContent["paperBulletins"]; color: string; A: LinkComp }) {
   const STEP = 12;
   const [limit, setLimit] = useState(STEP);
   const shown = rows.slice(0, limit);
@@ -2411,7 +2514,7 @@ function BulletinCards({ rows, color, fileLink }: { rows: SiteContent["paperBull
             <ul className="border-t border-gray-200">
               {g.items.map((b) => (
                 <li key={b.id} className="border-b border-gray-100">
-                  <a {...fileLink(b)} className="group flex items-center gap-4 sm:gap-5 py-4 transition-colors hover:bg-gray-50/80">
+                  <A to={paperPath(b)} className="group flex items-center gap-4 sm:gap-5 py-4 transition-colors hover:bg-gray-50/80">
                     <span className="flex h-14 w-14 shrink-0 flex-col items-center justify-center rounded-xl" style={{ background: `${color}12` }}>
                       <span className="text-xl font-black leading-none tabular-nums" style={{ color }}>{Number(b.date.split("-")[2]) || "-"}</span>
                       <span className="mt-1 text-[11px] font-bold text-gray-500">{dayOf(b.date)}요일</span>
@@ -2421,7 +2524,7 @@ function BulletinCards({ rows, color, fileLink }: { rows: SiteContent["paperBull
                       <span className="mt-1 block text-sm text-gray-500">{fileLabel(b.fileType)} 파일 · {openLabel(b.fileType)}</span>
                     </span>
                     <span aria-hidden className="shrink-0 pr-1 text-2xl text-gray-300 transition-transform group-hover:translate-x-1 group-hover:text-gray-500">›</span>
-                  </a>
+                  </A>
                 </li>
               ))}
             </ul>

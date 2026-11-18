@@ -1304,13 +1304,47 @@ export const siteOG = functions.https.onRequest(async (req, res) => {
     (req.headers["x-forwarded-host"] as string | undefined) ||
     req.headers.host
   );
-  const rawPath = queryHost ? queryPath : (req.originalUrl || "/");
+  // 쿼리(?utm_… 등)는 떼고 경로만 봄 — 붙어 있으면 /website?utm=… 같은 주소가
+  // 아래 분기에 안 걸려 빈 껍데기 HTML이 나갔음
+  const rawPath = (queryHost ? queryPath : (req.originalUrl || "/"))
+    .split("?")[0] || "/";
   // website.stayon-platform.com 첫 화면 = bulletin.../website 와 같은 소개 페이지
   const isWebsiteHost =
     (originalHost || "").split(":")[0] === "website.stayon-platform.com";
   const requestPath = isWebsiteHost && rawPath.split("?")[0] === "/" ?
     "/website" : rawPath;
   const churchSlug = getChurchSlugFromHost(originalHost);
+
+  // (2026-11-13) website.stayon-platform.com 검색 노출: 전용 robots.txt·sitemap.xml.
+  // 예전엔 둘 다 주보 플랫폼 앱 HTML이 나가서 구글이 사이트맵을 못 읽었음
+  if (isWebsiteHost) {
+    const websitePath = rawPath.split("?")[0];
+    if (websitePath === "/robots.txt") {
+      res.setHeader("Content-Type", "text/plain; charset=utf-8");
+      res.setHeader("Cache-Control", "public, max-age=3600");
+      res.status(200).send("User-agent: *\nAllow: /\n\n" +
+        "Sitemap: https://website.stayon-platform.com/sitemap.xml\n");
+      return;
+    }
+    if (websitePath === "/sitemap.xml") {
+      res.setHeader("Content-Type", "application/xml; charset=utf-8");
+      res.setHeader("Cache-Control", "public, max-age=3600");
+      res.status(200).send("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
+        "<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n" +
+        "  <url><loc>https://website.stayon-platform.com/</loc></url>\n" +
+        "</urlset>\n");
+      return;
+    }
+    // 첫 화면(/) 말고 website 주소에서 보이는 화면(/login·/signup 등)은 주보 플랫폼과
+    // 같은 화면이라 검색 결과에 따로 뜨지 않게 noindex
+    if (websitePath !== "/" && fs.existsSync(SHELL_HTML_PATH)) {
+      const shellHtml = fs.readFileSync(SHELL_HTML_PATH, "utf8");
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.status(200).send(shellHtml.replace("</head>",
+        "  <meta name=\"robots\" content=\"noindex\" />\n  </head>"));
+      return;
+    }
+  }
 
   const isPreviewBot = SITE_PREVIEW_BOT_REGEX.test(userAgent);
   const isSearchBot = SITE_SEARCH_BOT_REGEX.test(userAgent);

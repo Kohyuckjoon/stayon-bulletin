@@ -17,7 +17,8 @@ export interface BulletinSummary { id: string; date: string; title: string; scri
 export interface NewsGroup { id: string; date: string; items: { title: string; content: string }[] }
 export interface Post { id: string; title: string; date: string; content: string }
 // 교회 주보(종이 주보 파일) — 빌더에서 교회가 올린 한글·워드·PDF·사진 파일
-export interface PaperBulletin { id: string; date: string; title: string; fileUrl: string; fileName: string; fileType: string }
+// fileType: 확장자(pdf·hwp·jpg…) / "images"(사진 여러 장, images에 순서대로) / "link"(링크)
+export interface PaperBulletin { id: string; date: string; title: string; fileUrl: string; fileName: string; fileType: string; images: string[] }
 
 export interface SiteContent {
   ownerId: string;
@@ -52,6 +53,8 @@ export interface SiteContent {
   praiseEnabled: boolean;
   // 교회 일정(편집 화면 > 매주 업데이트). 꺼져 있으면(scheduleEnabled false) 메뉴·화면 모두 숨김
   scheduleEnabled: boolean;
+  // 홈페이지 "온라인 주보" 메뉴 보이기(편집 화면 > 매주 업데이트). false면 온라인 주보가 있어도 숨김
+  juboMenuEnabled: boolean;
   bannerMode: "photo" | "color" | "off";
   bannerColors: [string, string] | null;
   bannerPhotos: Record<string, string>;
@@ -258,7 +261,12 @@ export function builderDefaultsFromBulletin(owner: OwnerData): BuilderDefaults |
 
 export function buildSiteContent(site: ChurchSite, owner: OwnerData): SiteContent {
   const ownerId = s(site.ownerId);
-  const { list, userStatus, columns } = owner;
+  // (2026-11-17) "홈페이지만 사용"이거나 운영자가 먼저 만들어 아직 교회 계정을 연결하지 않은 사이트(pendingOwner)면
+  // 소유 계정 주보를 전혀 안 읽음 — 소유자가 운영자 계정일 때 운영자 주보(스테이온교회) 소식·주보가 섞여 나왔음
+  const noBulletin = site.dataSource === "website" || (site as { pendingOwner?: boolean }).pendingOwner === true;
+  const { userStatus } = owner;
+  const list = noBulletin ? [] : owner.list;
+  const columns = noBulletin ? [] : owner.columns;
   const latest = list.find((x) => x.data.status === "published") || list[0] || null;
   // 교회 정보(담임목사·섬기는 사람들·예배·소개·주소 등)를 주보에서 가져올지: "custom"(주보와 다르게)·
   // "website"(홈페이지만)이면 주보 정보를 쓰지 않고 홈페이지 편집 화면 입력값만 씀.
@@ -393,12 +401,14 @@ export function buildSiteContent(site: ChurchSite, owner: OwnerData): SiteConten
     mission: (b.churchMissionEnabled !== false && s(b.churchMission)) || s(site.mission),
     visionItems: arr(site.visionItems).filter((v) => s(v?.title) || s(v?.desc)).map((v) => ({ title: s(v.title), desc: s(v.desc) })),
     pastor,
-    staff: bulletinStaff.length > 0 ? bulletinStaff : builderStaff,
-    officers: bulletinOfficers.length > 0 ? bulletinOfficers : builderOfficers,
+    // 편집 화면에서 끈 칸은 비워서 메뉴·화면 모두 숨김(2026-11-17)
+    staff: (site as { staffEnabled?: boolean }).staffEnabled === false ? [] : (bulletinStaff.length > 0 ? bulletinStaff : builderStaff),
+    officers: (site as { officersEnabled?: boolean }).officersEnabled === false ? [] : (bulletinOfficers.length > 0 ? bulletinOfficers : builderOfficers),
     worship,
     youtubeLink: s(b.youtubeChannelUrl) || s(site.youtubeLink),
     praiseEnabled: site.praiseEnabled === true,
     scheduleEnabled: site.scheduleEnabled === true,
+    juboMenuEnabled: (site as { juboMenuEnabled?: boolean }).juboMenuEnabled !== false,
     bannerMode: site.bannerMode === "color" || site.bannerMode === "off" ? site.bannerMode : "photo",
     bannerColors: Array.isArray(site.bannerColors) && site.bannerColors.length === 2 ? [s(site.bannerColors[0]), s(site.bannerColors[1])] : null,
     bannerPhotos: Object.fromEntries(Object.entries(site.bannerPhotos && typeof site.bannerPhotos === "object" ? site.bannerPhotos : {})
@@ -411,9 +421,9 @@ export function buildSiteContent(site: ChurchSite, owner: OwnerData): SiteConten
     praiseTeams: arr(site.praiseTeams).filter((x) => s(x?.name)).map((x) => ({
       name: s(x.name), time: s(x.time), place: s(x.place), leader: s(x.leader), desc: s(x.desc), photoUrl: isImage(x.photoUrl) ? s(x.photoUrl) : "",
     })),
-    newcomerIntro: s(site.newcomerIntro),
-    newcomerSteps: arr(site.newcomerSteps).filter((x) => s(x?.title) || s(x?.desc)).map((x) => ({ title: s(x.title), desc: s(x.desc) })),
-    newcomerContact: s(site.newcomerContact),
+    newcomerIntro: (site as { newcomerEnabled?: boolean }).newcomerEnabled === false ? "" : s(site.newcomerIntro),
+    newcomerSteps: (site as { newcomerEnabled?: boolean }).newcomerEnabled === false ? [] : arr(site.newcomerSteps).filter((x) => s(x?.title) || s(x?.desc)).map((x) => ({ title: s(x.title), desc: s(x.desc) })),
+    newcomerContact: (site as { newcomerEnabled?: boolean }).newcomerEnabled === false ? "" : s(site.newcomerContact),
     weeklySermonEnabled: site.weeklySermonEnabled !== false,
     nextSermon: site.nextSermonEnabled === true && s(site.nextSermon?.title)
       ? { title: s(site.nextSermon?.title), scripture: s(site.nextSermon?.scripture), preacher: s(site.nextSermon?.preacher), date: s(site.nextSermon?.date) }
@@ -442,7 +452,8 @@ export function buildSiteContent(site: ChurchSite, owner: OwnerData): SiteConten
     bulletins: summaries,
     paperBulletins: arr(site.paperBulletins)
       .filter((p) => isUrl(p?.fileUrl))
-      .map((p) => ({ id: s(p.id), date: s(p.date), title: s(p.title), fileUrl: s(p.fileUrl), fileName: s(p.fileName), fileType: s(p.fileType).toLowerCase() }))
+      .map((p) => ({ id: s(p.id), date: s(p.date), title: s(p.title), fileUrl: s(p.fileUrl), fileName: s(p.fileName), fileType: s(p.fileType).toLowerCase(),
+        images: arr(p.images).filter(isUrl).map((u) => s(u)) }))
       .sort((a, z) => z.date.localeCompare(a.date)),
     latestBulletinId: latest?.id || "",
     news,

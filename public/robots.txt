@@ -8,3 +8,4 @@ Disallow: /admin
 Sitemap: https://bulletin.stayon-platform.com/sitemap.xml
 Sitemap: https://bulletin.stayon-platform.com/church-sitemap.xml
 Sitemap: https://bulletin.stayon-platform.com/bulletin-sitemap.xml
+Sitemap: https://website.stayon-platform.com/sitemap.xml

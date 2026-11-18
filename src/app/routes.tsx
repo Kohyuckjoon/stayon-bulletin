@@ -27,7 +27,7 @@ import { WebsiteRenderer } from "./pages/website/WebsiteRenderer";
 // 사역자 청빙관 및 등록 페이지 컴포넌트 임포트
 import { JobsGate } from "./pages/JobsGate"; // /jobs 전체를 관리자 화면 관리 설정에 따라 잠그는 공통 게이트 임포트
 import { lazyPage } from "./lazyPage";
-import { isWebsiteHost, BULLETIN_ORIGIN, prefetchWebsiteUrl, websiteUrlWithLogin, bulletinUrlWithLogin, WEBSITE_PATHS } from "../utils/websiteHost";
+import { isWebsiteHost, BULLETIN_ORIGIN, WEBSITE_ORIGIN, prefetchWebsiteUrl, websiteUrlWithLogin, bulletinUrlWithLogin, WEBSITE_PATHS } from "../utils/websiteHost";
 
 // ── 따로 떼어 내 필요할 때만 불러오는 화면(관리자·편집·청빙 등). lazyPage.tsx 참고
 // 성도 주보 화면(BulletinView 등)·결제(Pricing/Billing/Success)·메인·교회 홈페이지는 위에서 바로 불러옴
@@ -126,8 +126,12 @@ const SEOManager = () => {
     // /pricing, /website 등 다른 라우트는 지금까지 canonical이 아예 없는 것과 같았음.
     // window.location.origin을 써야 교회 서브도메인(교회이름.stayon-platform.com)에서도
     // 그 교회 자신의 주소로 canonical이 잡히고, 메인 bulletin 도메인으로 잘못 몰리지 않음
-    // website 주소는 같은 내용이므로 검색엔진 대표 주소는 기존 bulletin.../website 그대로
-    const canonicalUrl = onWebsiteHost ? `${BULLETIN_ORIGIN}/website` : `${window.location.origin}${path}`;
+    // (2026-11-13) 교회 홈페이지 제작 소개 페이지의 검색엔진 대표 주소는 website.stayon-platform.com/
+    // (bulletin.../website도 같은 내용이라 대표 주소를 website 쪽으로 모음). website 주소의 그 밖의
+    // 경로(/signup 등)는 주보 플랫폼과 같은 화면이라 bulletin 쪽 주소를 대표로 둠
+    const canonicalUrl = path === "/website" ?
+      WEBSITE_ORIGIN + "/" :
+      onWebsiteHost ? `${BULLETIN_ORIGIN}${path}` : `${window.location.origin}${path}`;
     let canonicalLink = document.querySelector('link[rel="canonical"]');
     if (!canonicalLink) {
       canonicalLink = document.createElement("link");

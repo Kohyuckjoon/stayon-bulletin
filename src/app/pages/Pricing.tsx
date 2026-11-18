@@ -69,6 +69,9 @@ export function Pricing() {
 
   // /pricing?tab=website 로 들어오면 홈페이지 제작 탭이 바로 보이도록 (예: /website-offer의 리다이렉트).
   // 파라미터가 없으면 기존과 동일하게 주보 서비스 탭이 기본값
+  // 홈페이지 편집 화면(/website-builder)의 "요금제 선택하기"로 들어온 경우(2026-11-13):
+  // 요금제 카드로 바로 내려가고, 홈페이지가 포함된 프로·올인원을 강조(결제 흐름은 그대로)
+  const fromBuilder = searchParams.get("from") === "builder";
   const activeTab: "bulletin" | "website" = searchParams.get("tab") === "website" ? "website" : "bulletin";
   const setActiveTab = (tab: "bulletin" | "website") => {
     setSearchParams(tab === "website" ? { tab: "website" } : {}, { replace: true });
@@ -113,6 +116,12 @@ export function Pricing() {
     }
     getChurchSiteByOwner(currentUserInfo.uid).then(setWebsiteSite).catch(() => setWebsiteSite(null));
   }, [currentUserInfo?.uid]);
+
+  useEffect(() => {
+    if (loading || !fromBuilder) return;
+    const t = setTimeout(() => document.getElementById("plans")?.scrollIntoView({ behavior: "smooth", block: "start" }), 120);
+    return () => clearTimeout(t);
+  }, [loading, fromBuilder]);
 
   // 푸터의 "환불 정책" 버튼이 /pricing#refund로 이동시키면, 로딩 끝난 뒤
   // 해당 섹션까지 부드럽게 스크롤한다. 같은 페이지 안 앵커 클릭과 달리
@@ -448,7 +457,12 @@ export function Pricing() {
         {/* ── 주보 & 홈페이지 통합 요금제(2026-11-12) ───────────────────────────────
             카드 4장(베이직·스탠다드 = 주보 / 프로·올인원 = 주보 + 홈페이지). 위쪽 1개월/3개월 전환으로 가격이 같이 바뀜.
             "시작하기" → 결제 방식 고르는 창(1회 결제 / 정기결제) → 기존 결제 흐름(handlePlanSelection · handleRecurringSelection) 그대로 */}
-        <div className="max-w-6xl mx-auto mb-8 sm:mb-14">
+        <div id="plans" className="max-w-6xl mx-auto mb-8 sm:mb-14 scroll-mt-6">
+          {fromBuilder && (
+            <div className="mb-5 sm:mb-7 flex items-center justify-center gap-2 rounded-2xl bg-blue-50 px-4 py-3 text-center text-sm font-bold text-blue-700 break-keep">
+              <Globe className="w-4 h-4 shrink-0" /> 교회 홈페이지는 프로·올인원 요금제에 포함돼 있어요
+            </div>
+          )}
           {/* 300명 이상 안내 */}
           <div className="flex flex-col sm:flex-row items-center justify-center gap-2 sm:gap-3 mb-5 sm:mb-7 text-center">
             <p className="text-xs sm:text-sm font-bold text-slate-500 break-keep">모든 교회 같은 요금 · <span className="text-slate-700">성도 300명 이상</span> 교회는 별도로 안내해 드려요</p>
@@ -494,7 +508,7 @@ export function Pricing() {
               return (
                 <motion.div key={pl.key} initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.06, duration: 0.4 }}
                   className="shrink-0 w-[78%] snap-center sm:w-auto sm:shrink">
-                  <Card className={`relative h-full flex flex-col p-5 sm:p-6 rounded-[1.75rem] border-0 transition-all duration-300 hover:-translate-y-1 ${featured ? "bg-slate-900 text-white shadow-2xl shadow-slate-300 ring-2 ring-blue-500" : "bg-white shadow-sm hover:shadow-md"}`}>
+                  <Card className={`relative h-full flex flex-col p-5 sm:p-6 rounded-[1.75rem] border-0 transition-all duration-300 hover:-translate-y-1 ${featured ? "bg-slate-900 text-white shadow-2xl shadow-slate-300 ring-2 ring-blue-500" : `bg-white shadow-sm hover:shadow-md ${fromBuilder ? (pl.web ? "ring-2 ring-blue-300" : "opacity-50 hover:opacity-100") : ""}`}`}>
                     {featured && (
                       <div className="absolute -top-3 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-blue-600 px-4 py-1 text-[11px] font-black text-white shadow-lg">추천</div>
                     )}

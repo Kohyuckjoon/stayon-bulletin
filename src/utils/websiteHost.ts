@@ -7,6 +7,7 @@ import { auth } from "../firebase";
 
 export const WEBSITE_HOST = "website.stayon-platform.com";
 export const BULLETIN_ORIGIN = "https://bulletin.stayon-platform.com";
+export const WEBSITE_ORIGIN = `https://${WEBSITE_HOST}`;
 // website 주소에서 그대로 보여 주는 화면
 export const WEBSITE_PATHS = ["/", "/login", "/signup"];
 

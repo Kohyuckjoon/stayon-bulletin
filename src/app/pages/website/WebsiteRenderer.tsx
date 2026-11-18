@@ -47,7 +47,7 @@ function SiteNotFound() {
                 <p className="mt-2 text-[15px] leading-relaxed text-[#6B7684]">주소가 맞는지 한 번 더 확인해 주세요.</p>
                 <div className="mt-8 flex flex-col gap-2">
                     <a href="https://bulletin.stayon-platform.com/" className="rounded-xl bg-[#3182F6] py-3.5 text-[15px] font-bold text-white">STAYON 홈으로</a>
-                    <a href="https://bulletin.stayon-platform.com/website" className="rounded-xl bg-white border border-[#E5E8EB] py-3.5 text-[15px] font-bold text-[#4E5968]">우리 교회 홈페이지 만들기</a>
+                    <a href="https://website.stayon-platform.com/" className="rounded-xl bg-white border border-[#E5E8EB] py-3.5 text-[15px] font-bold text-[#4E5968]">우리 교회 홈페이지 만들기</a>
                 </div>
             </div>
         </div>

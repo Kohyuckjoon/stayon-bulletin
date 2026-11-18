@@ -2,7 +2,7 @@ import { Fragment, useEffect, useState } from "react";
 import { collection, getDocs, query, where, doc, setDoc, Timestamp } from "firebase/firestore";
 import { auth, db } from "../../../firebase";
 import { onAuthStateChanged } from "firebase/auth";
-import { ExternalLink, Trash2, Globe, CalendarClock, ShieldCheck, Pencil, Plus } from "lucide-react";
+import { ExternalLink, Trash2, Globe, CalendarClock, ShieldCheck, Pencil, Plus, Link2 } from "lucide-react";
 import { deleteChurchSite, createChurchSite, ChurchSite } from "../../../utils/churchSite";
 import { checkSlugFormat, isSlugTaken, confirmPermanentAddress } from "../../../utils/slugValidation";
 
@@ -15,6 +15,9 @@ import { checkSlugFormat, isSlugTaken, confirmPermanentAddress } from "../../../
 interface SiteRow extends ChurchSite {
   ownerEmail: string;
   naverSiteVerification?: string;
+  // 아직 가입 안 한 교회 사이트를 운영자가 먼저 만든 경우(2026-11-16): 운영자 계정 소유로 두고,
+  // 교회가 가입하면 "교회 계정 연결"로 소유자를 그 교회로 바꿈
+  pendingOwner?: boolean;
 }
 
 const toDate = (v: unknown): Date | null => {
@@ -140,27 +143,88 @@ const VerificationEditor = ({ site, onSaved, onClose }: { site: SiteRow; onSaved
 
 type UserOption = { uid: string; email: string; churchName: string };
 
+// 교회 계정 찾기(교회 이름·이메일) — 대신 만들기와 계정 연결에서 같이 씀
+const UserSearch = ({ users, onPick }: { users: UserOption[]; onPick: (u: UserOption) => void }) => {
+  const [search, setSearch] = useState("");
+  const q = search.trim().toLowerCase();
+  const matches = q ? users.filter((u) => u.churchName.toLowerCase().includes(q) || u.email.toLowerCase().includes(q)).slice(0, 8) : [];
+  return (
+    <>
+      <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="교회 이름 또는 이메일로 찾기" className="mt-2 w-full rounded-xl border px-3 py-2.5 text-sm outline-none focus:border-[#3182F6]" style={inputStyle} />
+      {matches.length > 0 && (
+        <div className="mt-2 rounded-xl border overflow-hidden" style={{ borderColor: C.line }}>
+          {matches.map((u) => (
+            <button key={u.uid} onClick={() => { onPick(u); setSearch(""); }} className="block w-full text-left px-3 py-2.5 text-sm hover:bg-[#F9FAFB]" style={{ borderBottom: `1px solid ${C.line}` }}>
+              <b style={{ color: C.ink }}>{u.churchName || "(교회 이름 없음)"}</b> <span style={{ color: C.muted }}>{u.email}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {q && matches.length === 0 && <p className="mt-2 text-xs" style={{ color: C.muted }}>찾는 계정이 없어요.</p>}
+    </>
+  );
+};
+
+// 교회 계정 연결: 운영자가 먼저 만든 사이트의 소유자를 가입한 교회 계정으로 바꿈.
+// 바꾸면 그 교회 편집 화면에 보이고, 그 교회 주보 내용이 홈페이지에 연결됨. 무료체험 기간은 그대로(첫 배포 기준)
+const LinkOwnerEditor = ({ site, users, ownedSlugs, onSaved, onClose }: { site: SiteRow; users: UserOption[]; ownedSlugs: Map<string, string>; onSaved: (u: UserOption) => void; onClose: () => void }) => {
+  const [picked, setPicked] = useState<UserOption | null>(null);
+  const [saving, setSaving] = useState(false);
+  const already = picked ? ownedSlugs.get(picked.uid) : undefined;
+  const handleSave = async () => {
+    if (!picked) return;
+    if (already && !window.confirm(`이 계정은 이미 ${already}.stayon-platform.com 홈페이지를 갖고 있어요. 그래도 연결할까요?`)) return;
+    if (!window.confirm(`"${site.churchName}" 홈페이지를 ${picked.churchName || picked.email} 계정에 연결할까요?`)) return;
+    setSaving(true);
+    try {
+      await setDoc(doc(db, "churchSites", site.slug), { ownerId: picked.uid, pendingOwner: false }, { merge: true });
+      onSaved(picked);
+    } catch (error) {
+      console.error("교회 계정 연결 오류:", error);
+      alert("연결에 실패했습니다.");
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <div className="rounded-2xl p-5" style={{ background: C.bg }}>
+      <p className="text-[15px] font-bold" style={{ color: C.ink }}>교회 계정 연결</p>
+      <p className="mt-1 text-xs" style={{ color: C.muted }}>가입한 교회 계정을 고르면 이 홈페이지가 그 교회 소유로 바뀌어요. 그 교회 편집 화면에 보이고, 주보 내용도 연결돼요.</p>
+      {picked ? (
+        <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border px-3 py-2.5 text-sm" style={inputStyle}>
+          <span><b>{picked.churchName || "(교회 이름 없음)"}</b> <span style={{ color: C.muted }}>{picked.email}</span></span>
+          <button onClick={() => setPicked(null)} className="text-xs font-bold" style={{ color: C.blue }}>다시 고르기</button>
+        </div>
+      ) : <UserSearch users={users} onPick={setPicked} />}
+      {already && <p className="mt-2 text-xs font-bold" style={{ color: C.red }}>이 계정은 이미 {already}.stayon-platform.com 홈페이지를 갖고 있어요.</p>}
+      <div className="mt-4 flex justify-end gap-2">
+        <button onClick={onClose} className="rounded-xl px-4 py-2.5 text-sm font-bold" style={{ color: C.sub }}>닫기</button>
+        <button onClick={handleSave} disabled={!picked || saving} className="rounded-xl px-5 py-2.5 text-sm font-bold text-white disabled:opacity-50" style={{ background: C.blue }}>{saving ? "연결 중..." : "연결"}</button>
+      </div>
+    </div>
+  );
+};
+
 // 교회 대신 만들기: 가입한 교회 계정을 골라 그 교회 소유(ownerId)로 사이트를 만든다.
 // 소유자가 그 교회라서 ① 그 교회 주보가 홈페이지에 자동으로 들어가고 ② 그 교회 계정으로
 // 로그인하면 편집 화면에 "내 프로젝트"로 보인다. 운영자는 목록의 "편집" 버튼으로 같은 사이트를 편집.
 const CreateForChurch = ({ users, onCreated, onClose }: { users: UserOption[]; onCreated: (site: SiteRow) => void; onClose: () => void }) => {
-  const [search, setSearch] = useState("");
   const [picked, setPicked] = useState<UserOption | null>(null);
+  // 아직 가입 안 한 교회: 계정 없이 먼저 만들고(운영자 계정 소유) 나중에 "교회 계정 연결"
+  const [later, setLater] = useState(false);
   const [churchName, setChurchName] = useState("");
   const [slug, setSlug] = useState("");
   const [saving, setSaving] = useState(false);
 
-  const q = search.trim().toLowerCase();
-  const matches = q ? users.filter((u) => u.churchName.toLowerCase().includes(q) || u.email.toLowerCase().includes(q)).slice(0, 8) : [];
-
   const pick = (u: UserOption) => {
     setPicked(u);
     setChurchName(u.churchName);
-    setSearch("");
   };
 
   const handleCreate = async () => {
-    if (!picked) { alert("교회 계정을 골라 주세요."); return; }
+    if (!picked && !later) { alert("교회 계정을 골라 주세요. 아직 가입 안 한 교회면 \"아직 가입 안 한 교회\"를 눌러 주세요."); return; }
+    const operatorUid = auth.currentUser?.uid;
+    if (!picked && !operatorUid) { alert("로그인 정보를 확인할 수 없어요. 다시 로그인해 주세요."); return; }
     if (!churchName.trim()) { alert("교회 이름을 입력해 주세요."); return; }
     const s = slug.trim().toLowerCase();
     const fmtCheck = checkSlugFormat(s);
@@ -169,9 +233,10 @@ const CreateForChurch = ({ users, onCreated, onClose }: { users: UserOption[]; o
     try {
       if (await isSlugTaken(s)) { alert("이미 사용 중인 주소입니다."); return; }
       if (!confirmPermanentAddress(`${s}.stayon-platform.com`)) return;
-      await createChurchSite(s, churchName.trim(), picked.uid);
-      await setDoc(doc(db, "churchSites", s), { createdByOperator: true }, { merge: true });
-      onCreated({ slug: s, churchName: churchName.trim(), ownerId: picked.uid, published: false, ownerEmail: picked.email });
+      const ownerId = picked ? picked.uid : (operatorUid as string);
+      await createChurchSite(s, churchName.trim(), ownerId);
+      await setDoc(doc(db, "churchSites", s), { createdByOperator: true, pendingOwner: !picked }, { merge: true });
+      onCreated({ slug: s, churchName: churchName.trim(), ownerId, published: false, ownerEmail: picked ? picked.email : "", pendingOwner: !picked });
     } catch (error) {
       console.error("교회 사이트 대신 만들기 오류:", error);
       alert(error instanceof Error ? error.message : "만들기에 실패했습니다.");
@@ -186,25 +251,25 @@ const CreateForChurch = ({ users, onCreated, onClose }: { users: UserOption[]; o
       <p className="mt-1 text-xs" style={{ color: C.muted }}>고른 교회 계정 소유로 만들어져요. 그 교회 주보가 자동으로 들어가고, 교회 계정으로 로그인하면 편집 화면에서 바로 보여요.</p>
 
       <label className="mt-4 block text-sm font-bold" style={{ color: C.sub }}>교회 계정</label>
-      {picked ? (
+      {/* 가입한 교회 / 아직 가입 안 한 교회(먼저 만들고 나중에 연결) */}
+      <div className="mt-2 inline-flex rounded-xl p-1" style={{ background: C.bg }}>
+        {([[false, "가입한 교회"], [true, "아직 가입 안 한 교회"]] as const).map(([v, label]) => (
+          <button key={label} onClick={() => { setLater(v); if (v) setPicked(null); }} className="rounded-lg px-3 py-1.5 text-xs font-bold transition-colors"
+            style={later === v ? { background: C.card, color: C.ink, boxShadow: "0 1px 2px rgba(0,0,0,.06)" } : { color: C.muted }}>{label}</button>
+        ))}
+      </div>
+      {later ? (
+        <p className="mt-2 rounded-xl px-3 py-2.5 text-xs leading-relaxed" style={{ background: C.blueBg, color: C.blue }}>
+          계정 없이 먼저 만들어요(운영자 계정 소유). 교회가 가입하면 목록에서 <b>"교회 계정 연결"</b>을 눌러 연결해 주세요.
+          연결 전에는 주보 내용 없이 편집 화면에 직접 입력한 내용만 나오고, 무료체험 30일은 첫 배포부터 시작돼요.
+        </p>
+      ) : picked ? (
         <div className="mt-2 flex items-center justify-between gap-3 rounded-xl border px-3 py-2.5 text-sm" style={inputStyle}>
           <span><b>{picked.churchName || "(교회 이름 없음)"}</b> <span style={{ color: C.muted }}>{picked.email}</span></span>
           <button onClick={() => setPicked(null)} className="text-xs font-bold" style={{ color: C.blue }}>다시 고르기</button>
         </div>
       ) : (
-        <>
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="교회 이름 또는 이메일로 찾기" className="mt-2 w-full rounded-xl border px-3 py-2.5 text-sm outline-none focus:border-[#3182F6]" style={inputStyle} />
-          {matches.length > 0 && (
-            <div className="mt-2 rounded-xl border overflow-hidden" style={{ borderColor: C.line }}>
-              {matches.map((u) => (
-                <button key={u.uid} onClick={() => pick(u)} className="block w-full text-left px-3 py-2.5 text-sm hover:bg-[#F9FAFB]" style={{ borderBottom: `1px solid ${C.line}` }}>
-                  <b style={{ color: C.ink }}>{u.churchName || "(교회 이름 없음)"}</b> <span style={{ color: C.muted }}>{u.email}</span>
-                </button>
-              ))}
-            </div>
-          )}
-          {q && matches.length === 0 && <p className="mt-2 text-xs" style={{ color: C.muted }}>찾는 계정이 없어요.</p>}
-        </>
+        <UserSearch users={users} onPick={pick} />
       )}
 
       <label className="mt-4 block text-sm font-bold" style={{ color: C.sub }}>교회 이름</label>
@@ -229,7 +294,7 @@ export const AdminChurchSites = () => {
   const [rows, setRows] = useState<SiteRow[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [deletingSlug, setDeletingSlug] = useState<string | null>(null);
-  const [editing, setEditing] = useState<{ slug: string; kind: "period" | "naver" } | null>(null);
+  const [editing, setEditing] = useState<{ slug: string; kind: "period" | "naver" | "link" } | null>(null);
   const [users, setUsers] = useState<UserOption[]>([]);
   const [showCreate, setShowCreate] = useState(false);
   const ADMIN_EMAILS = ["akhj123akhjk@gmail.com", "stayon.platform@gmail.com"];
@@ -296,13 +361,18 @@ export const AdminChurchSites = () => {
     setRows((prev) => prev.map((r) => (r.slug === slug ? { ...r, ...patch } : r)));
     setEditing(null);
   };
-  const toggle = (slug: string, kind: "period" | "naver") =>
+  const toggle = (slug: string, kind: "period" | "naver" | "link") =>
     setEditing((cur) => (cur && cur.slug === slug && cur.kind === kind ? null : { slug, kind }));
 
   const expiringSoon = rows.filter((r) => { const n = daysLeft(toDate(r.accessExpiresAt)); return n !== null && n <= 7; }).length;
 
   const editorFor = (site: SiteRow) => {
     if (editing?.slug !== site.slug) return null;
+    if (editing.kind === "link") {
+      const ownedSlugs = new Map(rows.filter((r) => !r.pendingOwner && r.slug !== site.slug).map((r) => [r.ownerId, r.slug] as const));
+      return <LinkOwnerEditor site={site} users={users} ownedSlugs={ownedSlugs} onClose={() => setEditing(null)}
+        onSaved={(u) => patchRow(site.slug, { ownerId: u.uid, ownerEmail: u.email, pendingOwner: false })} />;
+    }
     return editing.kind === "period"
       ? <PeriodEditor site={site} onSaved={(d) => patchRow(site.slug, { accessExpiresAt: Timestamp.fromDate(d) })} onClose={() => setEditing(null)} />
       : <VerificationEditor site={site} onSaved={(code) => patchRow(site.slug, { naverSiteVerification: code })} onClose={() => setEditing(null)} />;
@@ -315,6 +385,7 @@ export const AdminChurchSites = () => {
   const Actions = ({ site }: { site: SiteRow }) => (
     <>
       <button onClick={() => openBuilder(site.slug)} className={actionBtn} style={{ background: C.blue, color: "#fff" }}><Pencil className="w-3.5 h-3.5" /> 편집</button>
+      {site.pendingOwner && <button onClick={() => toggle(site.slug, "link")} className={actionBtn} style={{ background: C.greenBg, color: C.green }}><Link2 className="w-3.5 h-3.5" /> 교회 계정 연결</button>}
       <button onClick={() => toggle(site.slug, "period")} className={actionBtn} style={{ background: C.blueBg, color: C.blue }}><CalendarClock className="w-3.5 h-3.5" /> 기간 조정</button>
       <button onClick={() => toggle(site.slug, "naver")} className={actionBtn} style={{ background: C.bg, color: C.sub }}><ShieldCheck className="w-3.5 h-3.5" /> 네이버</button>
       <a href={`https://${site.slug}.stayon-platform.com`} target="_blank" rel="noopener noreferrer" className={actionBtn} style={{ background: C.bg, color: C.sub }}>바로가기 <ExternalLink className="w-3.5 h-3.5" /></a>
@@ -362,7 +433,7 @@ export const AdminChurchSites = () => {
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <p className="font-bold truncate" style={{ color: C.ink }}>{site.churchName}{!site.published && <span className="ml-2 rounded-md px-1.5 py-0.5 text-[11px]" style={{ background: C.bg, color: C.muted }}>초안</span>}</p>
-                        <p className="text-xs truncate" style={{ color: C.muted }}>{site.slug}.stayon-platform.com · {site.ownerEmail}</p>
+                        <p className="text-xs truncate" style={{ color: C.muted }}>{site.slug}.stayon-platform.com · {site.pendingOwner ? "계정 연결 필요" : site.ownerEmail}</p>
                       </div>
                       <Badge d={exp} />
                     </div>
@@ -402,7 +473,7 @@ export const AdminChurchSites = () => {
                               </span>
                             </span>
                           </td>
-                          <td className="px-5 py-4" style={{ color: C.sub }}>{site.ownerEmail}</td>
+                          <td className="px-5 py-4" style={{ color: C.sub }}>{site.pendingOwner ? <span className="rounded-md px-1.5 py-0.5 text-[11px] font-bold" style={{ background: C.redBg, color: C.red }}>계정 연결 필요</span> : site.ownerEmail}</td>
                           <td className="px-5 py-4 tabular-nums" style={{ color: C.sub }}>{fmt(toDate(site.firstDeployedAt))}</td>
                           <td className="px-5 py-4">
                             <span className="flex items-center gap-2">

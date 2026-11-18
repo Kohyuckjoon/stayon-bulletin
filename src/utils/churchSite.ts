@@ -112,8 +112,15 @@ export interface ChurchSite {
   prayerPosts?: { id: string; title: string; date: string; content: string }[]; // 중보기도(외부 공개해도 되는 기도제목)
   // 교회 주보(종이 주보 파일): 교회가 쓰는 한글·워드·PDF·사진 파일을 그대로 올린 목록. 온라인 주보와 별개
   // sermons/news: 교회가 "이 주보로 교회 소식·설교도 채우기"로 자동 분석해서 확인 후 넣은 내용(선택)
+  juboMenuEnabled?: boolean;
+  paperJubo?: unknown; // 종이 주보 만들기 데이터(paperJubo/types.ts PaperJubo)
+  // 교회소개 칸 켜기/끄기(false면 홈페이지에서 숨김)
+  staffEnabled?: boolean; officersEnabled?: boolean; historyEnabled?: boolean; newcomerEnabled?: boolean; // 홈페이지 "온라인 주보" 메뉴 보이기(기본 켜짐, false면 숨김)
+  pendingOwner?: boolean; // 운영자가 먼저 만들고 아직 교회 계정을 연결하지 않은 사이트
   paperBulletins?: {
     id: string; date: string; title: string; fileUrl: string; fileName: string; fileType: string;
+    // fileType "images": 사진 여러 장(순서대로) / "link": 블로그·카페 등 링크(fileUrl이 링크) — 2026-11-17
+    images?: string[];
     sermons?: { service: string; title: string; scripture: string; preacher: string }[];
     news?: { title: string; content: string }[];
   }[];

@@ -25,6 +25,19 @@ const normDate = (v: unknown): string => {
   return m ? `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}` : "";
 };
 
+// 상단 메뉴 묶음 순서(실제 홈페이지 MultiPageSite의 SITE_GROUPS와 같은 순서)
+const NAV_GROUP_ORDER = ["교회소개", "예배", "말씀/영상", "찬양팀", "주일학교",
+  "주보", "앨범", "교회 일정"];
+// 교단 이름(상단 로고 아래 작은 글씨) — src/utils/denominations.ts와 같은 목록
+const DENOM_NAMES: Record<string, string> = {
+  "pck-hapdong": "대한예수교장로회(합동)", "pck-tonghap": "대한예수교장로회(통합)",
+  "pck-kosin": "대한예수교장로회(고신)", "pck-baekseok": "대한예수교장로회(백석)",
+  "pck-hapshin": "대한예수교장로회(합신)", "prok": "한국기독교장로회",
+  "kmc": "기독교대한감리회", "kehc": "기독교대한성결교회",
+  "jehc": "예수교대한성결교회", "nazarene": "대한기독교나사렛성결회",
+  "kbc": "기독교한국침례회", "agk": "기독교대한하나님의성회",
+  "salvation-army": "구세군대한본영", "kaicam": "독립교단(KAICAM)",
+};
 const PAGES: {path: string; label: string; group: string}[] = [
   {path: "/about", label: "교회 소개", group: "교회소개"},
   {path: "/about/pastor", label: "담임목사 인사말", group: "교회소개"},
@@ -236,8 +249,9 @@ function buildContent(site: Doc, ctx: Ctx | null): Content {
     pastor: pastorName || pastorText ?
       {name: pastorName, role: str(senior.role) || str(site.pastorRole) ||
         "담임목사", title: pastorTitle, text: pastorText} : null,
-    staff,
-    officers,
+    // 편집 화면에서 끈 칸은 비움(2026-11-17)
+    staff: site.staffEnabled === false ? [] : staff,
+    officers: site.officersEnabled === false ? [] : officers,
     worship,
     youtube: str(b.youtubeChannelUrl) || str(site.youtubeLink),
     videos: site.onlineWorshipEnabled === false ? [] :
@@ -251,7 +265,7 @@ function buildContent(site: Doc, ctx: Ctx | null): Content {
     news,
     paperSermons,
     prayers,
-    history: arr(site.historyItems),
+    history: site.historyEnabled === false ? [] : arr(site.historyItems),
     edu: arr(site.eduDepartments).filter((d) => str(d.name)),
     albums: arr(site.albums)
       .filter((x) => str(x.id) && (str(x.title) || arr(x.photos).length))
@@ -282,13 +296,16 @@ function hasPage(path: string, c: Content): boolean {
     c.paperSermons.length > 0;
   // 교회 주보 = 올린 종이 주보 파일
   case "/bulletins": return arr(c.site.paperBulletins).length > 0;
-  case "/jubo": return !!(c.ctx && c.ctx.bulletin);
+  // 편집 화면 "온라인 주보 메뉴"를 끄면 숨김(2026-11-17)
+  case "/jubo": return !!(c.ctx && c.ctx.bulletin) &&
+    c.site.juboMenuEnabled !== false;
   case "/news": return c.news.length > 0;
   case "/column": return (c.ctx?.columns.length || 0) > 0;
   case "/prayer": return c.prayers.length > 0;
   case "/education": return c.edu.length > 0;
   case "/praise": return c.site.praiseEnabled === true;
-  case "/about/newcomer": return !!(str(c.site.newcomerIntro) ||
+  case "/about/newcomer": return c.site.newcomerEnabled !== false &&
+    !!(str(c.site.newcomerIntro) ||
     arr(c.site.newcomerSteps).length || str(c.site.newcomerContact));
   // 홈페이지(앱)도 앨범 메뉴는 앨범이 없어도 항상 보여 주므로 404로 내지 않음
   case "/album": return true;
@@ -568,26 +585,59 @@ function buildPage(c: Content, base: string, path: string): Page | null {
 }
 
 /**
- * 검색봇용 페이지(head 메타 + 본문 HTML). 없는 페이지면 null.
+ * 이 홈페이지가 소유 계정의 주보를 읽어도 되는지(2026-11-17).
+ * "홈페이지만 사용"(dataSource: website)이거나, 운영자가 먼저 만들어 아직 교회 계정을 연결하지 않은
+ * 사이트(pendingOwner — 소유자가 운영자 계정이라 운영자 주보가 섞여 나왔음)면 주보를 전혀 안 읽음.
+ * 요금제(user)는 그대로 두고 주보·목록·칼럼만 비움
  * @param {Doc} site churchSites 문서
  * @param {Ctx | null} ctx 주보 컨텍스트
+ * @return {Ctx | null} 주보를 비운 컨텍스트
+ */
+function siteCtx(site: Doc, ctx: Ctx | null): Ctx | null {
+  if (!ctx) return ctx;
+  const noBulletin = site.dataSource === "website" ||
+    site.pendingOwner === true;
+  return noBulletin ? {...ctx, bulletin: null, list: [], columns: []} : ctx;
+}
+
+/**
+ * 검색봇용 페이지(head 메타 + 본문 HTML). 없는 페이지면 null.
+ * @param {Doc} site churchSites 문서
+ * @param {Ctx | null} ctxIn 주보 컨텍스트
  * @param {string} base 사이트 주소
  * @param {string} path 요청 주소
  * @return {Object | null} title/description/canonical/bodyHtml
  */
 export function churchSitePage(
-  site: Doc, ctx: Ctx | null, base: string, path: string
+  site: Doc, ctxIn: Ctx | null, base: string, path: string
 ): {title: string; description: string; canonical: string;
   bodyHtml: string; styleHtml: string} | null {
-  const c = buildContent(site, ctx);
+  const c = buildContent(site, siteCtx(site, ctxIn));
   const page = buildPage(c, base, path);
   if (!page) return null;
   const clean = (path.replace(/\/+$/, "") || "/");
-  const nav = PAGES.filter((x) => hasPage(x.path, c))
-    .map((x) => `<a href="${base}${x.path}"${
-      x.path === clean ? " class=\"on\"" : ""}>${
-      esc(x.path === "/education" ? c.eduLabel : x.label)}</a>`)
-    .join("");
+  // 상단 메뉴(2026-11-16): 실제 홈페이지(MultiPageSite)처럼 묶음 이름만 보이고(PC), 휴대폰에선 ≡ 버튼만.
+  // 세부 페이지 링크는 HTML에 그대로 있어서(펼침 메뉴처럼 숨김) 검색엔진은 모든 페이지를 읽음.
+  // 예전엔 15개 링크가 다 펼쳐진 채로 처음에 잠깐 보였다가 실제 화면으로 바뀌어 어색했음
+  const navGroupOf = (x: {path: string; group: string}) =>
+    x.path === "/news" ? "주보" : x.group;
+  const visiblePages = PAGES.filter((x) => hasPage(x.path, c));
+  const nav = NAV_GROUP_ORDER.map((g) => {
+    const pages = visiblePages.filter((x) => navGroupOf(x) === g);
+    if (!pages.length) return "";
+    const label = g === "주일학교" ? c.eduLabel : g;
+    const on = pages.some((x) => x.path === clean);
+    const links = pages.map((x) => `<a href="${base}${x.path}">${
+      esc(x.path === "/education" ? c.eduLabel : x.label)}</a>`).join("");
+    return `<div class="g"><a class="gl${on ? " on" : ""}" href="${base}${
+      pages[0].path}">${esc(label)}</a><div class="sm">${links}</div></div>`;
+  }).join("") + (() => {
+    // 묶음 메뉴에 안 보이는 페이지(교회 칼럼 등)도 링크는 남겨 둠(숨김)
+    const rest = visiblePages.filter((x) =>
+      !NAV_GROUP_ORDER.includes(navGroupOf(x)));
+    return rest.length ? `<div class="sm">${rest.map((x) =>
+      `<a href="${base}${x.path}">${esc(x.label)}</a>`).join("")}</div>` : "";
+  })();
 
   // 디자인: 실제 홈페이지(MultiPageSite)와 같은 색·배치를 정적 HTML로 흉내 낸다
   // (구글 렌더러에서는 앱이 안 떠서 이 HTML이 그대로 보이고 스크린샷도 이걸로 찍힘)
@@ -602,12 +652,32 @@ export function churchSitePage(
   const mark = denom && denom !== "none" ?
     `<img class="mark" src="/denomination-logos/${esc(denom)}.png" alt="" />` :
     "";
+  // 로고 영역: 실제 화면과 같게 — 직접 올린 로고가 있으면 로고(+교단 마크 같이 표시 옵션),
+  // 없으면 교단 마크 + 교회 이름 + 교단명(작게)
+  // 실제 화면 규칙과 같음: "로고 숨김"이면 없음, 아니면 주보 로고 → 홈페이지 로고 순
+  const bd = c.b as Doc;
+  const logoUrl = site.hideLogo === true ? "" :
+    (bd.churchLogoEnabled !== false && isUrl(bd.churchLogo) ?
+      str(bd.churchLogo) : (isUrl(site.logoUrl) ? str(site.logoUrl) : ""));
+  const denomName = (DENOM_NAMES[denom] || "").replace(/\s*\(.*\)$/, "");
+  const brand = logoUrl ?
+    `${site.denominationWithLogo === true && mark ?
+      mark + "<span class=\"bar\"></span>" : ""}` +
+      `<img class="logo" src="${esc(logoUrl)}" alt="${esc(c.name)}" />` :
+    `${mark}<span class="nm"><span class="t">${esc(c.name)}</span>${
+      denomName ? `<span class="d">${esc(denomName)}</span>` : ""}</span>`;
   const isHome = clean === "/";
+  const mottoRef = bd.mottoEnabled !== false && str(bd.mottoText) ?
+    str(bd.mottoReference) : str(site.mottoReference);
+  const heroColor = /^#[0-9a-f]{3,8}$/i.test(str(site.heroTextColor)) ?
+    str(site.heroTextColor) : "#fff";
+  // 메인 사진: 실제 화면과 같은 높이(휴대폰 화면 세로 70%·최대 560 / PC 너비 기준)·아래 왼쪽 글자·표어
   const heroHtml = isHome ?
-    `<section class="hero"${hero ? " style=\"background-image:" +
-      `linear-gradient(rgba(0,0,0,.35),rgba(0,0,0,.55)),url('${
-        esc(hero)}')"` : ""}><div class="in"><p class="en">WELCOME</p>` +
-      `<h1>${esc(page.h1)}</h1></div></section>` :
+    `<section class="hero"${hero ? ` style="background-image:url('${
+      esc(hero)}')"` : ""}><span class="sh"></span>` +
+      `<div class="hi" style="color:${heroColor}"><p class="en">WELCOME</p>` +
+      `<h1>${esc(page.h1)}</h1>${c.motto ? `<p class="mt">${esc(c.motto)}${
+        mottoRef ? ` (${esc(mottoRef)})` : ""}</p>` : ""}</div></section>` :
     `<section class="sub"><div class="in"><h1>${esc(page.h1)}</h1>` +
       "</div></section>";
 
@@ -615,11 +685,14 @@ export function churchSitePage(
     title: page.title,
     description: page.description,
     canonical: base + (clean === "/" ? "/" : clean),
-    styleHtml: `<style>${churchSiteCss(color)}</style>`,
-    bodyHtml: "<div class=\"cs\"><header><div class=\"in\">" +
-      `<a class="brand" href="${base}/">${mark}` +
-      `<span>${esc(c.name)}</span></a>` +
-      `<nav>${nav}</nav></div></header>${heroHtml}` +
+    // 메인 사진은 페이지를 열자마자 먼저 받기 시작(늦게 받아지는 동안 사진 자리가 검은 띠로 보였음)
+    styleHtml: (isHome && hero ? `<link rel="preload" as="image" href="${
+      esc(hero)}" fetchpriority="high" />\n` : "") +
+      `<style>${churchSiteCss(color)}</style>`,
+    bodyHtml: "<div class=\"cs\"><header><div class=\"hw\">" +
+      `<a class="brand" href="${base}/">${brand}</a>` +
+      `<nav>${nav}</nav><span class="bg" aria-hidden="true"><i></i><i></i>` +
+      `<i></i></span></div></header>${heroHtml}` +
       `<main class="in">${page.body}</main>` +
       `<footer><div class="in"><p class="fn">${esc(c.name)}</p>` +
       `<p>${esc(c.address)}${c.phone ? ` · ${esc(c.phone)}` : ""}</p>` +
@@ -640,23 +713,47 @@ function churchSiteCss(color: string): string {
     "word-break:keep-all;line-height:1.7}",
     ".cs .in{max-width:1100px;margin:0 auto;padding:0 20px}",
     ".cs a{color:inherit;text-decoration:none}",
-    ".cs header{position:sticky;top:0;z-index:5;background:#fff;",
-    "border-bottom:1px solid #f1f1f1}",
-    ".cs header .in{display:flex;align-items:center;",
-    "justify-content:space-between;gap:16px;min-height:64px;flex-wrap:wrap}",
-    ".cs .brand{display:flex;align-items:center;gap:10px;font-weight:900;",
-    "font-size:18px;color:#111827}",
-    ".cs .mark{width:36px;height:36px;object-fit:contain}",
-    ".cs nav{display:flex;flex-wrap:wrap;gap:4px}",
-    ".cs nav a{padding:8px 12px;border-radius:10px;font-size:14px;",
-    "font-weight:700;color:#374151}",
-    `.cs nav a.on{color:${color};background:#f3f4f6}`,
-    `.cs .hero{background:${color};background-size:cover;`,
-    "background-position:center;color:#fff;min-height:340px;display:flex;",
-    "align-items:flex-end;padding:56px 0}",
-    ".cs .hero .en{font-size:12px;font-weight:900;letter-spacing:.2em;",
-    "opacity:.85;margin:0}",
-    ".cs .hero h1{font-size:36px;font-weight:900;margin:6px 0 0}",
+    // 상단·메인 사진은 실제 홈페이지(MultiPageSite)와 같은 크기·배치(2026-11-16)
+    ".cs header{position:sticky;top:0;z-index:40;",
+    "background:rgba(255,255,255,.95);border-bottom:1px solid #f3f4f6}",
+    ".cs .hw{max-width:1152px;margin:0 auto;padding:0 16px;height:64px;",
+    "display:flex;align-items:center;justify-content:space-between;gap:16px}",
+    ".cs .brand{display:flex;align-items:center;gap:10px;min-width:0}",
+    ".cs .mark{width:36px;height:36px;object-fit:contain;flex-shrink:0}",
+    ".cs .bar{width:1px;height:24px;background:#e5e7eb;flex-shrink:0}",
+    ".cs .logo{height:32px;object-fit:contain;min-width:0}",
+    ".cs .nm{min-width:0;line-height:1.25}",
+    ".cs .nm .t{display:block;font-weight:900;font-size:16px;color:#111827;",
+    "white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
+    ".cs .nm .d{display:block;font-size:11px;color:#6b7280;",
+    "white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
+    ".cs nav{display:none;align-items:center;gap:4px}",
+    ".cs nav .gl{display:block;padding:8px 16px;border-radius:8px;",
+    "font-size:15px;font-weight:700;color:#374151}",
+    `.cs nav .gl.on{color:${color}}`,
+    ".cs nav .sm{display:none}",
+    ".cs .bg{display:block;padding:8px;margin-right:-8px;color:#374151}",
+    ".cs .bg i{display:block;width:20px;height:2px;background:currentColor}",
+    ".cs .bg i+i{margin-top:6px}",
+    `.cs .hero{position:relative;background:${color};background-size:cover;`,
+    "background-position:center;height:min(70vh,560px);display:flex;",
+    "align-items:flex-end;overflow:hidden}",
+    ".cs .hero .sh{position:absolute;inset:0;background:linear-gradient(",
+    "to top,rgba(0,0,0,.6),rgba(0,0,0,.2) 50%,rgba(0,0,0,0))}",
+    ".cs .hero .hi{position:relative;max-width:1152px;margin:0 auto;",
+    "width:100%;box-sizing:border-box;padding:0 16px 40px}",
+    ".cs .hero .en{font-size:12px;font-weight:700;letter-spacing:.25em;",
+    "opacity:.8;margin:0}",
+    ".cs .hero h1{font-size:30px;line-height:1.2;font-weight:900;",
+    "margin:8px 0 0;color:inherit}",
+    ".cs .hero .mt{font-size:14px;opacity:.9;margin:12px 0 0;color:inherit}",
+    "@media(min-width:640px){.cs .hw{padding:0 32px}",
+    ".cs .mark{width:40px;height:40px}.cs .logo{height:36px}",
+    ".cs .nm .t{font-size:18px}.cs .nm .d{font-size:12px}",
+    ".cs .hero{height:clamp(420px,42.3vw,820px)}",
+    ".cs .hero .hi{padding:0 32px 64px}.cs .hero .en{font-size:14px}",
+    ".cs .hero h1{font-size:48px}.cs .hero .mt{font-size:18px}}",
+    "@media(min-width:768px){.cs nav{display:flex}.cs .bg{display:none}}",
     ".cs .sub{background:#f9fafb;border-bottom:1px solid #f1f1f1;",
     "padding:40px 0}",
     `.cs .sub h1{font-size:28px;font-weight:900;margin:0;color:${color}}`,
@@ -679,21 +776,21 @@ function churchSiteCss(color: string): string {
     ".cs footer p{margin:4px 0}",
     ".cs footer .fn{color:#fff;font-weight:900;font-size:15px}",
     ".cs footer .pw{margin-top:12px;color:#94a3b8}",
-    "@media(max-width:640px){.cs .hero{min-height:260px}",
-    ".cs .hero h1{font-size:28px}.cs nav a{padding:6px 8px;font-size:13px}}",
+    "@media(max-width:640px){.cs .sub h1{font-size:24px}}",
   ].join("");
 }
 
 /**
  * 사이트맵에 넣을 이 교회 홈페이지의 모든 주소.
  * @param {Doc} site churchSites 문서
- * @param {Ctx | null} ctx 주보 컨텍스트
+ * @param {Ctx | null} ctxIn 주보 컨텍스트
  * @param {string} base 사이트 주소
  * @return {string[]} 주소 목록
  */
 export function churchSitePaths(
-  site: Doc, ctx: Ctx | null, base: string
+  site: Doc, ctxIn: Ctx | null, base: string
 ): string[] {
+  const ctx = siteCtx(site, ctxIn);
   const c = buildContent(site, ctx);
   const out = [`${base}/`];
   PAGES.filter((x) => hasPage(x.path, c))
@@ -711,13 +808,14 @@ export function churchSitePaths(
 /**
  * 교회 홈페이지 RSS(교회소식·설교·칼럼·중보기도). 네이버 서치어드바이저 RSS 제출용.
  * @param {Doc} site churchSites 문서
- * @param {Ctx | null} ctx 주보 컨텍스트
+ * @param {Ctx | null} ctxIn 주보 컨텍스트
  * @param {string} base 사이트 주소
  * @return {string} RSS XML
  */
 export function churchSiteRss(
-  site: Doc, ctx: Ctx | null, base: string
+  site: Doc, ctxIn: Ctx | null, base: string
 ): string {
+  const ctx = siteCtx(site, ctxIn);
   const c = buildContent(site, ctx);
   const day = (d: string) => Date.parse(`${d}T00:00:00+09:00`) || 0;
   const items: {title: string; link: string; desc: string; date: number}[] =

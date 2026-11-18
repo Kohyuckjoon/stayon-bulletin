@@ -1,8 +1,10 @@
 import { useState, useEffect, useLayoutEffect, useRef } from 'react'
 import { onAuthStateChanged } from 'firebase/auth'
-import { Timestamp } from 'firebase/firestore'
+import { Timestamp, doc, getDoc } from 'firebase/firestore'
+import { useNavigate } from 'react-router'
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage'
-import { auth, storage } from '../../../firebase'
+import { auth, storage, db } from '../../../firebase'
+import { getExpiryInfo, getPlanTierMeta, type ExpiryInfo } from '../../../utils/subscriptionTier'
 import { getChurchSite, getChurchSitesByOwner, createChurchSite, updateChurchSite, publishChurchSite, extendChurchSiteAccess, extractYoutubeId, MENU_ITEMS as menuItems, ChurchSite } from '../../../utils/churchSite'
 import { checkSlugFormat, isSlugTaken, confirmPermanentAddress } from '../../../utils/slugValidation'
 import { DEFAULT_DENOMINATION, NO_DENOMINATION } from '../../../utils/denominations'
@@ -13,6 +15,8 @@ import { DatePickerField, TypeableDateField } from '../../components/DatePickerF
 import { RolePicker } from '../../components/RolePicker'
 import { HOME_CARD_PRESETS, CHURCH_TOKEN, HomeCardText } from '../../../utils/homeCards'
 import { WebsiteRenderer } from './WebsiteRenderer'
+import { PaperJuboEditor } from './paperJubo/PaperJuboEditor'
+import type { PaperJubo } from './paperJubo/types'
 import { BANNER_PAGES, BANNER_PRESETS, defaultBannerPhoto, resolveBannerColors, bannerTextIsDark, cropToBannerBlob, type BannerMode } from '../../../utils/pageBanners'
 import { syncDate, siteNewsLines, cleanSermon, dotDate, findBulletinTargets, applyBulletinTarget, BulletinSyncTarget } from '../../../utils/weeklySync'
 
@@ -295,7 +299,8 @@ type NewsItem = { id?: string; title: string; date: string; content: string; ite
 type PaperSermon = { service: string; title: string; scripture: string; preacher: string }
 type PaperNews = { title: string; content: string }
 // sermons/news: 자동 분석 후 교회가 확인 화면에서 고른 설교·교회 소식(홈페이지 '설교'·'교회 소식'에 보임)
-type PaperBulletin = { id: string; date: string; title: string; fileUrl: string; fileName: string; fileType: string; sermons?: PaperSermon[]; news?: PaperNews[] }
+// fileType: 파일 확장자(pdf·hwp·jpg…) / "images"(사진 여러 장 — images에 순서대로) / "link"(블로그·카페·드라이브 등 링크, fileUrl이 링크)
+type PaperBulletin = { id: string; date: string; title: string; fileUrl: string; fileName: string; fileType: string; images?: string[]; sermons?: PaperSermon[]; news?: PaperNews[] }
 // 주보 자동 분석 결과(서버 analyzePaperBulletin이 돌려주는 형식)
 type PaperAnalysis = {
   sermons: PaperSermon[]
@@ -320,7 +325,8 @@ const storagePathFromUrl = (url: string) => {
   return m ? decodeURIComponent(m[1]) : ''
 }
 // 교회 주보 파일로 받는 형식(한글·워드·PDF·사진). 한글·워드는 브라우저에서 바로 안 열려서 홈페이지에선 내려받기로 제공
-const PAPER_BULLETIN_ACCEPT = '.hwp,.hwpx,.doc,.docx,.pdf,.jpg,.jpeg,.png'
+const PAPER_BULLETIN_ACCEPT = '.hwp,.hwpx,.doc,.docx,.pdf,.jpg,.jpeg,.png,.webp'
+const PAPER_IMAGE_EXTS = ['jpg', 'jpeg', 'png', 'webp']
 type StaffMember = { role: string; name: string; department: string; phone: string; email: string; photoUrl: string }
 type LayLeader = { role: string; name: string; department: string; photoUrl: string }
 type EduDepartment = { name: string; target: string; time: string; place: string; leader: string; desc: string; photoUrl: string }
@@ -534,6 +540,12 @@ export default function BuilderPage({ onBack }: Props) {
   // 교회 주보(종이 주보 파일) — 한글·워드·PDF·사진 파일을 그대로 올림. 온라인 주보와 별개
   const [paperBulletins, setPaperBulletins] = useState<PaperBulletin[]>([])
   const [paperDraft, setPaperDraft] = useState<{ date: string; title: string }>({ date: '', title: '' })
+  // 교회 주보 링크 등록(블로그·카페·구글 드라이브 등)
+  const [paperLink, setPaperLink] = useState('')
+  // 홈페이지 위쪽 메뉴에 "온라인 주보"를 보일지(온라인 주보가 있어도 끄면 숨김). 기본 켜짐
+  const [juboMenuEnabled, setJuboMenuEnabled] = useState(true)
+  // 위쪽 탭(2026-11-17): 교회 홈페이지 편집 / 교회 주보(종이 주보 만들기)
+  const [builderMode, setBuilderMode] = useState<'site' | 'paper'>('site')
   const [uploadingPaper, setUploadingPaper] = useState(false)
   // "이 주보로 교회 소식·설교도 채우기" — 켜고 올리면 AI가 주보를 읽고 확인 화면을 띄움(교회가 고른 것만 들어감)
   const [paperAnalyze, setPaperAnalyze] = useState(false)
@@ -545,6 +557,11 @@ export default function BuilderPage({ onBack }: Props) {
   const [eduDepartments, setEduDepartments] = useState<EduDepartment[]>([])
   // 교회 연혁 · 찬양팀 · 새가족 안내 · 설교 카드 ON/OFF(다음 주 말씀)
   const [historyItems, setHistoryItems] = useState<{ date: string; content: string }[]>([])
+  // 교회소개 칸 켜기/끄기(2026-11-17): 끄고 저장하면 홈페이지에서 메뉴·화면 모두 숨김(기본 켜짐)
+  const [staffEnabled, setStaffEnabled] = useState(true)
+  const [officersEnabled, setOfficersEnabled] = useState(true)
+  const [historyEnabled, setHistoryEnabled] = useState(true)
+  const [newcomerEnabled, setNewcomerEnabled] = useState(true)
   const [praiseEnabled, setPraiseEnabled] = useState(false)
   // 교회 일정(홈페이지 위쪽 메뉴 "교회 일정", 앨범 오른쪽): ON일 때만 홈페이지에 보임
   const [scheduleEnabled, setScheduleEnabled] = useState(false)
@@ -596,21 +613,41 @@ export default function BuilderPage({ onBack }: Props) {
   // 주보를 읽어 올 교회 = 지금 편집 중인 사이트의 소유 교회. 운영자가 다른 교회 사이트를
   // 편집할 때(?site=주소)도 운영자 주보가 아니라 그 교회 주보가 들어가야 하므로 uid가 아닌 ownerId 기준
   const currentOwnerId = (selectedProject && projects.find(p => p.slug === selectedProject)?.ownerId) || uid
+  const navigate = useNavigate()
+  // 홈페이지 이용 상태 = 교회 계정 요금제 기준(2026-11-13). /pricing의 프로·올인원에 홈페이지가 포함되므로
+  // 결제는 /pricing 한 곳에서 하고, 여기서는 그 교회 계정(users/{소유자})의 요금제·만료일을 읽기만 함(결제 코드 변경 없음)
+  const [ownerPlan, setOwnerPlan] = useState<{ status: string; expiry: ExpiryInfo } | null>(null)
+  useEffect(() => {
+    if (!currentOwnerId) { setOwnerPlan(null); return }
+    let alive = true
+    getDoc(doc(db, 'users', currentOwnerId))
+      .then(snap => {
+        if (!alive) return
+        const u = (snap.data() || {}) as { status?: string; lastPaymentDate?: unknown; createdAt?: unknown }
+        setOwnerPlan({ status: u.status || 'active', expiry: getExpiryInfo(u) })
+      })
+      .catch(() => { if (alive) setOwnerPlan(null) })
+    return () => { alive = false }
+  }, [currentOwnerId])
   const [bulletinDefaults, setBulletinDefaults] = useState<BuilderDefaults | null>(null)
   const [bulletinDefaultsOwner, setBulletinDefaultsOwner] = useState<string | null>(null)
   const prefilledFor = useRef<string | null>(null)
+  // 운영자가 먼저 만들고 아직 교회 계정을 연결하지 않은 사이트(2026-11-17): 소유자가 운영자 계정이라
+  // 그 주보(스테이온교회)를 읽으면 안 됨 — 편집 칸 자동 채우기·"주보에도 반영" 둘 다 안 함
+  const currentPending = !!(selectedProject && (projects.find(p => p.slug === selectedProject) as { pendingOwner?: boolean } | undefined)?.pendingOwner)
   useEffect(() => {
     if (!currentOwnerId) return
     let cancelled = false
     setBulletinDefaults(null)
     setBulletinDefaultsOwner(null)
+    if (currentPending) return
     fetchOwnerData(currentOwnerId).then(o => {
       if (cancelled) return
       setBulletinDefaults(builderDefaultsFromBulletin(o))
       setBulletinDefaultsOwner(currentOwnerId)
     })
     return () => { cancelled = true }
-  }, [currentOwnerId])
+  }, [currentOwnerId, currentPending])
   // ── 교회 정보 가져오기 방식(dataSource) ──────────────────
   //  bulletin: 주보 플랫폼 정보와 연동(홈페이지에 주보 내용이 그대로 나옴) — 주보를 쓰는 교회 기본값
   //  custom  : 주보는 쓰지만 홈페이지는 주보와 다르게(여기 입력한 내용이 나옴)
@@ -831,32 +868,62 @@ export default function BuilderPage({ onBack }: Props) {
   const removeGalleryImage = (i: number) => setGalleryImages(prev => prev.filter((_, idx) => idx !== i))
 
   // 교회 주보 파일 올리기: 파일은 그대로(변환·압축 없이) 저장하고, 날짜·제목과 함께 목록에 추가
+  // 교회 주보 파일 올리기(2026-11-17): PDF·한글·워드는 1개, 사진(JPG·PNG·WEBP)은 여러 장을 한 번에 → 한 주보로 묶어
+  // 홈페이지에서 올린 순서대로 위에서 아래로 이어서 보여 줌
   const handlePaperBulletinFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
+    const files = Array.from(e.target.files || [])
     e.target.value = ''
-    if (!file) return
+    if (!files.length) return
     if (!uid) { alert('로그인이 필요합니다.'); return }
     if (!paperDraft.date) { alert('주보 날짜를 먼저 선택해 주세요.'); return }
-    const ext = (file.name.split('.').pop() || '').toLowerCase()
-    if (!PAPER_BULLETIN_ACCEPT.split(',').includes(`.${ext}`)) { alert('한글(HWP)·워드·PDF·사진(JPG/PNG) 파일만 올릴 수 있어요.'); return }
-    if (file.size > 30 * 1024 * 1024) { alert('파일은 30MB까지 올릴 수 있어요.'); return }
+    const extOf = (f: File) => (f.name.split('.').pop() || '').toLowerCase()
+    const bad = files.find(f => !PAPER_BULLETIN_ACCEPT.split(',').includes(`.${extOf(f)}`))
+    if (bad) { alert('한글(HWP)·워드·PDF·사진(JPG/PNG/WEBP) 파일만 올릴 수 있어요.'); return }
+    const allImages = files.every(f => PAPER_IMAGE_EXTS.includes(extOf(f)))
+    if (files.length > 1 && !allImages) { alert('여러 개를 한 번에 올릴 때는 사진(JPG·PNG·WEBP)만 가능해요. PDF·한글·워드는 1개씩 올려 주세요.'); return }
+    if (files.length > 30) { alert('사진은 한 주보에 30장까지 올릴 수 있어요.'); return }
+    if (files.some(f => f.size > 30 * 1024 * 1024)) { alert('파일은 하나에 30MB까지 올릴 수 있어요.'); return }
     setUploadingPaper(true)
     try {
-      const fileRef = storageRef(storage, `churchSiteUploads/${uid}/paper-bulletin-${Date.now()}.${ext}`)
-      await uploadBytes(fileRef, file, { contentType: file.type || undefined, contentDisposition: `inline; filename*=UTF-8''${encodeURIComponent(file.name)}` })
-      const fileUrl = await getDownloadURL(fileRef)
+      const stamp = Date.now()
+      const urls: string[] = []
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i]
+        const ext = extOf(file)
+        const fileRef = storageRef(storage, `churchSiteUploads/${uid}/paper-bulletin-${stamp}-${i}.${ext}`)
+        await uploadBytes(fileRef, file, { contentType: file.type || undefined, contentDisposition: `inline; filename*=UTF-8''${encodeURIComponent(file.name)}` })
+        urls.push(await getDownloadURL(fileRef))
+      }
+      const first = files[0]
       const entry: PaperBulletin = {
-        id: `${Date.now()}`, date: paperDraft.date, title: paperDraft.title.trim() || `${paperDraft.date.replace(/-/g, '.')} 주보`,
-        fileUrl, fileName: file.name, fileType: ext,
+        id: `${stamp}`, date: paperDraft.date, title: paperDraft.title.trim() || `${paperDraft.date.replace(/-/g, '.')} 주보`,
+        fileUrl: urls[0], fileName: allImages && files.length > 1 ? `사진 ${files.length}장` : first.name,
+        fileType: allImages ? 'images' : extOf(first),
+        ...(allImages ? { images: urls } : {}),
       }
       setPaperBulletins(prev => [...prev, entry].sort((a, z) => z.date.localeCompare(a.date)))
       setPaperDraft({ date: '', title: '' })
-      if (paperAnalyze) void analyzePaperBulletin(entry)
+      if (paperAnalyze && !allImages) void analyzePaperBulletin(entry)
     } catch {
       alert('파일을 올리지 못했습니다. 다시 시도해주세요.')
     } finally {
       setUploadingPaper(false)
     }
+  }
+  // 교회 주보 링크 등록: 블로그·카페·구글 드라이브 등에 올린 주보 주소
+  const addPaperBulletinLink = () => {
+    if (!paperDraft.date) { alert('주보 날짜를 먼저 선택해 주세요.'); return }
+    let url = paperLink.trim()
+    if (!url) { alert('주보 링크 주소를 입력해 주세요.'); return }
+    if (!/^https?:\/\//i.test(url)) url = `https://${url}`
+    try { new URL(url) } catch { alert('링크 주소를 다시 확인해 주세요.'); return }
+    const entry: PaperBulletin = {
+      id: `${Date.now()}`, date: paperDraft.date, title: paperDraft.title.trim() || `${paperDraft.date.replace(/-/g, '.')} 주보`,
+      fileUrl: url, fileName: url, fileType: 'link',
+    }
+    setPaperBulletins(prev => [...prev, entry].sort((a, z) => z.date.localeCompare(a.date)))
+    setPaperDraft({ date: '', title: '' })
+    setPaperLink('')
   }
   const removePaperBulletin = (id: string) => setPaperBulletins(prev => prev.filter(p => p.id !== id))
 
@@ -1179,6 +1246,14 @@ export default function BuilderPage({ onBack }: Props) {
     setHistoryItems((site.historyItems || []).map(h => ({ date: h.date || '', content: h.content || '' })))
     setPraiseEnabled(site.praiseEnabled === true)
     setScheduleEnabled(site.scheduleEnabled === true)
+    setJuboMenuEnabled((site as { juboMenuEnabled?: boolean }).juboMenuEnabled !== false)
+    {
+      const t = site as { staffEnabled?: boolean; officersEnabled?: boolean; historyEnabled?: boolean; newcomerEnabled?: boolean }
+      setStaffEnabled(t.staffEnabled !== false)
+      setOfficersEnabled(t.officersEnabled !== false)
+      setHistoryEnabled(t.historyEnabled !== false)
+      setNewcomerEnabled(t.newcomerEnabled !== false)
+    }
     setSchedules((site.schedules || []).map((x, i) => ({ id: x.id || `sch-${i}`, date: x.date || '', title: x.title || '' })))
     setPraiseIntro(site.praiseIntro || '')
     setPraiseTeams((site.praiseTeams || []).map(x => ({ name: x.name || '', time: x.time || '', place: x.place || '', leader: x.leader || '', desc: x.desc || '', photoUrl: x.photoUrl || '' })))
@@ -1327,6 +1402,11 @@ export default function BuilderPage({ onBack }: Props) {
     praiseEnabled,
     praiseIntro,
     scheduleEnabled,
+    juboMenuEnabled,
+    staffEnabled,
+    officersEnabled,
+    historyEnabled,
+    newcomerEnabled,
     // 날짜·내용 둘 다 있는 일정만, 날짜순으로 저장
     schedules: schedules.filter(x => x.date && x.title.trim()).map(x => ({ ...x, title: x.title.trim() })).sort((a, z) => a.date.localeCompare(z.date)),
     praiseTeams: praiseTeams.filter(x => x.name.trim()),
@@ -1404,7 +1484,7 @@ export default function BuilderPage({ onBack }: Props) {
       }
       setSavedSnack(true)
       setTimeout(() => setSavedSnack(false), 2500)
-      void askBulletinSync(currentOwnerId || uid)
+      if (!currentPending) void askBulletinSync(currentOwnerId || uid)
     } catch (error) {
       console.error('저장 실패:', error)
       alert('저장 중 오류가 발생했습니다. 다시 시도해주세요.')
@@ -1807,12 +1887,42 @@ export default function BuilderPage({ onBack }: Props) {
             }
 
             const deployedUrl = `https://${currentProject.slug}${SITE_DOMAIN_SUFFIX}/`
+            // 홈페이지 이용 상태(2026-11-13)
+            //  ① 교회 계정이 프로·올인원 결제 중(기간 남음) → 요금제에 포함되어 이용 중
+            //  ② 그 외(무료체험·베이직·스탠다드) → 첫 배포 후 30일 홈페이지 무료체험(accessExpiresAt) 기준
+            // 기간이 지나도 실제 차단은 아직 안 함(보류) — 안내만
             const expiry = currentProject.accessExpiresAt?.toDate() || null
             const firstDeployed = currentProject.firstDeployedAt?.toDate() || null
             const now = new Date()
+            const tier = ownerPlan?.status || 'active'
+            const tierLabel = getPlanTierMeta(tier).label
+            const planIncludesWeb = (tier === 'pro' || tier === 'allinone') && !!ownerPlan && !ownerPlan.expiry.isTrial && ownerPlan.expiry.daysLeft >= 0
+            const isPaidOtherPlan = (tier === 'basic' || tier === 'standard') && !!ownerPlan && !ownerPlan.expiry.isTrial && ownerPlan.expiry.daysLeft >= 0
             const isExpired = expiry ? expiry.getTime() < now.getTime() : false
             const trialOnlyExpiry = firstDeployed ? firstDeployed.getTime() + 30 * 24 * 60 * 60 * 1000 : null
-            const hasPaid = expiry && trialOnlyExpiry ? expiry.getTime() > trialOnlyExpiry : false
+            // 예전 빌더 결제 창으로 늘어난 기간(무료체험 30일보다 긴 경우)
+            const extended = expiry && trialOnlyExpiry ? expiry.getTime() > trialOnlyExpiry : false
+            const goPricing = () => navigate('/pricing?from=builder')
+            const tone = planIncludesWeb ? 'ok' : isExpired ? 'bad' : extended ? 'ok' : 'info'
+            const title = planIncludesWeb
+              ? `${tierLabel} 요금제 이용 중 · ${ownerPlan?.expiry.date ? formatDateKorean(ownerPlan.expiry.date) : ''}까지`
+              : isExpired
+                ? `홈페이지 무료체험이 끝났어요 (${expiry ? formatDateKorean(expiry) : ''}까지)`
+                : extended
+                  ? `${expiry ? formatDateKorean(expiry) : ''}까지 이용 가능합니다`
+                  : `홈페이지 무료체험 중 · ${expiry ? formatDateKorean(expiry) : ''}까지`
+            const desc = planIncludesWeb
+              ? '교회 홈페이지가 요금제에 포함되어 있어요. 요금제를 연장하면 홈페이지도 같이 이어서 이용할 수 있어요.'
+              : isPaidOtherPlan
+                ? `지금 이용 중인 ${tierLabel} 요금제에는 홈페이지가 포함되지 않아요. 프로·올인원으로 바꾸면 홈페이지를 계속 이용할 수 있어요.`
+                : isExpired
+                  ? '프로·올인원 요금제로 시작하면 홈페이지를 계속 이용할 수 있어요.'
+                  : '교회 홈페이지는 프로·올인원 요금제에 포함돼 있어요. 무료체험이 끝나기 전에 시작해 보세요.'
+            const colors = tone === 'ok'
+              ? { bg: '#ECFDF5', border: '#A7F3D0', title: '#047857', desc: THEME.muted }
+              : tone === 'bad'
+                ? { bg: '#FEF2F2', border: '#FECACA', title: '#B91C1C', desc: '#DC2626' }
+                : { bg: '#EFF6FF', border: '#BFDBFE', title: THEME.navy, desc: THEME.muted }
 
             return (
               <div style={{ marginBottom: 24, display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -1836,38 +1946,25 @@ export default function BuilderPage({ onBack }: Props) {
                   </button>
                 </div>
 
-                {/* 이용 기간 안내 배너 */}
-                {expiry && (
+                {/* 이용 상태 안내 배너 → 결제는 /pricing(프로·올인원) */}
+                {(expiry || planIncludesWeb) && (
                   <div style={{
                     borderRadius: 16, padding: '18px 24px',
-                    background: isExpired ? '#FEF2F2' : hasPaid ? '#ECFDF5' : '#EFF6FF',
-                    border: `1px solid ${isExpired ? '#FECACA' : hasPaid ? '#A7F3D0' : '#BFDBFE'}`,
+                    background: colors.bg, border: `1px solid ${colors.border}`,
                     display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12,
                   }}>
                     <div>
-                      <p style={{ fontSize: 14, fontWeight: 700, color: isExpired ? '#B91C1C' : hasPaid ? '#047857' : THEME.navy, marginBottom: 4 }}>
-                        {isExpired
-                          ? `이용 기간이 만료되었습니다 (${formatDateKorean(expiry)}까지)`
-                          : hasPaid
-                            ? `결제 완료 · ${formatDateKorean(expiry)}까지 이용 가능합니다`
-                            : `무료체험 중 · ${formatDateKorean(expiry)}까지 무료로 이용 가능합니다`}
-                      </p>
-                      <p style={{ fontSize: 13, color: isExpired ? '#DC2626' : THEME.muted }}>
-                        {isExpired
-                          ? '결제하지 않으면 사이트 접속이 제한됩니다. 결제 후 바로 다시 이용하실 수 있어요.'
-                          : hasPaid
-                            ? '이용 기간이 끝나기 전에 다시 결제하면 남은 기간에 이어서 연장됩니다.'
-                            : '30일 무료체험이 끝난 후 결제하지 않으면 사이트가 자동으로 차단됩니다.'}
-                      </p>
+                      <p style={{ fontSize: 14, fontWeight: 700, color: colors.title, marginBottom: 4 }}>{title}</p>
+                      <p style={{ fontSize: 13, color: colors.desc }}>{desc}</p>
                     </div>
                     <button
-                      onClick={() => setShowPaymentModal(true)}
+                      onClick={goPricing}
                       style={{
                         padding: '12px 22px', borderRadius: 10, fontFamily: 'inherit', fontWeight: 700, fontSize: 14, cursor: 'pointer',
                         border: 'none', background: THEME.sky, color: 'white', whiteSpace: 'nowrap',
                       }}
                     >
-                      결제하기
+                      {planIncludesWeb ? '요금제 보기' : '요금제 선택하기'}
                     </button>
                   </div>
                 )}
@@ -1875,8 +1972,33 @@ export default function BuilderPage({ onBack }: Props) {
             )
           })()}
 
+          {/* 위쪽 탭: 교회 홈페이지 / 교회 주보(종이 주보 만들기) — 사이트를 연 뒤에만 */}
+          {selectedProject && (
+            <div style={{ display: 'flex', gap: 4, background: '#EEF1F5', borderRadius: 14, padding: 4, marginBottom: 20, width: 'fit-content' }}>
+              {([['site', '🌐 교회 홈페이지'], ['paper', '📄 교회 주보 (종이 주보 만들기)']] as const).map(([v, l]) => (
+                <button key={v} type="button" onClick={() => setBuilderMode(v)}
+                  style={{ border: 'none', borderRadius: 10, padding: '10px 18px', fontSize: 14, fontWeight: 800, cursor: 'pointer', fontFamily: 'inherit',
+                    background: builderMode === v ? 'white' : 'transparent', color: builderMode === v ? THEME.navy : THEME.muted, boxShadow: builderMode === v ? '0 1px 3px rgba(0,0,0,.08)' : 'none' }}>{l}</button>
+              ))}
+            </div>
+          )}
+          {selectedProject && builderMode === 'paper' && (() => {
+            const cur = projects.find(p => p.slug === selectedProject)
+            return (
+              <div style={{ marginBottom: 24 }}>
+                <PaperJuboEditor
+                  key={selectedProject}
+                  slug={selectedProject}
+                  initial={((cur as { paperJubo?: PaperJubo } | undefined)?.paperJubo) || null}
+                  churchName={cur?.churchName || form.churchName}
+                  onSaved={(pjNew) => setProjects(prev => prev.map(p => (p.slug === selectedProject ? ({ ...p, paperJubo: pjNew } as typeof p) : p)))}
+                />
+              </div>
+            )
+          })()}
+
           {/* BUILDER LAYOUT */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 380px', gap: 24, alignItems: 'start' }}>
+          <div style={{ display: selectedProject && builderMode === 'paper' ? 'none' : 'grid', gridTemplateColumns: '1fr 380px', gap: 24, alignItems: 'start' }}>
 
             {/* LEFT: FORM */}
             <div>
@@ -2458,8 +2580,8 @@ export default function BuilderPage({ onBack }: Props) {
                   <div style={{ background: 'white', borderRadius: 16, border: `1px solid ${THEME.border}`, padding: '28px' }}>
                     <h3 style={{ fontWeight: 700, color: THEME.navy, marginBottom: 6, fontSize: 16 }}>교회 주보 (종이 주보 파일)</h3>
                     <p style={{ color: THEME.muted, fontSize: 13, marginBottom: 16, lineHeight: 1.6 }}>
-                      교회에서 쓰는 한글(HWP)·워드·PDF·사진 파일을 그대로 올리면 홈페이지 '교회 주보'에 표로 보여요.
-                      PDF·사진은 바로 열리고, 한글·워드는 내려받기로 제공돼요. 온라인 주보는 따로 '온라인 주보'에 자동으로 보여요.
+                      교회에서 쓰는 주보를 그대로 올리면 홈페이지 '교회 주보'에 보여요. <b>PDF</b>는 바로 열리고, <b>사진(JPG·PNG·WEBP)</b>은
+                      여러 장을 한 번에 올리면 올린 순서대로 이어서 보여요. 한글·워드는 내려받기로 제공돼요. 블로그·카페·구글 드라이브에 올린 주보는 아래 <b>링크로 등록</b>하세요.
                     </p>
                     <div style={{ display: 'grid', gridTemplateColumns: '160px 1fr auto', gap: 10, alignItems: 'end' }}>
                       <div>
@@ -2472,8 +2594,19 @@ export default function BuilderPage({ onBack }: Props) {
                       </div>
                       <label style={{ padding: '11px 16px', borderRadius: 8, background: THEME.navy, color: 'white', fontSize: 13, fontWeight: 700, cursor: uploadingPaper ? 'wait' : 'pointer', whiteSpace: 'nowrap', opacity: uploadingPaper ? 0.6 : 1 }}>
                         {uploadingPaper ? '올리는 중...' : '파일 올리기'}
-                        <input type="file" accept={PAPER_BULLETIN_ACCEPT} onChange={handlePaperBulletinFile} disabled={uploadingPaper} style={{ display: 'none' }} />
+                        <input type="file" accept={PAPER_BULLETIN_ACCEPT} multiple onChange={handlePaperBulletinFile} disabled={uploadingPaper} style={{ display: 'none' }} />
                       </label>
+                    </div>
+                    {/* 링크로 등록(위에서 고른 날짜·제목으로) */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 10, alignItems: 'end', marginTop: 10 }}>
+                      <div>
+                        <label style={{ fontSize: 13, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 6 }}>또는 링크로 등록</label>
+                        <input value={paperLink} onChange={e => setPaperLink(e.target.value)} placeholder="블로그·카페·구글 드라이브 주보 주소 (https://...)" style={inputStyle} />
+                      </div>
+                      <button type="button" onClick={addPaperBulletinLink}
+                        style={{ padding: '11px 16px', borderRadius: 8, border: `1px solid ${THEME.navy}`, background: 'white', color: THEME.navy, fontSize: 13, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                        링크 등록
+                      </button>
                     </div>
                     {/* AI 주보 분석: ANTHROPIC_API_KEY 등록 + analyzePaperBulletin 함수 배포 전까지 화면에서 숨김(아래 "내용 읽기" 버튼도)
                     <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: 12, cursor: 'pointer', fontSize: 13, color: THEME.text }}>
@@ -2493,7 +2626,7 @@ export default function BuilderPage({ onBack }: Props) {
                           <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', borderTop: i ? `1px solid ${THEME.border}` : 'none', fontSize: 13 }}>
                             <span style={{ color: THEME.muted, width: 84, flexShrink: 0 }}>{p.date.replace(/-/g, '.')}</span>
                             <span style={{ flex: 1, fontWeight: 600, color: THEME.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.title}</span>
-                            <span style={{ fontSize: 11, fontWeight: 700, color: THEME.navy, background: THEME.skyLight, borderRadius: 6, padding: '2px 8px', textTransform: 'uppercase' }}>{p.fileType}</span>
+                            <span style={{ fontSize: 11, fontWeight: 700, color: THEME.navy, background: THEME.skyLight, borderRadius: 6, padding: '2px 8px', textTransform: 'uppercase' }}>{p.fileType === 'images' ? `사진 ${p.images?.length || 1}장` : p.fileType === 'link' ? '링크' : p.fileType}</span>
                             {(p.sermons?.length || p.news?.length) ? (
                               <span style={{ fontSize: 11, color: THEME.muted, whiteSpace: 'nowrap' }}>설교 {p.sermons?.length || 0} · 소식 {p.news?.length || 0}</span>
                             ) : null}
@@ -2512,6 +2645,19 @@ export default function BuilderPage({ onBack }: Props) {
                       </div>
                     )}
                     <p style={{ fontSize: 12, color: THEME.muted, marginTop: 10 }}>파일을 올리거나 지운 뒤 '저장'을 눌러야 홈페이지에 반영돼요.</p>
+                  </div>
+                  {/* 온라인 주보 메뉴 보이기(2026-11-17): 온라인 주보를 쓰지 않거나 홈페이지에 안 보이게 하고 싶은 교회용.
+                      온라인 주보가 하나도 없으면 켜 있어도 메뉴는 자동으로 안 보임 */}
+                  <div style={{ background: 'white', borderRadius: 16, border: `1px solid ${THEME.border}`, padding: '28px' }}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, marginBottom: 6 }}>
+                      <h3 style={{ fontWeight: 700, color: THEME.navy, fontSize: 16 }}>온라인 주보 메뉴</h3>
+                      <OnOffSwitch on={juboMenuEnabled} onChange={setJuboMenuEnabled} />
+                    </div>
+                    <p style={{ color: THEME.muted, fontSize: 13, lineHeight: 1.6 }}>
+                      {juboMenuEnabled
+                        ? <>켜져 있어요. 스테이온 온라인 주보가 있으면 홈페이지 <b>주보</b> 메뉴에 <b>온라인 주보</b>가 보여요(온라인 주보가 없으면 자동으로 안 보여요).</>
+                        : <>꺼져 있어요. 홈페이지에 <b>온라인 주보</b> 메뉴가 <b>보이지 않아요</b>.</>}
+                    </p>
                   </div>
                 </div>
               )}
@@ -2699,7 +2845,11 @@ export default function BuilderPage({ onBack }: Props) {
               {activeTab === 'about' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
                   <div style={{ background: 'white', borderRadius: 16, border: `1px solid ${THEME.border}`, padding: '28px' }}>
-                    <h3 style={{ fontWeight: 700, color: THEME.navy, marginBottom: 6, fontSize: 16 }}>섬기는 사람들</h3>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: 6 }}>
+                      <h3 style={{ fontWeight: 700, color: THEME.navy, fontSize: 16 }}>섬기는 사람들</h3>
+                      <OnOffSwitch on={staffEnabled} onChange={setStaffEnabled} />
+                    </div>
+                    {!staffEnabled && <p style={{ fontSize: 12, fontWeight: 700, color: '#DC2626', marginBottom: 8 }}>꺼져 있어요. 저장하면 홈페이지에 섬기는 사람들이 보이지 않아요.</p>}
                     {listHint(staffMembers.map(m => `${m.role} ${m.name}`), (bulletinDefaults?.staffMembers || []).map(m => `${m.role} ${m.name}`))}
                     <p style={{ color: THEME.muted, fontSize: 13, marginBottom: 20 }}>부목사·전도사 등 함께 섬기는 사역자를 소개해보세요. 숫자 제한 없이 추가할 수 있어요.</p>
                     {/* 주보 편집 화면 "섬기시는분 안내 설정"과 같은 형태: 큰 세로 사진 | 직분·이름 / 담당 부서 / 연락처·이메일 */}
@@ -2737,7 +2887,10 @@ export default function BuilderPage({ onBack }: Props) {
                       const canLoad = fromBulletin.length > 0 && key(fromBulletin) !== key(layLeaders)
                       return (
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 6 }}>
-                          <h3 style={{ fontWeight: 700, color: THEME.navy, fontSize: 16 }}>중직자 (장로·권사)</h3>
+                          <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                            <h3 style={{ fontWeight: 700, color: THEME.navy, fontSize: 16 }}>중직자 (장로·권사)</h3>
+                            <OnOffSwitch on={officersEnabled} onChange={setOfficersEnabled} />
+                          </span>
                           {canLoad && (
                             <button type="button" onClick={() => setLeaderAsk(fromBulletin)}
                               style={{ flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: 4, background: '#EFF6FF', color: '#2563EB', border: 'none', borderRadius: 999, padding: '4px 10px', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
@@ -2826,7 +2979,11 @@ export default function BuilderPage({ onBack }: Props) {
               {activeTab === 'about' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
                   <div style={{ background: 'white', borderRadius: 16, border: `1px solid ${THEME.border}`, padding: '28px' }}>
-                    <h3 style={{ fontWeight: 700, color: THEME.navy, marginBottom: 6, fontSize: 16 }}>교회 연혁</h3>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: 6 }}>
+                      <h3 style={{ fontWeight: 700, color: THEME.navy, fontSize: 16 }}>교회 연혁</h3>
+                      <OnOffSwitch on={historyEnabled} onChange={setHistoryEnabled} />
+                    </div>
+                    {!historyEnabled && <p style={{ fontSize: 12, fontWeight: 700, color: '#DC2626', marginBottom: 8 }}>꺼져 있어요. 저장하면 홈페이지에 교회 연혁이 보이지 않아요.</p>}
                     <p style={{ color: THEME.muted, fontSize: 13, marginBottom: 16, lineHeight: 1.6 }}>교회소개 &gt; <b>교회 연혁</b> 화면에 적은 순서대로 나와요. 한 줄이라도 적으면 메뉴에 보여요. 날짜는 칸에 직접 입력하거나(1998. 03 처럼 월까지만도 돼요) 오른쪽 달력에서 고를 수 있어요.</p>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                       {historyItems.map((h, i) => (
@@ -2845,7 +3002,11 @@ export default function BuilderPage({ onBack }: Props) {
                   </div>
 
                   <div style={{ background: 'white', borderRadius: 16, border: `1px solid ${THEME.border}`, padding: '28px' }}>
-                    <h3 style={{ fontWeight: 700, color: THEME.navy, marginBottom: 6, fontSize: 16 }}>새가족 안내</h3>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: 6 }}>
+                      <h3 style={{ fontWeight: 700, color: THEME.navy, fontSize: 16 }}>새가족 안내</h3>
+                      <OnOffSwitch on={newcomerEnabled} onChange={setNewcomerEnabled} />
+                    </div>
+                    {!newcomerEnabled && <p style={{ fontSize: 12, fontWeight: 700, color: '#DC2626', marginBottom: 8 }}>꺼져 있어요. 저장하면 홈페이지에 새가족 안내가 보이지 않아요.</p>}
                     <p style={{ color: THEME.muted, fontSize: 13, marginBottom: 16, lineHeight: 1.6 }}>교회소개 &gt; <b>새가족 안내</b> 화면에 나와요. 소개·등록 절차·문의 중 하나라도 적으면 메뉴에 보여요.</p>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                       <TextareaField label="안내 문구" placeholder="ex. 처음 오신 여러분을 진심으로 환영합니다. 아래 순서로 새가족 등록을 도와드려요." value={newcomerIntro} onChange={setNewcomerIntro} />
@@ -3304,7 +3465,8 @@ export default function BuilderPage({ onBack }: Props) {
             )
           })()}
 
-          {showPaymentModal && selectedProject && (
+          {/* 예전 빌더 자체 결제 창(실제 카드결제 없이 기간만 늘어나던 창) — 결제는 /pricing으로 통일(2026-11-13)해서 숨김. 다시 쓰려면 false 지우기 */}
+          {false && showPaymentModal && selectedProject && (
             <div
               style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000, padding: 20 }}
               onClick={closePaymentModal}
