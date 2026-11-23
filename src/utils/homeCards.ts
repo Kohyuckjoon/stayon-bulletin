@@ -3,7 +3,8 @@
 // {교회} 는 화면에서 그 교회 이름으로 바뀜(교회 이름을 바꿔도 문구가 따라감)
 export const CHURCH_TOKEN = "{교회}";
 
-export interface HomeCardText { title: string; desc: string }
+// hidden: true면 홈페이지에 그 카드를 아예 안 보여 줌(편집 화면 ON/OFF 토글). 없으면 보임
+export interface HomeCardText { title: string; desc: string; hidden?: boolean }
 
 export const HOME_CARD_PRESETS: { key: string; en: string; titles: string[]; descs: string[] }[] = [
   {
@@ -16,7 +17,7 @@ export const HOME_CARD_PRESETS: { key: string; en: string; titles: string[]; des
     ],
   },
   {
-    key: "worship", en: "Worship service",
+    key: "worship", en: "Worship",
     titles: ["예배 시간 및 장소 안내", "예배 안내", "예배 시간"],
     descs: [
       `${CHURCH_TOKEN}의 예배는 언제나 당신을 기다립니다.`,
@@ -24,7 +25,7 @@ export const HOME_CARD_PRESETS: { key: string; en: string; titles: string[]; des
     ],
   },
   {
-    key: "youtube", en: "Youtube Channel",
+    key: "youtube", en: "Youtube",
     titles: [`${CHURCH_TOKEN} 유튜브 채널`, "온라인 예배", "설교 영상"],
     descs: [
       `멀리서도 가까이 함께하는 ${CHURCH_TOKEN} 예배 유튜브`,
@@ -49,4 +50,10 @@ export function homeCardText(saved: unknown, i: number, churchName: string): Hom
   const desc = (typeof s?.desc === "string" && s.desc.trim()) || preset.descs[0];
   const fill = (t: string) => t.split(CHURCH_TOKEN).join(churchName);
   return { title: fill(title), desc: fill(desc) };
+}
+
+// 카드를 OFF로 꺼 뒀는지(편집 화면 토글). 저장값이 없으면 켜짐
+export function homeCardHidden(saved: unknown, i: number): boolean {
+  const s = (Array.isArray(saved) ? saved[i] : null) as Partial<HomeCardText> | null;
+  return s?.hidden === true;
 }

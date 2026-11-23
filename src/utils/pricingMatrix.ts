@@ -23,15 +23,26 @@ export type TierPricingMatrixRow = Record<FeaturePlanKey, PlanPrice>;
 //   베이직 990 / 3개월 1,990  · 스탠다드 2,900 / 3개월 5,900 (기존 개척 가격 그대로, 3개월 할인 표시 없음)
 //   프로 7,900 / 3개월 19,900 · 올인원 9,900 / 3개월 24,900 (3개월 16% 할인)
 // (예전 규모별 가격은 git 기록 참고 — 개척 990/2,900/5,900/9,900, 독립·성장·번성은 더 높았고 대형은 별도 문의)
+// (2026-11-20) 올인원 9,900원 → "관리형"(라이트 14,900 / 맥스 19,900). 1개월은 1회 결제 · 매월 정기결제 둘 다.
+//   여기 allinone 값은 "관리형 라이트" 가격(= 관리형 최저가). 맥스 가격은 아래 MANAGED_PLANS
+//   (같은 날 수정) 관리형도 3개월 1회 결제 가능 — 할인 없이 1개월 × 3(라이트 44,700 / 맥스 59,700). 3개월엔 정기결제 없음
 export const SINGLE_PLAN_PRICES: TierPricingMatrixRow = {
   basic: { monthly: 990, threeMonth: 1990 },
   standard: { monthly: 2900, threeMonth: 5900 },
   pro: { monthly: 7900, threeMonth: 19900 },
-  allinone: { monthly: 9900, threeMonth: 24900 },
+  allinone: { monthly: 14900, threeMonth: 44700 },
 };
 
-// 3개월 할인을 화면에 표시할 요금제(베이직·스탠다드는 할인 표시 없음)
-export const THREE_MONTH_DISCOUNT_PLANS: FeaturePlanKey[] = ["pro", "allinone"];
+// 3개월 할인을 화면에 표시할 요금제(베이직·스탠다드·관리형은 할인 없음)
+export const THREE_MONTH_DISCOUNT_PLANS: FeaturePlanKey[] = ["pro"];
+
+// 관리형 두 가지(2026-11-20). 둘 다 앱 안의 요금제 등급은 allinone(기능 같음) — 차이는 스테이온이 대신 업데이트해 주는 횟수.
+// 정기결제를 12개월 연속으로 다 채우면 refund 만큼 돌려드림(포트원 부분 취소 또는 운영자 입금). 중간에 해지·결제가 끊기면 환급 없음
+export type ManagedVariant = "lite" | "max";
+export const MANAGED_PLANS: Record<ManagedVariant, { label: string; monthly: number; refund: number; update: string }> = {
+  lite: { label: "관리형 라이트", monthly: 14900, refund: 24000, update: "스테이온이 월 2회 대신 업데이트" },
+  max: { label: "관리형 맥스", monthly: 19900, refund: 36000, update: "스테이온이 매주 1회 대신 업데이트" },
+};
 
 export const PRICING_MATRIX: Record<string, TierPricingMatrixRow> = Object.fromEntries(
   CONGREGATION_SIZES.map(({ value }) => [value, SINGLE_PLAN_PRICES]),

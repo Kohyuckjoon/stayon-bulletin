@@ -16,6 +16,8 @@ const NAV_ITEMS = [
   { label: "광고 설정", path: "/super/ads", match: (p: string) => p.includes("/super/ads") },
   { label: "화면 관리", path: "/super/features", match: (p: string) => p.includes("/super/features") },
   { label: "기능 업데이트 알림", path: "/super/feature-update", match: (p: string) => p.includes("/super/feature-update") },
+  { label: "홍보 팝업", path: "/super/promo-popup", match: (p: string) => p.includes("/super/promo-popup") },
+  { label: "결제 · 정산", path: "/super/payments", match: (p: string) => p.includes("/super/payments") },
 ];
 
 export const AdminSidebar = () => {

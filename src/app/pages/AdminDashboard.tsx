@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router";
+import { PromoPopup } from "../components/PromoPopup";
 import { auth, db } from "../../firebase";
 import { KakaoChannelButton } from "../components/KakaoChannelButton";
 import { AnimatePresence, motion } from "framer-motion";
@@ -454,6 +455,8 @@ export function AdminDashboard() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 font-sans">
+      {/* 홍보 팝업(/super > 홍보 팝업에서 켜고 끔) */}
+      <PromoPopup />
       <style>{`
         @keyframes strongGlow {
           0% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); border-color: rgba(59, 130, 246, 0); }

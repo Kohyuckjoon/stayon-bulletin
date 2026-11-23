@@ -34,6 +34,12 @@ export const NO_DENOMINATION = "none";
 // (public/denomination-logos/{id}.png)을 쓴다. logo 값은 원본 파일이 무엇인지 기록용
 export const denominationLogoSrc = (id: string) => `/denomination-logos/${id}.png`;
 
+// 화면에 보일 교단 이름(2026-11-21): 기본은 괄호 앞부분만("대한예수교장로회"),
+// "교단 이름까지 표시"를 켜면 괄호까지("대한예수교장로회(합신)")
+export const denominationDisplayName = (d: Denomination, full: boolean) =>
+  full ? d.name : d.name.replace(/\s*\(.*\)$/, "");
+export const hasDenominationBranch = (d: Denomination | null | undefined) => !!d && /\(.*\)$/.test(d.name);
+
 // 저장값 → 실제로 쓸 교단(사용 안 함이면 null)
 export function resolveDenomination(v: unknown): Denomination | null {
   const id = typeof v === "string" && v ? v : DEFAULT_DENOMINATION;

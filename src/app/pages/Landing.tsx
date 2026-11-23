@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router";
+import { PromoPopup } from "../components/PromoPopup";
 import { auth, db } from "../../firebase";
 import { collection, query, orderBy, getDocs, doc, getDoc } from "firebase/firestore";
 import { signOut, onAuthStateChanged, setPersistence, browserSessionPersistence } from "firebase/auth";
@@ -162,6 +163,14 @@ export function Landing() {
   // "교회 홈페이지 제작" → website.stayon-platform.com 으로 넘어가는 동안 보여 줄 "이동 중" 화면
   // 넘어가는 동안 보여 줄 "이동 중" 화면 문구(null이면 안 보임) — 교회 홈페이지 제작 / 사이트 관리자
   const [movingMsg, setMovingMsg] = useState<string | null>(null);
+  // 메인 첫 화면 2장(2026-11-20): 0 = 온라인 주보(원래 화면) · 1 = 교회 홈페이지 홍보. 서서히 바뀜(디졸브), 마우스 올리면 멈춤
+  // (2026-11-20) 인스타그램 스토리처럼 위쪽 진행 막대 2칸. 막대가 다 차면(애니메이션 끝) 다음 장으로 넘어감 →
+  // 멈췄다가 다시 가도 처음부터가 아니라 멈춘 데서 이어서 참. 주보 화면 7초 · 홈페이지 화면 6초
+  const [heroIdx, setHeroIdx] = useState(0);
+  const [heroPaused, setHeroPaused] = useState(false);
+  const HERO_SEC = [7, 6];
+  const heroGo = (d: number) => setHeroIdx((i) => (i + d + 2) % 2);
+  const heroTouch = useRef<{ x: number; y: number } | null>(null);
   // 로그인·회원가입 화면으로 갈 때: 메인이 서서히 사라진 뒤 넘어감(로그인 화면은 서서히 나타남, 2026-11-13)
   const goSoft = (to: string) => { setIsFadingOut(true); setTimeout(() => { navigate(to); window.scrollTo(0, 0); }, 450); };
   const isBulletinHost = typeof window !== "undefined" && window.location.hostname === "bulletin.stayon-platform.com";
@@ -553,8 +562,24 @@ export function Landing() {
   const nextStep = () => setActiveStep((prev) => (prev + 1) % tutorialSteps.length);
   const prevStep = () => setActiveStep((prev) => (prev - 1 + tutorialSteps.length) % tutorialSteps.length);
 
+  // "교회 홈페이지 제작" 이동(PC 상단 버튼 · 휴대폰 칩 메뉴 공통)
+  const goWebsite = () => {
+    setIsFadingOut(true);
+    // 실제 사이트(bulletin)에선 소개 페이지 전용 주소(website.stayon-platform.com)로.
+    // 로그인했으면 일회용 로그인 열쇠를 같이 넘겨 그쪽에서도 로그인 유지(src/utils/websiteHost.ts)
+    if (isBulletinHost) {
+      setMovingMsg("교회 홈페이지 제작으로 이동하고 있어요"); // 넘어가는 동안 "이동 중" 화면 표시
+      const wait = new Promise((r) => setTimeout(r, 350));
+      void Promise.all([websiteUrlWithLogin(currentUser ? (currentUser.churchName || "우리 교회") : null), wait]).then(([url]) => { window.location.href = url; });
+      return;
+    }
+    setTimeout(() => { navigate("/website"); window.scrollTo(0, 0); }, 700); // 개발 서버 등은 기존처럼
+  };
+
   return (
     <>
+      {/* 홍보 팝업(/super > 홍보 팝업에서 켜고 끔) */}
+      <PromoPopup />
       {/* website.stayon-platform.com 으로 넘어가는 동안 "이동 중" 화면 — 사라지는(투명해지는) 메인 화면 바깥에 둬서 그대로 보임 */}
       {movingMsg && (
         <div className="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-white animate-in fade-in duration-300">
@@ -642,18 +667,7 @@ export function Landing() {
                 variant="ghost"
                 // 바로 바뀌지 않고, 주보 관리자 버튼처럼 화면이 서서히 사라진 뒤 넘어감(/website는 서서히 나타남)
                 onPointerEnter={() => { if (isBulletinHost) prefetchWebsiteUrl(); }}
-                onClick={() => {
-                  setIsFadingOut(true);
-                  // 실제 사이트(bulletin)에선 소개 페이지 전용 주소(website.stayon-platform.com)로.
-                  // 로그인했으면 일회용 로그인 열쇠를 같이 넘겨 그쪽에서도 로그인 유지(src/utils/websiteHost.ts)
-                  if (isBulletinHost) {
-                    setMovingMsg("교회 홈페이지 제작으로 이동하고 있어요"); // 넘어가는 동안 "이동 중" 화면 표시
-                    const wait = new Promise((r) => setTimeout(r, 350));
-                    void Promise.all([websiteUrlWithLogin(currentUser ? (currentUser.churchName || "우리 교회") : null), wait]).then(([url]) => { window.location.href = url; });
-                    return;
-                  }
-                  setTimeout(() => { navigate("/website"); window.scrollTo(0, 0); }, 700); // 개발 서버 등은 기존처럼
-                }}
+                onClick={goWebsite}
                 className="text-slate-700 font-bold hover:text-slate-900 hover:bg-transparent rounded-md px-3 hidden md:flex items-center gap-1.5"
               >
                 <Building className="w-4 h-4 text-slate-500" />
@@ -669,6 +683,18 @@ export function Landing() {
                 교회 홈페이지 제작
               </Button>
               */}
+
+              {/* 교적부 프로그램(2026-11-20): 준비 중 — 흐리게, 눌러도 아무 일 없음 */}
+              <Button
+                variant="ghost"
+                disabled
+                className="text-slate-700 font-bold rounded-md px-3 hidden md:flex items-center gap-1.5 opacity-40 cursor-not-allowed hover:bg-transparent disabled:pointer-events-auto"
+                title="교적부 프로그램은 준비 중이에요"
+              >
+                <Users className="w-4 h-4 text-slate-500" />
+                교적부 프로그램
+                <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-black text-slate-500">준비중</span>
+              </Button>
 
               <span className="hidden md:block w-px h-5 bg-slate-200 mx-1.5" />
 
@@ -743,6 +769,14 @@ export function Landing() {
       <div className="container mx-auto px-4 sm:px-6 pb-6 md:pb-8">
         {/* 모바일 퀵 네비게이션 (토스 스타일 칩 메뉴) - 모바일 전용 */}
         <div className="flex md:hidden gap-2 overflow-x-auto pt-4 pb-4 mb-6 no-scrollbar -mx-4 px-4 sticky top-[65px] z-40">
+          {/* 교회 홈페이지 제작(2026-11-20): 휴대폰에는 상단 버튼이 숨겨져 있어서 칩 맨 앞에 추가 */}
+          <button
+            onClick={goWebsite}
+            onPointerDown={() => { if (isBulletinHost) prefetchWebsiteUrl(); }}
+            className="flex items-center gap-1.5 shrink-0 bg-gray-900 text-white px-4 py-2.5 rounded-full shadow-md active:scale-95 transition-all text-sm font-black"
+          >
+            <Building className="w-4 h-4 text-white" /> 교회 홈페이지 제작
+          </button>
           <button
             onClick={scrollToNotice}
             className="flex items-center gap-1.5 shrink-0 bg-white border border-gray-100 px-4 py-2.5 rounded-full shadow-sm active:scale-95 transition-all text-sm font-black text-gray-700"
@@ -789,88 +823,220 @@ export function Landing() {
 
         {/* Hero Section - 배경 이미지는 히어로 안에만 */}
         <div className="mb-16">
-          <section className="relative w-screen left-1/2 -translate-x-1/2 overflow-hidden min-h-[360px] sm:min-h-[420px] lg:min-h-[480px] flex items-center bg-white">
-            {/* 이미지를 늘리지 않고, 양옆 가장자리를 배경색으로 서서히 페이드시켜서(mask) 화면이
-                꽉 찬 것처럼 자연스럽게 보이게 함 - 화질 저하/왜곡 없이 화면 크기와 무관하게 일관됨.
-                실제 <img> 요소를 써서 mask가 이미지의 진짜 경계에 걸리도록 함(배경 이미지 방식은
-                bg-contain이 실제로 차지하는 폭을 CSS만으로 알 수 없어 mask 위치가 안 맞았음) */}
-            <div className="absolute inset-0 flex items-center justify-center">
-              <img
-                src="/background_cover.jpg"
-                alt=""
-                className="h-full w-auto max-w-none object-contain"
-                style={{
-                  maskImage: "linear-gradient(to right, transparent, black 12%, black 88%, transparent)",
-                  WebkitMaskImage: "linear-gradient(to right, transparent, black 12%, black 88%, transparent)",
-                }}
-              />
+          {/* 첫 화면 2장이 같은 자리에서 서서히 바뀜: ① 온라인 주보(원래 화면, 대표 제목 h1) ② 교회 홈페이지 홍보.
+              여기가 "주보 플랫폼"이라는 게 헷갈리지 않게 — 위쪽 탭에 [온라인 주보] [NEW 교회 홈페이지]를 늘 보여 주고,
+              2장은 "주보에 이어 … 오픈" 문구 + 검은 배지 + website 주소로 이동한다는 안내를 붙임 */}
+          <section
+            className="group/hero relative w-screen left-1/2 -translate-x-1/2 overflow-hidden bg-white"
+            onMouseEnter={() => setHeroPaused(true)}
+            onMouseLeave={() => setHeroPaused(false)}
+            // 휴대폰: 꾹 누르고 있으면 멈춤, 좌우로 밀면 이전·다음
+            onTouchStart={(e) => { heroTouch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }; setHeroPaused(true); }}
+            onTouchEnd={(e) => {
+              const s = heroTouch.current; heroTouch.current = null; setHeroPaused(false);
+              if (!s) return;
+              const dx = e.changedTouches[0].clientX - s.x, dy = e.changedTouches[0].clientY - s.y;
+              if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) heroGo(dx < 0 ? 1 : -1);
+            }}
+            onTouchCancel={() => { heroTouch.current = null; setHeroPaused(false); }}
+          >
+            {/* 인스타그램 스토리처럼 위쪽 진행 막대 2칸(항상 같은 길이). 지금 장 막대가 차오르고, 본 장은 꽉 참.
+                막대 아래 이름을 눌러도 그 장으로 감 */}
+            <div className="absolute top-3 sm:top-4 inset-x-0 z-20 flex justify-center px-4">
+              <div className="grid w-full max-w-[420px] grid-cols-2 gap-2">
+                {[{ label: "온라인 주보", icon: <Smartphone className="w-3.5 h-3.5" /> }, { label: "교회 홈페이지", icon: <Building className="w-3.5 h-3.5" />, isNew: true }].map((t, i) => {
+                  const on = heroIdx === i;
+                  const color = i === 0 ? "bg-blue-600" : "bg-gray-900";
+                  return (
+                    <button key={i} type="button" onClick={() => setHeroIdx(i)} aria-pressed={on} aria-label={`${t.label} 화면 보기`} className="group/seg py-1 text-left">
+                      <span className="relative block h-[3px] overflow-hidden rounded-full bg-slate-900/10">
+                        {on ? (
+                          <span key={`${heroIdx}`} className={`absolute inset-y-0 left-0 rounded-full ${color}`}
+                            style={{ animation: `heroTabFill ${HERO_SEC[i]}s linear forwards`, animationPlayState: heroPaused ? "paused" : "running" }}
+                            onAnimationEnd={() => heroGo(1)} />
+                        ) : i < heroIdx ? (
+                          <span className={`absolute inset-0 rounded-full ${color}`} />
+                        ) : null}
+                      </span>
+                      <span className={`mt-1.5 flex items-center justify-center gap-1 text-[11px] sm:text-xs font-black transition-colors ${on ? (i === 0 ? "text-blue-600" : "text-gray-900") : "text-slate-400 group-hover/seg:text-slate-600"}`}>
+                        {t.icon}{t.label}
+                        {t.isNew && <span className="rounded-full bg-red-50 px-1.5 py-px text-[9px] text-red-500">NEW</span>}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              <style>{`@keyframes heroTabFill{from{width:0}to{width:100%}}`}</style>
             </div>
-            <div className="absolute inset-x-0 bottom-0 h-32 sm:h-44 lg:h-56 bg-gradient-to-t from-white to-transparent" />
 
-            <div className="relative container mx-auto max-w-7xl px-4 sm:px-6 lg:px-10 py-8 sm:py-10 w-full">
-              <div className="max-w-xl mx-auto lg:mx-0 lg:ml-10 lg:-mt-16 text-center lg:text-left">
-                <div className="inline-flex items-center gap-2 bg-blue-50 text-blue-700 px-4 py-1.5 rounded-full text-xs font-black mb-2 border border-blue-100 shadow-[0_0_15px_rgba(37,99,235,0.25)] animate-pulse">
-                  <Rocket className="w-3.5 h-3.5 text-blue-600 animate-bounce" /> 모바일 주보 제작 베타 기간 한정 혜택
+            {/* PC: 마우스를 올리면 양옆에 이전·다음 버튼 */}
+            {[-1, 1].map((d) => (
+              <button key={d} type="button" onClick={() => heroGo(d)} aria-label={d < 0 ? "이전 화면" : "다음 화면"}
+                className={`hidden lg:flex absolute top-1/2 -translate-y-1/2 z-20 h-11 w-11 items-center justify-center rounded-full bg-white border border-slate-200 shadow-[0_4px_16px_rgba(15,23,42,0.15)] text-slate-900 opacity-0 transition-opacity duration-200 group-hover/hero:opacity-100 hover:bg-white ${d < 0 ? "left-6" : "right-6"}`}>
+                {d < 0 ? <ChevronLeft className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
+              </button>
+            ))}
+
+            <div className="grid">
+              {/* ① 온라인 주보(원래 첫 화면 그대로) */}
+              <div aria-hidden={heroIdx !== 0}
+                className="col-start-1 row-start-1 relative flex items-center min-h-[360px] sm:min-h-[420px] lg:min-h-[480px] pt-10 sm:pt-6"
+                style={{ opacity: heroIdx === 0 ? 1 : 0, transition: "opacity 900ms ease", pointerEvents: heroIdx === 0 ? "auto" : "none" }}>
+                {/* 이미지를 늘리지 않고, 양옆 가장자리를 배경색으로 서서히 페이드시켜서(mask) 화면이
+                    꽉 찬 것처럼 자연스럽게 보이게 함 - 화질 저하/왜곡 없이 화면 크기와 무관하게 일관됨.
+                    실제 <img> 요소를 써서 mask가 이미지의 진짜 경계에 걸리도록 함(배경 이미지 방식은
+                    bg-contain이 실제로 차지하는 폭을 CSS만으로 알 수 없어 mask 위치가 안 맞았음) */}
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <img
+                    src="/background_cover.jpg"
+                    alt=""
+                    className="h-full w-auto max-w-none object-contain"
+                    style={{
+                      maskImage: "linear-gradient(to right, transparent, black 12%, black 88%, transparent)",
+                      WebkitMaskImage: "linear-gradient(to right, transparent, black 12%, black 88%, transparent)",
+                    }}
+                  />
                 </div>
+                <div className="absolute inset-x-0 bottom-0 h-32 sm:h-44 lg:h-56 bg-gradient-to-t from-white to-transparent" />
 
-                <h1 className="text-2xl sm:text-4xl font-black mb-3 text-slate-900 tracking-tight leading-tight [text-shadow:0_2px_18px_rgba(255,255,255,0.95),0_1px_4px_rgba(255,255,255,0.9)] sm:[text-shadow:none]">
-                  매주 만드는 종이 주보,
-                  <br />
-                  이제 <span className="relative inline-block px-2 py-0.5 text-blue-600 z-10"><span className="absolute inset-x-0 bottom-1.5 h-3.5 bg-blue-100/80 -rotate-1 rounded-sm -z-10"></span>온라인 주보</span>로 끝내세요!
-                </h1>
+                <div className="relative container mx-auto max-w-7xl px-4 sm:px-6 lg:px-10 py-8 sm:py-10 w-full">
+                  <div className="max-w-xl mx-auto lg:mx-0 lg:ml-10 lg:-mt-16 text-center lg:text-left">
+                    <div className="inline-flex items-center gap-2 bg-blue-50 text-blue-700 px-4 py-1.5 rounded-full text-xs font-black mb-2 border border-blue-100 shadow-[0_0_15px_rgba(37,99,235,0.25)] animate-pulse">
+                      <Rocket className="w-3.5 h-3.5 text-blue-600 animate-bounce" /> 모바일 주보 제작 베타 기간 한정 혜택
+                    </div>
 
-                <p className="text-sm sm:text-base text-slate-800 sm:text-slate-600 font-semibold sm:font-medium mb-4 leading-relaxed [text-shadow:0_2px_18px_rgba(255,255,255,0.95),0_1px_4px_rgba(255,255,255,0.9)] sm:[text-shadow:none]">
-                  인쇄비용과 수고는 줄이고,<br /> 성도들과의 소통은 더 편리하게 만듭니다.
-                </p>
+                    <h1 className="text-2xl sm:text-4xl font-black mb-3 text-slate-900 tracking-tight leading-tight [text-shadow:0_2px_18px_rgba(255,255,255,0.95),0_1px_4px_rgba(255,255,255,0.9)] sm:[text-shadow:none]">
+                      매주 만드는 종이 주보,
+                      <br />
+                      이제 <span className="relative inline-block px-2 py-0.5 text-blue-600 z-10"><span className="absolute inset-x-0 bottom-1.5 h-3.5 bg-blue-100/80 -rotate-1 rounded-sm -z-10"></span>온라인 주보</span>로 끝내세요!
+                    </h1>
 
-                <div className="flex flex-col sm:flex-row items-center lg:items-start justify-center lg:justify-start gap-3">
-                  <button
-                    onClick={() => window.open("https://bulletin.stayon-platform.com/view/8PmIDuDQXKfYp2zUj6sLX3uzMVt2", "_blank", "noopener,noreferrer")}
-                    className="group inline-flex items-center justify-center gap-2.5 bg-blue-600 hover:bg-blue-700 text-white font-black px-6 sm:px-7 py-2.5 sm:py-3 rounded-full shadow-[0_0_25px_rgba(37,99,235,0.4)] hover:shadow-[0_0_35px_rgba(37,99,235,0.55)] active:scale-95 transition-all text-sm sm:text-base w-full sm:w-auto"
-                  >
-                    <Smartphone className="w-5 h-5 shrink-0 animate-bounce" />
-                    실제 주보 화면 지금 확인하기
-                    <ExternalLink className="w-4 h-4 shrink-0 opacity-90 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
-                  </button>
-                  <button
-                    onClick={() => goSoft("/signup")}
-                    className="inline-flex items-center justify-center gap-1.5 bg-white hover:bg-slate-50 text-slate-800 font-black px-6 sm:px-7 py-2.5 sm:py-3 rounded-full shadow-md border border-slate-200 active:scale-95 transition-all text-sm sm:text-base w-full sm:w-auto"
-                  >
-                    무료로 시작하기
-                  </button>
+                    <p className="text-sm sm:text-base text-slate-800 sm:text-slate-600 font-semibold sm:font-medium mb-4 leading-relaxed [text-shadow:0_2px_18px_rgba(255,255,255,0.95),0_1px_4px_rgba(255,255,255,0.9)] sm:[text-shadow:none]">
+                      인쇄비용과 수고는 줄이고,<br /> 성도들과의 소통은 더 편리하게 만듭니다.
+                    </p>
+
+                    <div className="flex flex-col sm:flex-row items-center lg:items-start justify-center lg:justify-start gap-3">
+                      <button
+                        onClick={() => window.open("https://bulletin.stayon-platform.com/view/8PmIDuDQXKfYp2zUj6sLX3uzMVt2", "_blank", "noopener,noreferrer")}
+                        className="group inline-flex items-center justify-center gap-2.5 bg-blue-600 hover:bg-blue-700 text-white font-black px-6 sm:px-7 py-2.5 sm:py-3 rounded-full shadow-[0_0_25px_rgba(37,99,235,0.4)] hover:shadow-[0_0_35px_rgba(37,99,235,0.55)] active:scale-95 transition-all text-sm sm:text-base w-full sm:w-auto"
+                      >
+                        <Smartphone className="w-5 h-5 shrink-0 animate-bounce" />
+                        실제 주보 화면 지금 확인하기
+                        <ExternalLink className="w-4 h-4 shrink-0 opacity-90 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
+                      </button>
+                      <button
+                        onClick={() => goSoft("/signup")}
+                        className="inline-flex items-center justify-center gap-1.5 bg-white hover:bg-slate-50 text-slate-800 font-black px-6 sm:px-7 py-2.5 sm:py-3 rounded-full shadow-md border border-slate-200 active:scale-95 transition-all text-sm sm:text-base w-full sm:w-auto"
+                      >
+                        무료로 시작하기
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* ② 교회 홈페이지 홍보: website 첫 화면의 실제 홈페이지 미리보기(스테이 교회)를 그대로 보여 줌 */}
+              <div aria-hidden={heroIdx !== 1}
+                className="col-start-1 row-start-1 relative flex items-center bg-gradient-to-br from-slate-50 via-white to-blue-50/60 pt-14 pb-6 sm:pt-16 sm:pb-24 lg:pb-28"
+                style={{ opacity: heroIdx === 1 ? 1 : 0, transition: "opacity 900ms ease", pointerEvents: heroIdx === 1 ? "auto" : "none" }}>
+                <div className="container mx-auto max-w-7xl px-4 sm:px-6 lg:px-10 w-full">
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-10 items-center">
+                    <div className="lg:col-span-6 lg:ml-10 text-center lg:text-left">
+                      <div className="inline-flex items-center gap-1.5 bg-gray-900 text-white px-3.5 py-1.5 rounded-full text-[11px] sm:text-xs font-black mb-3">
+                        <Building className="w-3.5 h-3.5" /> 스테이온 새 서비스 · 교회 홈페이지 제작
+                      </div>
+                      <p className="text-2xl sm:text-4xl font-black text-slate-900 tracking-tight leading-tight break-keep">
+                        주보에 이어<br />
+                        <span className="text-blue-600">교회 홈페이지</span>도 오픈했어요!
+                      </p>
+                      <p className="hidden sm:block mt-3 text-sm sm:text-base text-slate-600 font-medium leading-relaxed break-keep">
+                        수백만 원짜리 교회 홈페이지, 이제 커피값이면 됩니다.<br className="hidden sm:block" /> 빈칸만 채우면 우리 교회 홈페이지가 바로 완성돼요.
+                      </p>
+                      <div className="mt-3.5 sm:mt-4 flex flex-col sm:flex-row items-center lg:items-start justify-center lg:justify-start gap-2.5">
+                        <button type="button" onClick={goWebsite} tabIndex={heroIdx === 1 ? 0 : -1}
+                          className="inline-flex items-center justify-center gap-2 bg-gray-900 hover:bg-black text-white font-black px-6 sm:px-7 py-2.5 sm:py-3 rounded-full shadow-lg active:scale-95 transition-all text-sm sm:text-base w-full sm:w-auto">
+                          <Building className="w-4 h-4" /> 교회 홈페이지 보러 가기 <ChevronRight className="w-4 h-4" />
+                        </button>
+                      </div>
+                      <p className="hidden sm:block mt-2.5 text-[11px] sm:text-xs text-slate-400 font-medium">홈페이지 제작 화면(website.stayon-platform.com)으로 이동해요</p>
+                    </div>
+
+                    <div className="lg:col-span-5 relative w-full max-w-[290px] sm:max-w-[460px] lg:max-w-none mx-auto">
+                      <div className="absolute -inset-4 bg-gradient-to-tr from-blue-100/60 to-indigo-50/30 rounded-[2.5rem] blur-2xl -z-10" />
+                      {/* 눌러 볼 수 있다는 걸 알려 주는 말풍선(늘 보임, 살짝 둥실). 누르면 아래 미리보기 링크로 그대로 통과 */}
+                      <span className="pointer-events-none absolute -top-3 right-3 sm:-top-4 sm:right-5 z-10 animate-[previewFloat_2.4s_ease-in-out_infinite]">
+                        <span className="relative block whitespace-nowrap rounded-full bg-[#3182F6] px-3 py-1.5 sm:px-3.5 sm:py-2 text-[11px] sm:text-[13px] font-bold text-white shadow-[0_6px_16px_rgba(49,130,246,0.35)]">
+                          👆 눌러서 실제 홈페이지 구경하기
+                          <span className="absolute -bottom-1 right-6 h-2.5 w-2.5 rotate-45 bg-[#3182F6]" />
+                        </span>
+                      </span>
+                      <style>{`@keyframes previewFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}`}</style>
+                      <a href="https://stay.stayon-platform.com" target="_blank" rel="noopener noreferrer" tabIndex={heroIdx === 1 ? 0 : -1}
+                        className="group block bg-white rounded-2xl sm:rounded-[1.75rem] border border-gray-100 shadow-2xl overflow-hidden transition-transform duration-500 hover:-translate-y-1">
+                        <div className="flex items-center gap-3 px-3 sm:px-4 py-2 sm:py-2.5 border-b border-gray-100 bg-white">
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <span className="w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full bg-red-400/80" />
+                            <span className="w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full bg-amber-400/80" />
+                            <span className="w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full bg-emerald-400/80" />
+                          </div>
+                          <div className="flex-1 min-w-0 bg-gray-50 px-3 py-1 rounded-lg text-[10px] sm:text-[11px] text-gray-500 font-mono flex items-center gap-1.5">
+                            <Lock className="w-3 h-3 text-gray-400 shrink-0" />
+                            <span className="truncate">stay.stayon-platform.com</span>
+                          </div>
+                        </div>
+                        {/* 휴대폰에선 위쪽(사진·교회 이름)만 짧게, PC는 website 첫 화면과 같은 비율 */}
+                        <div className="relative overflow-hidden bg-gray-50 aspect-[1222/540] sm:aspect-[1222/620] lg:aspect-[1222/900]">
+                          <img src="/homePageSample.jpg" alt="스테이온으로 만든 실제 교회 홈페이지 예시(스테이 교회)" loading="lazy"
+                            className="absolute inset-0 h-full w-full object-cover object-top transition-transform duration-[1200ms] ease-out group-hover:scale-[1.03]" />
+                        </div>
+                        <div className="flex items-center justify-center gap-1.5 py-2 sm:py-2.5 border-t border-gray-100 text-[11px] sm:text-[13px] font-bold text-[#3182F6] group-hover:bg-[#F2F8FF] transition-colors">
+                          스테이온으로 만든 실제 교회 홈페이지 보러 가기 <ExternalLink className="w-3.5 h-3.5" />
+                        </div>
+                      </a>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
           </section>
 
-          {/* 서비스 바로가기 아이콘 5개 - 히어로와 분리된 독립 섹션, 옅은 배경 띠 */}
-          <section className="relative w-screen left-1/2 -translate-x-1/2 bg-slate-50/40 py-4 sm:py-6 mt-4 sm:-mt-24">
+          {/* 바로가기(2026-11-20 개편): 작은 아이콘 + 짧은 글자라 무엇인지 알기 어려워서,
+              큰 카드에 "무엇을 하는 곳인지" 한 줄 설명을 붙임. 휴대폰 2칸 · 태블릿 3칸 · PC 6칸.
+              (예전: 아이콘 5개 + PC 전용 "준비중" 2개 — 준비중은 눌러도 할 일이 없어서 뺌) */}
+          <section className="relative w-screen left-1/2 -translate-x-1/2 bg-slate-50/40 py-6 sm:py-8 mt-4 sm:-mt-24">
             <div className="container mx-auto px-4 sm:px-6 max-w-7xl">
-              <p className="text-center text-[10px] sm:text-xs font-black text-slate-400 tracking-widest uppercase mb-2 sm:mb-3">
-                바로가기
-              </p>
-              <div className="grid grid-cols-5 lg:grid-cols-7 justify-items-center gap-1.5 sm:gap-3">
+              <p className="text-center text-lg sm:text-2xl font-black text-slate-900 tracking-tight mb-1">무엇을 도와드릴까요?</p>
+              <p className="text-center text-xs sm:text-sm font-medium text-slate-400 mb-4 sm:mb-6">원하는 것을 눌러 보세요</p>
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 sm:gap-4">
                 {[
-                  {
-                    label: currentUser ? "주보 관리자" : "온라인 주보", img: "/b1-Photoroom.png", onClick: () => {
-                      if (currentUser) {
-                        setIsFadingOut(true);
-                        setTimeout(() => navigate("/admin"), 900);
-                      } else {
-                        goSoft("/login");
-                      }
-                    }
-                  },
-                  { label: "이용료 안내", img: "/b5-Photoroom.png", onClick: () => navigate("/pricing") },
-                  { label: "수련회 장소 찾기", img: "/b2-Photoroom.png", onClick: () => window.open("https://place.stayon-platform.com/", "_blank") },
-                  { label: "외부사역팀 섭외", img: "/b3-Photoroom.png", onClick: () => window.open("https://place.stayon-platform.com/teams", "_blank") },
-                  { label: "이용중인 교회", img: "/b4-Photoroom.png", onClick: () => document.getElementById("preview-screens")?.scrollIntoView({ behavior: "smooth" }) },
-                  { label: "준비중", img: "/b0-Photoroom.png", onClick: () => alert("서비스 준비중입니다"), desktopOnly: true },
-                  { label: "준비중", img: "/b0-Photoroom.png", onClick: () => alert("서비스 준비중입니다"), desktopOnly: true },
+                  currentUser
+                    ? { label: "주보 만들기", desc: "이번 주 주보를 만들어요", img: "/b1-Photoroom.png", onClick: () => { setIsFadingOut(true); setTimeout(() => navigate("/admin"), 900); } }
+                    : { label: "온라인 주보", desc: "종이 주보를 휴대폰으로", img: "/b1-Photoroom.png", onClick: () => goSoft("/login") },
+                  { label: "교회 홈페이지", desc: "우리 교회 홈페이지 만들기", img: "", onClick: goWebsite, highlight: true, bubble: "신규 오픈!" },
+                  { label: "이용료 안내", desc: "한 달에 얼마인지 봐요", img: "/b5-Photoroom.png", onClick: () => navigate("/pricing") },
+                  { label: "수련회 장소", desc: "수련회 갈 곳을 찾아요", img: "/b2-Photoroom.png", onClick: () => window.open("https://place.stayon-platform.com/", "_blank"), external: true },
+                  { label: "사역팀 섭외", desc: "찬양팀·강사님을 모셔요", img: "/b3-Photoroom.png", onClick: () => window.open("https://place.stayon-platform.com/teams", "_blank"), external: true },
+                  { label: "이용 중인 교회", desc: "다른 교회 주보 구경하기", img: "/b4-Photoroom.png", onClick: () => document.getElementById("preview-screens")?.scrollIntoView({ behavior: "smooth" }) },
                 ].map((btn, idx) => (
-                  <button key={idx} onClick={btn.onClick} className={`${btn.desktopOnly ? "hidden lg:flex" : "flex"} flex-col items-center gap-1 sm:gap-2 w-16 sm:w-24 lg:w-28 bg-white rounded-2xl shadow-md hover:shadow-lg px-2 py-2.5 sm:px-3 sm:py-3 transition-all active:scale-95 group`}>
-                    <img src={btn.img} alt={btn.label} className="w-9 h-9 sm:w-12 sm:h-12 lg:w-14 lg:h-14 object-contain group-hover:-translate-y-1 transition-transform" />
-                    <span className="text-[9px] sm:text-xs font-bold text-slate-700 text-center break-keep leading-tight">{btn.label}</span>
+                  <button key={idx} type="button" onClick={btn.onClick}
+                    className={`group relative flex flex-col items-start text-left rounded-2xl sm:rounded-3xl p-4 sm:p-5 transition-all active:scale-[0.97] hover:-translate-y-0.5 hover:shadow-lg ${btn.highlight ? "bg-gray-900 shadow-md" : "bg-white border border-slate-100 shadow-[0_2px_12px_rgba(15,23,42,0.06)]"}`}>
+                    {/* 말풍선: 마우스 안 올려도 늘 보임(살짝 위아래로 움직여 눈에 띄게) */}
+                    {"bubble" in btn && btn.bubble && (
+                      <span className="pointer-events-none absolute -top-3.5 left-1/2 -translate-x-1/2 z-10 animate-bounce [animation-duration:2s]">
+                        <span className="relative block whitespace-nowrap rounded-full bg-red-500 px-3 py-1 text-[11px] sm:text-xs font-black text-white shadow-md">
+                          {btn.bubble}
+                          <span className="absolute left-1/2 -bottom-1 h-2 w-2 -translate-x-1/2 rotate-45 bg-red-500" />
+                        </span>
+                      </span>
+                    )}
+                    {btn.img
+                      ? <img src={btn.img} alt="" className="w-11 h-11 sm:w-14 sm:h-14 object-contain" />
+                      : <span className="flex w-11 h-11 sm:w-14 sm:h-14 items-center justify-center rounded-2xl bg-white/15"><Building className="w-6 h-6 sm:w-7 sm:h-7 text-white" /></span>}
+                    <span className={`mt-3 text-[15px] sm:text-lg font-black tracking-tight break-keep ${btn.highlight ? "text-white" : "text-slate-900"}`}>{btn.label}</span>
+                    <span className={`mt-0.5 text-[12.5px] sm:text-sm font-medium leading-snug break-keep ${btn.highlight ? "text-white/70" : "text-slate-500"}`}>{btn.desc}</span>
+                    <span className={`absolute right-3.5 top-3.5 sm:right-4 sm:top-4 text-[10px] sm:text-[11px] font-bold ${btn.highlight ? "text-white/60" : "text-slate-300"}`}>
+                      {btn.external ? "새 창 ↗" : <ChevronRight className="w-4 h-4" />}
+                    </span>
                   </button>
                 ))}
               </div>

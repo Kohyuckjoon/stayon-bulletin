@@ -37,9 +37,11 @@ export function isCustomDesignFreePeriod(
 // 지금은 유료화 전이라 실제로는 호출돼도 결과가 쓰이지 않는다(무료 기간이 우선).
 export function isProPlanOrAbove(userData: any): boolean {
   if (!userData) return false;
+  if (userData.status === "pro" || userData.status === "allinone") return true; // 결제 성공 시 저장되는 요금제 등급
   const raw = String(userData.planTier ?? userData.currentPlan ?? "").toLowerCase();
   if (["pro", "allinone", "all-in-one", "all_in_one"].includes(raw)) return true;
-  return raw.includes("프로") || raw.includes("올인원") || raw.includes("all-in-one");
+  // (2026-11-20) 상품 이름이 "관리형 라이트/맥스 …", "프로 · 셀프형 …"으로 바뀜
+  return raw.includes("프로") || raw.includes("올인원") || raw.includes("관리형") || raw.includes("셀프형") || raw.includes("all-in-one");
 }
 
 interface AccessParams {

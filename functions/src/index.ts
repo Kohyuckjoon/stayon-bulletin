@@ -544,6 +544,101 @@ export const testRecurringBillingNow = functions.https.onRequest(
   }
 );
 
+// /super > 결제·정산(2026-11-20): 포트원에 남은 실제 결제 기록(1회 결제·정기결제·홈페이지 결제 모두)을
+// 기간으로 가져옴. 운영자 계정만. GET ?from=ISO&until=ISO, 헤더 Authorization: Bearer <ID 토큰>
+// 포트원 GET /payments 는 조건을 requestBody 쿼리(JSON)로 받음. 한 번에 100건씩, 최대 3,000건
+const SUPER_OPERATOR_EMAILS = [
+  "akhj123akhjk@gmail.com", "stayon.platform@gmail.com",
+];
+export const superPayments = functions.https.onRequest(
+  {secrets: ["PORTONE_API_SECRET"], cors: true},
+  async (req, res) => {
+    try {
+      const token = String(req.headers.authorization || "")
+        .replace(/^Bearer\s+/i, "");
+      const email = (await admin.auth().verifyIdToken(token)).email || "";
+      if (!SUPER_OPERATOR_EMAILS.includes(email)) {
+        res.status(403).json({error: "운영자만 볼 수 있어요."});
+        return;
+      }
+    } catch {
+      res.status(401).json({error: "로그인이 필요합니다."});
+      return;
+    }
+    const secret = process.env.PORTONE_API_SECRET;
+    if (!secret) {
+      res.status(500).json({error: "PORTONE_API_SECRET 미설정"});
+      return;
+    }
+    const from = String(req.query.from || "");
+    const until = String(req.query.until || "");
+    type Raw = {
+      id: string; status: string; orderName?: string; paidAt?: string;
+      cancelledAt?: string; requestedAt?: string; receiptUrl?: string;
+      amount?: {total?: number; paid?: number; cancelled?: number};
+      customer?: {id?: string; name?: string; email?: string};
+      method?: {type?: string; card?: {name?: string}};
+    };
+    const items: Raw[] = [];
+    try {
+      for (let page = 0; page < 30; page++) {
+        const body = {
+          page: {number: page, size: 100},
+          filter: {
+            ...(from ? {from} : {}),
+            ...(until ? {until} : {}),
+            status: ["PAID", "PARTIAL_CANCELLED", "CANCELLED"],
+            sortBy: "STATUS_CHANGED_AT",
+            sortOrder: "DESC",
+          },
+        };
+        const r = await fetch(
+          "https://api.portone.io/payments?requestBody=" +
+            encodeURIComponent(JSON.stringify(body)),
+          {headers: {Authorization: `PortOne ${secret}`}}
+        );
+        const json = (await r.json()) as {
+          items?: Raw[]; page?: {totalCount?: number}; message?: string;
+        };
+        if (!r.ok) {
+          const msg = json.message || `포트원 HTTP ${r.status}`;
+          res.status(502).json({error: msg});
+          return;
+        }
+        items.push(...(json.items || []));
+        const total = json.page?.totalCount ?? 0;
+        if (!json.items?.length || items.length >= total) break;
+      }
+    } catch (e) {
+      console.error("[superPayments] 포트원 조회 오류:", e);
+      res.status(502).json({error: "포트원 조회 중 오류가 났어요."});
+      return;
+    }
+    // 화면에 필요한 값만. 정기결제 결제번호는 stayon_recurring_{uid}_{시각}
+    res.json({
+      items: items.map((p) => {
+        const m = /^stayon_recurring_(.+)_\d+$/.exec(p.id);
+        return {
+          id: p.id,
+          status: p.status,
+          orderName: p.orderName || "",
+          paidAt: p.paidAt || p.requestedAt || "",
+          cancelledAt: p.cancelledAt || "",
+          total: p.amount?.total ?? 0,
+          paid: p.amount?.paid ?? 0,
+          cancelled: p.amount?.cancelled ?? 0,
+          customerName: p.customer?.name || "",
+          customerEmail: p.customer?.email || "",
+          recurring: !!m,
+          uid: m ? m[1] : (p.customer?.id || ""),
+          method: p.method?.card?.name || p.method?.type || "",
+          receiptUrl: p.receiptUrl || "",
+        };
+      }),
+    });
+  }
+);
+
 // 카드 등록 직후 첫 결제. /pricing에서 정기결제 카드를 등록하면 프론트
 // (useBillingKey.ts)가 바로 이 함수를 불러 그 자리에서 첫 달 금액을 결제하고,
 // 다음 결제일을 한 달 뒤로 잡는다. firstChargePending이 켜진 계정만, 한 번만
@@ -673,7 +768,8 @@ const YT_SITE_TTL = 60 * 60 * 1000;
 const YT_MAX = 24; // 홈페이지에 보여 줄 영상 최대 개수(주 1개면 약 6개월치)
 type YtItem = {id: string; title: string; published: string; short: boolean};
 const saveYtToSite = async (
-  slug: string, field: "ytVideos" | "ytPlaylist", url: string, videos: unknown[]
+  slug: string, field: "ytVideos" | "ytPlaylist" | "ytShorts", url: string,
+  videos: unknown[]
 ) => {
   if (!slug || videos.length === 0) return;
   try {
@@ -760,6 +856,43 @@ export const youtubeVideos = functions.https.onRequest(async (req, res) => {
     return;
   }
   const playlistId = (channelUrl.match(/[?&]list=([\w-]+)/) || [])[1] || "";
+  // 쇼츠만(2026-11-21, shorts=1): 채널의 쇼츠 전용 재생목록(UUSH + 채널 ID 뒷부분)
+  // RSS에서 최신 15개. 홈페이지 말씀/영상 화면 쇼츠 칸용, 사이트 데이터 ytShorts에 저장
+  if (req.query.shorts === "1" && !playlistId) {
+    const key = `${channelUrl}#shorts`;
+    const sHit = ytCache.get(key);
+    if (sHit && Date.now() - sHit.t < 30 * 60 * 1000) {
+      await saveYtToSite(siteSlug, "ytShorts", channelUrl, sHit.videos);
+      res.set("Cache-Control", "public, max-age=1800");
+      res.json({videos: sHit.videos});
+      return;
+    }
+    try {
+      let cid = ytIdCache.get(channelUrl) ||
+        (channelUrl.match(/\/channel\/(UC[\w-]{22})/) || [])[1] || "";
+      if (!cid) {
+        const html = await (await fetch(channelUrl, {
+          headers: {"User-Agent": YT_UA, "Accept-Language": "ko"},
+        })).text();
+        cid = (
+          html.match(/"externalId":"(UC[\w-]{22})"/) ||
+          html.match(/"channelId":"(UC[\w-]{22})"/) || []
+        )[1] || "";
+        if (cid) ytIdCache.set(channelUrl, cid);
+      }
+      const shorts = cid ?
+        (await ytFeed(`playlist_id=UUSH${cid.slice(2)}`))
+          .map((v) => ({...v, short: true})) : [];
+      if (shorts.length) ytCache.set(key, {t: Date.now(), videos: shorts});
+      await saveYtToSite(siteSlug, "ytShorts", channelUrl, shorts);
+      res.set("Cache-Control", "public, max-age=1800");
+      res.json({videos: shorts});
+    } catch (error) {
+      console.error("유튜브 쇼츠 가져오기 실패:", error);
+      res.status(500).json({error: "fetch failed"});
+    }
+    return;
+  }
   // 재생목록은 실시간 방송 확인 없음
   const wantLive = req.query.live === "1" && !playlistId;
   const field = playlistId ? "ytPlaylist" : "ytVideos";
@@ -1281,6 +1414,66 @@ function buildChurchBodyHtml(
   return parts.join("\n");
 }
 
+// 러브링(모금) /give/** — 카카오톡 등 링크 미리보기 봇에게는 관리자가 올린
+// '카카오톡 공유 이미지'(fundraisers/{id}.kakaoCover)로 OG 태그를 내려주고,
+// 일반 방문자에게는 기존과 똑같이 SPA 껍데기(app.html)를 그대로 돌려준다.
+// 결제·주보 로직과 무관하며, kakaoCover가 없으면 이미지 없이 제목만 미리보기됨.
+export const giveOG = functions.https.onRequest(async (req, res) => {
+  const userAgent = String(req.headers["user-agent"] || "");
+  const segs = (req.path || "/").split("/").filter(Boolean); // give/{id}/...
+  const projectId = segs[0] === "give" ? (segs[1] || "") : "";
+
+  // 사람(일반 브라우저·카카오 인앱 브라우저 포함): SPA 껍데기 그대로 → 화면 정상 동작
+  if (!BOT_AGENT_REGEX.test(userAgent)) {
+    if (fs.existsSync(SHELL_HTML_PATH)) {
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.status(200).send(fs.readFileSync(SHELL_HTML_PATH, "utf8"));
+    } else {
+      res.status(200).send("");
+    }
+    return;
+  }
+
+  // 메신저 미리보기 봇: 모금 제목 + 관리자가 올린 카카오 커버 이미지로 OG
+  let title = "러브링";
+  let churchName = "";
+  let headline = "";
+  let cover = "";
+  try {
+    if (projectId) {
+      const snap = await db.collection("fundraisers").doc(projectId).get();
+      const d = (snap.data() || {}) as Record<string, unknown>;
+      if (typeof d.title === "string" && d.title) title = d.title;
+      if (typeof d.churchName === "string") churchName = d.churchName;
+      if (typeof d.headline === "string") headline = d.headline;
+      if (typeof d.kakaoCover === "string" &&
+        /^https?:\/\//.test(d.kakaoCover)) cover = d.kakaoCover;
+    }
+  } catch (e) {
+    console.error("[giveOG] 조회 실패:", e);
+  }
+  const host = (req.headers["x-forwarded-host"] as string | undefined) ||
+    req.headers.host || "bulletin.stayon-platform.com";
+  const ogTitle = churchName ? `${churchName} ${title}` : title;
+  const ogDesc = (headline || "함께 사랑을 모아요").replace(/\s*\n\s*/g, " ");
+  const ogUrl = `https://${host}${req.path}`;
+  const imgTag = cover ?
+    `<meta property="og:image" content="${escapeHtml(cover)}" />` +
+    "<meta name=\"twitter:card\" content=\"summary_large_image\" />" : "";
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.status(200).send(`<!DOCTYPE html>
+<html lang="ko"><head><meta charset="utf-8" />
+<meta name="robots" content="noindex" />
+<title>${escapeHtml(ogTitle)}</title>
+<meta property="og:type" content="website" />
+<meta property="og:title" content="${escapeHtml(ogTitle)}" />
+<meta property="og:description" content="${escapeHtml(ogDesc)}" />
+<meta property="og:url" content="${escapeHtml(ogUrl)}" />
+${imgTag}
+</head><body><h1>${escapeHtml(ogTitle)}</h1>
+<p>${escapeHtml(ogDesc)}</p></body></html>`);
+});
+
 // /view/** 를 제외한 모든 경로의 캐치올 라우트. /view/**는 위의 bulletinOG가
 // 우선 매칭되므로 이 함수까지 절대 오지 않음(firebase.json 라우팅 우선순위,
 // 이 함수는 그 규칙에 손대지 않음). 교회 서브도메인 + 링크 미리보기 봇(카카오톡
@@ -1507,10 +1700,20 @@ export const siteOG = functions.https.onRequest(async (req, res) => {
         // 페이지 전환형 교회 홈페이지: 주소마다 그 페이지 내용(MultiPageSite와 같음)
         if ((isSearchBot || isHumanVisit) && site.layoutMode !== "onepage" &&
           fs.existsSync(SHELL_HTML_PATH)) {
+          // 2026-11-21에 옮긴 "실시간 예배"의 옛 주소: 새 화면을 그대로 주고
+          // 대표 주소(canonical)와 주소창만 /sermons/live로 바꿈.
+          // 301은 쓰지 말 것: Cloudflare Worker가 이동을 스스로 따라가다가
+          // Firebase "Site Not Found"(404)를 돌려줌(2026-11-22 확인)
+          const movedLive = ["/worship/online", "/online-worship"]
+            .includes(requestPath.replace(/\/+$/, ""));
+          const pagePath = movedLive ? "/sermons/live" : requestPath;
+          const movedScript = movedLive ?
+            "<script>history.replaceState(null,\"\"," +
+            "\"/sermons/live\"+location.search+location.hash)</script>" : "";
           const ownerId = typeof site.ownerId === "string" ? site.ownerId : "";
           const ctx = ownerId ? await resolveCtx(ownerId) : null;
           const base = `https://${churchSlug}.stayon-platform.com`;
-          const page = churchSitePage(site, ctx, base, requestPath);
+          const page = churchSitePage(site, ctx, base, pagePath);
           const shell = fs.readFileSync(SHELL_HTML_PATH, "utf8");
           const metas = [
             ["naver-site-verification", site.naverSiteVerification],
@@ -1553,7 +1756,8 @@ export const siteOG = functions.https.onRequest(async (req, res) => {
           // 없는 페이지(/community 같은 옛 주소, 오타 주소)는 200+noindex가 아니라 404로
           // (200으로 주면 구글이 "내용 없는 페이지가 많은 사이트"로 봄 - soft 404)
           res.status(page ? 200 : 404).send(withFavicon(
-            html.replace("<head>", `<head>\n${metas}`)
+            html.replace("<head>",
+              `<head>\n${page ? movedScript : ""}${metas}`)
               .replace("</head>", `${ldTag}\n</head>`), denom));
           return;
         }
@@ -1830,16 +2034,21 @@ export const bulletinSitemap = functions.https.onRequest(
         // (구글 색인 문제 2026-11-09: 교회 홈페이지를 가리키는 링크가 하나도 없었음)
         const siteSnap = await db.collection("churchSites")
           .where("published", "==", true).get();
+        const allSites: {slug: string; name: string; site: string}[] = [];
+        // 교회 이름 옆에 붙일 그 계정의 대표 홈페이지 1곳. 운영자가 대신 만들고
+        // 아직 교회 계정을 연결하지 않은 곳(pendingOwner)은 뒤로 미룸
         const siteByOwner = new Map<string, string>();
-        const siteNameByOwner = new Map<string, string>();
-        siteSnap.docs.forEach((d) => {
-          const owner = d.data().ownerId;
-          if (typeof owner === "string" && owner && !siteByOwner.has(owner)) {
-            siteByOwner.set(owner, `https://${d.id}.stayon-platform.com/`);
-            const nm = d.data().churchName;
-            siteNameByOwner.set(owner, typeof nm === "string" ? nm.trim() : "");
-          }
-        });
+        [...siteSnap.docs]
+          .sort((a, z) => Number(a.data().pendingOwner === true) -
+            Number(z.data().pendingOwner === true))
+          .forEach((d) => {
+            const {ownerId: owner, churchName: nm} = d.data();
+            if (typeof owner !== "string" || !owner) return;
+            const site = `https://${d.id}.stayon-platform.com/`;
+            const name = typeof nm === "string" ? nm.trim() : "";
+            allSites.push({slug: d.id, name, site});
+            if (!siteByOwner.has(owner)) siteByOwner.set(owner, site);
+          });
         const churches = userDocs
           .filter((u) => u.exists)
           .map((u) => ({
@@ -1859,12 +2068,14 @@ export const bulletinSitemap = functions.https.onRequest(
         // 위 목록에 안 들어간 교회 홈페이지(주보가 없거나, 운영자 계정이 만든
         // 사이트 — 예: 스테이온교회는 "마스터" 계정 소유)도 홈페이지 링크만 추가.
         // 이름은 홈페이지에 적힌 교회 이름
-        const listed = new Set(churches.map((c) => c.id));
-        const siteOnly = [...siteByOwner.entries()]
-          .filter(([owner]) => !listed.has(owner))
-          .map(([owner, site]) => ({
-            id: `site-${owner}`,
-            name: siteNameByOwner.get(owner) || "",
+        // 한 계정에 홈페이지가 여러 곳이어도 전부 나오게 계정이 아니라 주소 기준
+        // (2026-11-22: 계정당 1곳만 담겨 stay가 빠졌음)
+        const linked = new Set(churches.map((c) => c.site));
+        const siteOnly = allSites
+          .filter((x) => !linked.has(x.site))
+          .map(({slug, name, site}) => ({
+            id: `site-${slug}`,
+            name,
             url: "",
             site,
             onlySite: true,

@@ -321,10 +321,10 @@ export const AdminFundraisers = () => {
     catch { prompt(label, url); }
   };
 
-  if (authState === "loading") return <p className="py-20 text-center text-sm" style={{ color: C.muted }}>확인 중…</p>;
+  if (authState === "loading") return <p className="py-24 text-center text-sm" style={{ color: C.muted }}>확인 중…</p>;
   if (authState === "denied") {
     return (
-      <div className="mx-auto max-w-md rounded-2xl p-8 text-center" style={{ background: C.card }}>
+      <div className="mx-auto mt-12 max-w-md rounded-2xl p-8 text-center sm:mt-20" style={{ background: C.card }}>
         <HeartHandshake className="mx-auto h-10 w-10" style={{ color: C.blue }} />
         <p className="mt-4 text-[17px] font-bold" style={{ color: C.ink }}>운영자 계정으로 로그인해 주세요</p>
         <p className="mt-2 text-sm leading-relaxed" style={{ color: C.muted }}>모금 프로젝트는 계좌 정보가 걸려 있어서, 운영자 이메일로 로그인한 상태에서만 만들고 고칠 수 있어요.</p>
@@ -334,11 +334,12 @@ export const AdminFundraisers = () => {
   }
 
   return (
-    <div>
-      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+    <div className="p-4 sm:p-8 md:p-12">
+      <div className="mx-auto max-w-5xl">
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-bold" style={{ color: C.ink }}>모금 프로젝트 관리</h1>
-          <p className="mt-1 text-sm" style={{ color: C.muted }}>러브링 같은 모금 프로젝트를 만들고 교회 계정에 연결해요.</p>
+          <h1 className="text-xl font-extrabold tracking-tight sm:text-3xl" style={{ color: C.ink }}>모금 프로젝트 관리</h1>
+          <p className="mt-1.5 text-xs sm:text-base font-medium" style={{ color: C.muted }}>러브링 같은 모금 프로젝트를 만들고 교회 계정에 연결해요.</p>
         </div>
         {!showCreate && (
           <button type="button" onClick={() => { setShowCreate(true); setEditingId(null); }} className="inline-flex items-center gap-1.5 rounded-xl px-4 py-2.5 text-sm font-bold text-white" style={{ background: C.blue }}>
@@ -398,6 +399,7 @@ export const AdminFundraisers = () => {
           ))}
         </div>
       )}
+      </div>
     </div>
   );
 };

@@ -28,7 +28,32 @@ service cloud.firestore {
     // jobBoostRequests, *_mail_triggers, system_check 등 — 기존 주보 플랫폼 동작 그대로
     // ─────────────────────────────────────────────────────────────
     match /{collection}/{document=**} {
-      allow read, write: if !(collection in ['fundraisers', 'stories', 'storyMeta']);
+      allow read, write: if !(collection in ['fundraisers', 'stories', 'storyMeta', 'cellGroupPlans']);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // 소그룹 편성(/cell-group) — 공유 주소를 아는 사람은 누구나 보기,
+    // 편집은 만든 사람 + 만든 사람이 허락한 사람(editorUids)만.
+    // 로그인한 다른 사람은 "나를 목록에 추가(memberUids)"와 "내 편집 권한 요청(requests.내uid)"만 가능
+    // ─────────────────────────────────────────────────────────────
+    match /cellGroupPlans/{pid} {
+      function signedIn() { return request.auth != null; }
+      function isPlanOwner() { return signedIn() && resource.data.ownerUid == request.auth.uid; }
+      function isPlanEditor() { return signedIn() && request.auth.uid in resource.data.get('editorUids', []); }
+      function changed() { return request.resource.data.diff(resource.data).affectedKeys(); }
+
+      allow get: if true;
+      allow list: if signedIn() && request.auth.uid in resource.data.memberUids;
+      allow create: if signedIn() && request.resource.data.ownerUid == request.auth.uid;
+      allow delete: if isOperator() || isPlanOwner();
+      allow update: if isOperator()
+        || isPlanOwner() && request.resource.data.ownerUid == resource.data.ownerUid
+        || isPlanEditor() && !changed().hasAny(['ownerUid', 'ownerEmail', 'editorUids', 'editorInfo', 'requests'])
+        || signedIn()
+          && changed().hasOnly(['memberUids', 'requests'])
+          && request.resource.data.get('memberUids', []).toSet().difference(resource.data.get('memberUids', []).toSet()).hasOnly([request.auth.uid])
+          && resource.data.get('memberUids', []).toSet().difference(request.resource.data.get('memberUids', []).toSet()).size() == 0
+          && request.resource.data.get('requests', {}).diff(resource.data.get('requests', {})).affectedKeys().hasOnly([request.auth.uid]);
     }
 
     // ─────────────────────────────────────────────────────────────

@@ -2,10 +2,23 @@ import { useEffect, useState } from "react";
 import { collection, getDocs, deleteDoc, doc } from "firebase/firestore";
 import { auth, db } from "../../firebase";
 import { onAuthStateChanged } from "firebase/auth";
-import { ExternalLink, Calendar, Trash2, ChevronDown, Church } from "lucide-react";
+import { ExternalLink, Calendar, Trash2, ChevronDown, Church, Copy, Check } from "lucide-react";
 
 export const AdminBulletinList = () => {
   const [bulletins, setBulletins] = useState<any[]>([]);
+  const [copiedId, setCopiedId] = useState<string | null>(null); // 방금 복사한 아이디(잠깐 "복사됨" 표시)
+  const copyId = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // 클립보드 권한이 막힌 브라우저: 예전 방식으로 복사
+      const ta = document.createElement("textarea");
+      ta.value = text; document.body.appendChild(ta); ta.select();
+      document.execCommand("copy"); ta.remove();
+    }
+    setCopiedId(text);
+    setTimeout(() => setCopiedId((c) => (c === text ? null : c)), 1500);
+  };
   const [isLoading, setIsLoading] = useState(true);
   const [expandedChurches, setExpandedChurches] = useState<Set<string>>(new Set());
   const ADMIN_EMAILS = ["akhj123akhjk@gmail.com", "stayon.platform@gmail.com"];
@@ -49,8 +62,10 @@ export const AdminBulletinList = () => {
         // 1. 사용자 정보(교회명 매칭용) 가져오기
         const usersSnapshot = await getDocs(collection(db, "users"));
         const userMap: { [key: string]: string } = {};
+        const emailMap: { [key: string]: string } = {}; // 주보를 발행한 계정 아이디(가입 이메일, 2026-11-19)
         usersSnapshot.docs.forEach((doc) => {
           userMap[doc.id] = doc.data().churchName || "등록교회";
+          emailMap[doc.id] = doc.data().email || "";
         });
 
         // 2. 전체 주보 발행 내역 가져오기
@@ -61,6 +76,7 @@ export const AdminBulletinList = () => {
             id: doc.id,
             ...data,
             churchName: userMap[data.authorId] || "미확인 교회",
+            authorEmail: emailMap[data.authorId] || "",
           };
         });
 
@@ -133,6 +149,23 @@ export const AdminBulletinList = () => {
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="font-bold text-gray-900 text-sm sm:text-base truncate">{group.churchName}</p>
+                        {/* 발행한 계정 아이디(이메일) — 이메일이 없는 예전 계정은 계정 번호(uid) */}
+                        <p className="flex items-center gap-1.5 min-w-0 text-[11px] sm:text-xs text-blue-600/80 font-medium">
+                          <span className="truncate">{latest?.authorEmail || `계정 ${group.authorId}`}</span>
+                          {/* 아이디 복사(2026-11-19) — 줄 전체가 펼치기 버튼이라 안쪽은 span으로, 누를 때 펼쳐지지 않게 막음 */}
+                          {(() => {
+                            const idText = latest?.authorEmail || group.authorId;
+                            const copied = copiedId === idText;
+                            return (
+                              <span role="button" tabIndex={0} title="아이디 복사"
+                                onClick={(e) => { e.stopPropagation(); void copyId(idText); }}
+                                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); void copyId(idText); } }}
+                                className={`shrink-0 inline-flex items-center gap-0.5 rounded-md border px-1.5 py-0.5 text-[10px] font-bold transition-colors ${copied ? "border-emerald-200 bg-emerald-50 text-emerald-600" : "border-blue-100 bg-white text-blue-600 hover:bg-blue-50"}`}>
+                                {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}{copied ? "복사됨" : "복사"}
+                              </span>
+                            );
+                          })()}
+                        </p>
                         <p className="text-[11px] sm:text-xs text-gray-400 mt-0.5">
                           총 {group.items.length}건 · 최근 {latest?.date || "날짜 미지정"}
                         </p>

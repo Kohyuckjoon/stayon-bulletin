@@ -223,7 +223,7 @@ export function GivePage() {
             {fund.endDate && <span className="shrink-0 rounded-full px-3.5 py-1.5 text-[13px] font-bold" style={{ background: G.greenBg, color: G.green }}>{dday(fund.endDate)} · {mdKo(fund.endDate)}까지</span>}
           </div>
           <p className="mt-7 text-[15px] font-bold" style={{ color: G.red }}>{fund.title} 프로젝트 {yearOf(fund)}</p>
-          <h1 className="mt-2 whitespace-pre-line text-[28px] font-black leading-[1.3]" style={{ color: G.ink }}>{fund.headline || `${fund.title}에\n함께해 주세요`}</h1>
+          <h1 className="mt-2 whitespace-pre-line break-keep text-[26px] font-black leading-[1.35] tracking-[-0.01em]" style={{ color: G.ink, wordBreak: "keep-all" }}>{fund.headline || `${fund.title}에\n함께해 주세요`}</h1>
           {!open && <p className="mt-4 rounded-2xl px-4 py-3 text-sm font-semibold" style={{ background: G.goldBg, color: G.goldInk }}>{fund.status === "draft" ? "모금 준비 중이에요. 곧 시작돼요." : "모금이 마감되었어요. 함께해 주셔서 감사합니다."}</p>}
           <div className="mt-6 rounded-[24px] bg-white p-6">
             <p className="text-[15px]" style={{ color: G.sub }}>지금까지 함께 모은 사랑</p>
@@ -458,69 +458,94 @@ export function GiveDisplay() {
   const p = pct(shown, goal);
   const url = `${window.location.origin}/give/${projectId}`;
   return (
-    <div className="flex h-[100dvh] w-full items-center justify-center overflow-hidden" style={{ background: "#E9EEED" }}>
-      <div className="relative overflow-hidden" style={{ width: "min(100vw, calc(100dvh * 9 / 16))", aspectRatio: "9 / 16", background: "#EEF2F1", containerType: "inline-size" }}>
-        <div className="flex h-full flex-col" style={{ padding: "6.5cqw 6.5cqw 6cqw" }}>
-          <p className="font-black tracking-[0.12em]" style={{ color: G.red, fontSize: "3cqw" }}>{fund.title.toUpperCase()} {yearOf(fund)}</p>
-          <h1 className="mt-[1.5cqw] whitespace-pre-line font-black leading-[1.18]" style={{ color: G.ink, fontSize: "8.4cqw" }}>{fund.headline || `${fund.title}에\n함께해 주세요`}</h1>
-          <div className="mt-[3.5cqw] rounded-[4cqw] text-white" style={{ background: G.greenDark, padding: "4.5cqw 4.5cqw 4cqw" }}>
-            <div className="flex items-center justify-between"><span className="font-bold" style={{ fontSize: "3.4cqw" }}>함께 모은 사랑</span><span className="font-black leading-none tabular-nums" style={{ fontSize: "11cqw" }}>{p}%</span></div>
-            <div className="mt-[2.5cqw] overflow-hidden rounded-full" style={{ height: "3.6cqw", background: "rgba(0,0,0,0.25)" }}>
-              <div className="h-full rounded-full bg-white transition-[width] duration-1000 ease-out" style={{ width: `${p}%` }} />
+    <div className="flex h-[100dvh] w-full items-center justify-center overflow-hidden" style={{ background: "#E7EBEC" }}>
+      <div className="relative overflow-hidden" style={{ width: "min(100vw, calc(100dvh * 9 / 16))", aspectRatio: "9 / 16", background: "linear-gradient(180deg, #F7F9F9 0%, #EBF0EF 100%)", containerType: "inline-size" }}>
+        <style>{`
+          @keyframes lrBreath { 0%,100%{transform:scale(1)} 50%{transform:scale(1.035)} }
+          @keyframes lrGlow { 0%,100%{opacity:.35} 50%{opacity:.9} }
+          @keyframes lrShine { 0%{transform:translateX(-140%) skewX(-18deg)} 55%,100%{transform:translateX(260%) skewX(-18deg)} }
+          @keyframes lrFloat { 0%{transform:translateY(4cqw) scale(.7);opacity:0} 12%{opacity:.5} 80%{opacity:.35} 100%{transform:translateY(-120cqw) scale(1.15);opacity:0} }
+          @keyframes lrNudge { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-1.1cqw)} }
+        `}</style>
+        {/* 배경에서 천천히 떠오르는 하트들(은은하게 반복) */}
+        <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden" aria-hidden>
+          {[{l:"12cqw",d:"0s",dur:"9s",sz:"5cqw",c:"rgba(216,102,91,0.16)"},{l:"44cqw",d:"3.2s",dur:"11s",sz:"3.6cqw",c:"rgba(30,107,99,0.14)"},{l:"72cqw",d:"1.6s",dur:"10s",sz:"4.6cqw",c:"rgba(227,176,85,0.18)"},{l:"86cqw",d:"5s",dur:"12s",sz:"3cqw",c:"rgba(216,102,91,0.12)"}].map((h,i)=>(
+            <Heart key={i} className="absolute bottom-0" style={{ left:h.l, width:h.sz, height:h.sz, color:h.c, fill:h.c, animation:`lrFloat ${h.dur} ease-in ${h.d} infinite` }} />
+          ))}
+        </div>
+        <div className="relative z-10 flex h-full flex-col" style={{ padding: "4.8cqw 6cqw 4.5cqw" }}>
+          <p className="font-black tracking-[0.14em]" style={{ color: G.green, fontSize: "3cqw" }}>{fund.title.toUpperCase()} {yearOf(fund)}</p>
+          <h1 className="mt-[1cqw] whitespace-pre-line break-keep font-black leading-[1.16]" style={{ color: G.ink, fontSize: "6.9cqw", wordBreak: "keep-all" }}>{fund.headline || `${fund.title}에\n함께해 주세요`}</h1>
+          <div className="relative mt-[2.4cqw] flex items-center overflow-hidden rounded-[5cqw] text-white" style={{ background: "linear-gradient(145deg, #1C5C55 0%, #123F3A 100%)", padding: "4.2cqw 5cqw", gap: "4.8cqw", boxShadow: "0 1.4cqw 3.6cqw rgba(18,63,58,0.3)" }}>
+            <span className="pointer-events-none absolute inset-y-0 w-[40%]" style={{ left: 0, background: "linear-gradient(90deg, transparent, rgba(255,255,255,0.14), transparent)", animation: "lrShine 7s ease-in-out infinite" }} aria-hidden />
+            <div className="relative shrink-0" style={{ width: "27cqw", height: "27cqw", animation: "lrBreath 4.5s ease-in-out infinite" }}>
+              <svg viewBox="0 0 100 100" className="h-full w-full" style={{ transform: "rotate(-90deg)" }}>
+                <circle cx="50" cy="50" r="43" fill="none" stroke="rgba(255,255,255,0.16)" strokeWidth="8.5" />
+                <circle cx="50" cy="50" r="43" fill="none" stroke="#FFFFFF" strokeWidth="8.5" strokeLinecap="round" strokeDasharray={2 * Math.PI * 43} strokeDashoffset={2 * Math.PI * 43 * (1 - Math.min(p, 100) / 100)} style={{ transition: "stroke-dashoffset 1.1s ease-out", filter: "drop-shadow(0 0 1.2cqw rgba(255,255,255,0.65))", animation: "lrGlow 3s ease-in-out infinite" }} />
+              </svg>
+              <div className="absolute inset-0 flex items-center justify-center">
+                <span className="font-black leading-none tabular-nums" style={{ fontSize: "8.4cqw" }}>{p}<span style={{ fontSize: "4.4cqw" }}>%</span></span>
+              </div>
             </div>
-            <div className="mt-[2.5cqw] flex justify-between font-bold tabular-nums" style={{ fontSize: "3.3cqw" }}>
-              <span>{won(shown)}{goal > 0 && <span className="text-white/75"> / {won(goal)}</span>}</span><span className="text-[#BFE3DA]">{fund.totals.count}명 참여</span>
+            <div className="min-w-0 flex-1">
+              <p className="font-bold" style={{ fontSize: "3.6cqw", color: "#BFE3DA" }}>함께 모은 사랑</p>
+              <p className="mt-[0.8cqw] font-black tabular-nums leading-none" style={{ fontSize: "6.6cqw" }}>{won(shown)}</p>
+              <p className="mt-[1cqw] font-bold tabular-nums" style={{ fontSize: "3.2cqw", color: "rgba(255,255,255,0.72)" }}>목표 {won(goal)}</p>
+              <span className="mt-[2cqw] inline-flex items-center rounded-full font-bold" style={{ background: "rgba(255,255,255,0.14)", fontSize: "3cqw", padding: "1.1cqw 2.8cqw", gap: "1.4cqw" }}>
+                <Heart style={{ width: "3.2cqw", height: "3.2cqw" }} fill="#FFB4A8" color="#FFB4A8" />{fund.totals.count}명이 함께했어요
+              </span>
             </div>
           </div>
-          <div className="mt-[2.5cqw] grid grid-cols-2" style={{ gap: "2.2cqw" }}>
+          <div className="mt-[1.8cqw] grid grid-cols-2" style={{ gap: "1.8cqw" }}>
             {wishes.slice(0, 6).map((w) => {
               const wp = pct(w.raised, w.goal); const full = w.goal > 0 && w.raised >= w.goal;
               return (
-                <div key={w.id} className="relative rounded-[3cqw] border-[0.35cqw] bg-white" style={{ padding: "3cqw", borderColor: full ? "#C84B42" : "#D9DFDE", background: full ? "#FFF6F5" : "white" }}>
+                <div key={w.id} className="relative rounded-[4cqw]" style={{ padding: "2.6cqw", background: full ? "#FFF5F3" : "white", boxShadow: full ? "0 0.8cqw 2.4cqw rgba(200,75,66,0.16)" : "0 0.8cqw 2.4cqw rgba(16,24,32,0.07)" }}>
                   <div className="flex items-start justify-between">
-                    <span className="flex items-center justify-center overflow-hidden rounded-[1.8cqw]" style={{ width: "5.6cqw", height: "5.6cqw", background: full ? G.redBg : G.greenBg, color: full ? "#C84B42" : G.green }}>
+                    <span className="flex items-center justify-center overflow-hidden rounded-[2.2cqw]" style={{ width: "6cqw", height: "6cqw", background: full ? G.redBg : G.greenBg, color: full ? "#C84B42" : G.green }}>
                       {w.imageUrl ? <img src={w.imageUrl} alt="" className="h-full w-full object-cover" /> : <WishIcon name={w.name} className="h-[62%] w-[62%]" />}
                     </span>
                     {full && <span className="rounded-full font-black text-white" style={{ background: "#C84B42", fontSize: "2.3cqw", padding: "0.8cqw 2.2cqw" }}>모금 완료</span>}
                   </div>
-                  <p className="mt-[2cqw] truncate font-black" style={{ color: G.ink, fontSize: "3.5cqw" }}>{w.name}</p>
-                  <div className="mt-[1.8cqw] overflow-hidden rounded-full" style={{ height: "2cqw", background: "#DADFDE" }}>
+                  <p className="mt-[1.5cqw] truncate font-black" style={{ color: G.ink, fontSize: "4.2cqw" }}>{w.name}</p>
+                  <div className="mt-[1.4cqw] overflow-hidden rounded-full" style={{ height: "2.4cqw", background: "#EBEEEE" }}>
                     <div className="h-full rounded-full transition-[width] duration-1000" style={{ width: `${wp}%`, background: full ? "#C84B42" : G.greenDark }} />
                   </div>
-                  <div className="mt-[1.8cqw] flex items-end justify-between">
-                    <span className="tabular-nums" style={{ color: G.sub, fontSize: "2.3cqw" }}>{(w.raised).toLocaleString("ko-KR")} / {w.goal.toLocaleString("ko-KR")}원</span>
-                    <span className="font-black tabular-nums" style={{ color: full ? "#C84B42" : G.greenDark, fontSize: "3.6cqw" }}>{wp}%</span>
+                  <div className="mt-[1.4cqw] flex items-end justify-between">
+                    <span className="font-bold tabular-nums" style={{ color: G.sub, fontSize: "2.9cqw" }}>{(w.raised).toLocaleString("ko-KR")} / {w.goal.toLocaleString("ko-KR")}원</span>
+                    <span className="font-black tabular-nums" style={{ color: full ? "#C84B42" : G.greenDark, fontSize: "4.2cqw" }}>{wp}%</span>
                   </div>
                 </div>
               );
             })}
           </div>
           {fund.randomGift.enabled && (
-            <div className="mt-[2.5cqw] flex items-center rounded-[3cqw] border-[0.35cqw] border-dashed" style={{ borderColor: G.gold, background: G.goldBg, padding: "3cqw", gap: "2.8cqw" }}>
-              <span className="flex shrink-0 items-center justify-center rounded-[1.8cqw]" style={{ width: "7cqw", height: "7cqw", background: "#FCE6BD", color: G.goldInk }}><Gift className="h-[60%] w-[60%]" strokeWidth={1.8} /></span>
+            <div className="mt-[1.8cqw] flex items-center rounded-[4cqw]" style={{ background: "#FFF8EA", padding: "2.5cqw 3.2cqw", gap: "3cqw", boxShadow: "0 0.8cqw 2.4cqw rgba(227,176,85,0.18)" }}>
+              <span className="flex shrink-0 items-center justify-center rounded-[2.4cqw]" style={{ width: "7.4cqw", height: "7.4cqw", background: "#F7E3B4", color: G.goldInk }}><Gift className="h-[60%] w-[60%]" strokeWidth={1.8} /></span>
               <div className="min-w-0 flex-1">
-                <p className="flex items-center gap-[1.5cqw]"><span className="font-black" style={{ color: G.ink, fontSize: "3.6cqw" }}>{fund.randomGift.label || "랜덤 선물"}</span><span className="rounded-full font-bold" style={{ background: "#FCE6BD", color: G.goldInk, fontSize: "2.2cqw", padding: "0.6cqw 1.8cqw" }}>어디든 OK</span></p>
-                {fund.randomGift.desc && <p className="mt-[0.8cqw] truncate" style={{ color: G.sub, fontSize: "2.5cqw" }}>{fund.randomGift.desc}</p>}
+                <p className="flex items-center gap-[1.5cqw]"><span className="font-black" style={{ color: G.ink, fontSize: "4.1cqw" }}>{fund.randomGift.label || "랜덤 선물"}</span><span className="rounded-full font-bold" style={{ background: "#FCE6BD", color: G.goldInk, fontSize: "2.2cqw", padding: "0.6cqw 1.8cqw" }}>어디든 OK</span></p>
+                {fund.randomGift.desc && <p className="mt-[0.8cqw] truncate font-medium" style={{ color: G.sub, fontSize: "2.9cqw" }}>{fund.randomGift.desc}</p>}
               </div>
-              <div className="text-right"><p className="font-black tabular-nums" style={{ color: G.goldInk, fontSize: "4.4cqw" }}>{won(fund.totals.random)}</p><p style={{ color: G.sub, fontSize: "2.4cqw" }}>모였어요</p></div>
+              <div className="text-right"><p className="font-black tabular-nums" style={{ color: G.goldInk, fontSize: "4.8cqw" }}>{won(fund.totals.random)}</p><p className="font-medium" style={{ color: G.sub, fontSize: "2.8cqw" }}>모였어요</p></div>
             </div>
           )}
           {fund.recent?.wishName && (
-            <div key={pulse} className="mt-[2.5cqw] flex items-center rounded-[3cqw] border-[0.3cqw] bg-white animate-in slide-in-from-bottom-2 duration-500" style={{ borderColor: "#D9DFDE", padding: "2.8cqw 3.5cqw", gap: "2.5cqw" }}>
+            <div key={pulse} className="mt-[1.8cqw] flex items-center rounded-[4cqw] bg-white animate-in slide-in-from-bottom-2 duration-500" style={{ padding: "2.5cqw 3.5cqw", gap: "2.5cqw", boxShadow: "0 0.8cqw 2.4cqw rgba(16,24,32,0.07)" }}>
               <Heart className={pulse ? "animate-pulse" : ""} style={{ width: "4cqw", height: "4cqw", color: "#C84B42" }} fill="#C84B42" />
-              <p className="font-bold" style={{ color: G.ink, fontSize: "3.3cqw" }}>방금 <span style={{ color: G.green }}>{fund.recent.wishName}</span>에 사랑이 더해졌어요</p>
+              <p className="font-bold" style={{ color: G.ink, fontSize: "3.8cqw" }}>방금 <span style={{ color: G.green }}>{fund.recent.wishName}</span>에 사랑이 더해졌어요</p>
             </div>
           )}
-          {fund.displayShowQr && (
-            <div className="mt-auto flex items-center rounded-[3.5cqw] border-[0.4cqw] bg-white" style={{ borderColor: G.green, padding: "3.5cqw", gap: "4cqw" }}>
+          {fund.displayShowQr && (<>
+            <div className="flex-1" style={{ minHeight: "3.5cqw" }} />
+            <div className="flex items-center rounded-[4.5cqw] bg-white" style={{ padding: "3cqw", gap: "4cqw", boxShadow: "0 1cqw 3cqw rgba(16,24,32,0.1)", animation: "lrNudge 3.2s ease-in-out infinite" }}>
               <div className="shrink-0 rounded-[1.5cqw] bg-white" style={{ width: "18cqw", height: "18cqw" }}>
                 <QRCodeSVG value={url} style={{ width: "100%", height: "100%" }} marginSize={0} level="M" />
               </div>
               <div>
                 <p className="font-black leading-tight" style={{ color: G.ink, fontSize: "5.6cqw" }}>휴대폰 카메라로<br />찍어보세요</p>
-                <p className="mt-[1.5cqw] font-bold" style={{ color: G.sub, fontSize: "2.8cqw" }}>앱 설치 없이 바로 함께할 수 있어요</p>
+                <p className="mt-[1.5cqw] font-bold" style={{ color: G.sub, fontSize: "3.2cqw" }}>앱 설치 없이 바로 함께할 수 있어요</p>
               </div>
-            </div>
+            </div></>
           )}
         </div>
         {!fund.displayShowQr && <Sparkles className="absolute bottom-[4cqw] right-[4cqw] text-[#C9D6D3]" style={{ width: "6cqw", height: "6cqw" }} />}

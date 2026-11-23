@@ -33,7 +33,8 @@ export function addMonthsClamped(date: Date, months: number): Date {
 }
 
 // featurePlan: 결제한 요금제 등급(basic/standard/pro/allinone) — 결제 성공 시 users.status로 들어감
-export type RecurringPlan = { planName: string; tierValue: string; amount: number; featurePlan: string };
+// refundAmount: 관리형 정기결제 — 12개월 연속 결제를 다 채우면 돌려드릴 금액(중도 해지 시 없음). 운영자가 환급 대상 확인용
+export type RecurringPlan = { planName: string; tierValue: string; amount: number; featurePlan: string; refundAmount?: number };
 
 // 정기결제 시작: 요금제·금액을 저장하고 서버(chargeFirstRecurring)가 첫 달을 바로
 // 결제 → 성공하면 다음 결제일이 한 달 뒤로 잡히고, 이후 매달 스케줄 함수가 결제.
@@ -52,6 +53,8 @@ async function startRecurring(plan: RecurringPlan): Promise<boolean> {
     nextBillingDate: new Date(),
     billingFailCount: 0,
     firstChargePending: true,
+    billingRefundAmount: plan.refundAmount ?? 0, // 12개월 다 채우면 환급할 금액(0이면 환급 없는 요금제)
+    billingStartedAt: serverTimestamp(),         // 정기결제 시작일(12개월 계산 기준)
   });
   const token = await user.getIdToken();
   let res: Response;

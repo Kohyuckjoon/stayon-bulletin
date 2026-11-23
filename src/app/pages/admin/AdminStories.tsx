@@ -29,7 +29,7 @@ const LINK_TYPES: { v: StoryLinkType; label: string }[] = [
 type FundOption = { id: string; title: string; churchName: string; startDate: string; cover: string };
 type Draft = Omit<Story, "id">;
 const emptyDraft = (category: string): Draft => ({
-  category, title: "", churchName: "", date: new Date().toISOString().slice(0, 10),
+  category, title: "", churchName: "", desc: "", date: new Date().toISOString().slice(0, 10),
   imageUrl: "", linkType: "none", link: "", fundraiserId: "", visible: true,
 });
 
@@ -154,6 +154,9 @@ const StoryForm = ({ initial, categories, funds, onSubmit, onClose }: {
           )}
           <Field label="제목">
             <input value={d.title} onChange={(e) => set({ title: e.target.value })} placeholder="ex. 해운대제일교회 러브링 나눔" className={inputCls} style={inputStyle} />
+          </Field>
+          <Field label="간단한 내용" help="카드에 제목 아래로 한두 줄 보여요.">
+            <textarea value={d.desc} onChange={(e) => set({ desc: e.target.value })} rows={2} placeholder="ex. 결연 아동과 가정을 위한 2주간의 집중 모금, 함께해 주세요." className={inputCls} style={{ ...inputStyle, resize: "vertical" }} />
           </Field>
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="교회 이름">

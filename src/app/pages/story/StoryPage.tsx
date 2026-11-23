@@ -137,7 +137,8 @@ export const StoryPage = () => {
                     </span>
                   </div>
                   <h2 className="mt-3.5 text-[17px] font-bold leading-snug line-clamp-2" style={{ color: C.ink }}>{s.title}</h2>
-                  {s.churchName && <p className="mt-1.5 text-sm" style={{ color: C.sub }}>{s.churchName}</p>}
+                  {s.desc && <p className="mt-2 text-[14px] leading-relaxed line-clamp-2 break-keep" style={{ color: C.sub }}>{s.desc}</p>}
+                  {s.churchName && <p className="mt-1.5 text-sm" style={{ color: C.muted }}>{s.churchName}</p>}
                   {s.date && <p className="mt-0.5 text-sm" style={{ color: C.muted }}>{storyDate(s.date)}</p>}
                 </article>
               );

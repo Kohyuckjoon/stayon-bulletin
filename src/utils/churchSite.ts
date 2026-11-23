@@ -22,6 +22,8 @@ export interface ChurchSite {
   address?: string;
   locationDetail?: string; // 상세 위치 안내 (ex. "○○빌딩 3층, 엘리베이터 옆 계단"). 개척교회처럼 상가 건물에 있는 경우를 위한 보충 설명
   shuttleInfo?: string; // 차량 운행 안내(여러 줄). 홈페이지 오시는 길에 "펼쳐 보기"로 표시
+  naverMapLink?: string; // 네이버 지도 버튼: 교회가 넣은 공유 링크(http…) 또는 검색어. 없으면 주소로 검색
+  kakaoMapLink?: string; // 카카오맵 버튼: 위와 같음
 
   worshipTime?: string; // 구버전 단일 텍스트 필드 (하위 호환용, worshipServices가 있으면 그쪽을 우선 사용)
   worshipServices?: { title: string; time: string; place?: string; note?: string; group?: string }[]; // group: "주일예배"/"주중예배" 등 같은 이름끼리 카드로 묶어서 표시
@@ -29,7 +31,7 @@ export interface ChurchSite {
   mainWorshipGroup?: string; // worshipServices의 group 값 중 "본 예배" 뱃지를 표시할 구분 이름
   visionItems?: { title: string; desc: string }[];
   // 교회 소식(편집 화면 > 매주 업데이트). date = 등록일(YYYY-MM-DD, 자동). id = 상세 주소(/news/id)용
-  newsItems?: { id?: string; title: string; date: string; content: string; items?: { title: string; content: string }[] }[];
+  newsItems?: { id?: string; title: string; date: string; content: string; items?: { title: string; content: string }[]; notice?: string }[]; // notice: 번호 없이 맨 위에 보이는 전체 안내
   staffMembers?: { role: string; name: string; department: string; phone: string; email: string; photoUrl?: string }[]; // 부목사·전도사 등 섬기는 사람들 (숫자 제한 없음)
   layLeaders?: { role: string; name: string; department: string; photoUrl?: string }[]; // 중직자(장로·권사). 표시 시 시무장로 > 원로장로 > 은퇴장로 > 권사 순으로 정렬
   // 주일학교/교육부서 메뉴: 메뉴 이름(주일학교·교육부서·직접 입력)과 부서 목록(유초등부·중고등부·청년부 등)
@@ -77,17 +79,19 @@ export interface ChurchSite {
   dataSource?: "bulletin" | "custom" | "website";
   denomination?: string; // 교단 마크 id(utils/denominations.ts). 없으면 예장 합동, "none"이면 사용 안 함
   denominationWithLogo?: boolean; // 로고 이미지가 있어도 교단 마크를 옆에 같이 표시
+  denominationFullName?: boolean; // 교단 이름을 괄호까지 표시: 대한예수교장로회(합신). 없으면 괄호 앞부분만
   hideLogo?: boolean; // 홈페이지에서는 로고 이미지를 쓰지 않음(교단 마크 + 교회 이름으로 표시). 주보 로고는 그대로
   heroImages?: string[]; // 첫 화면 배너 사진(최대 10장). 첫 장은 heroImageUrl에도 같이 저장됨
   heroTransition?: "slide" | "fade"; // 2장 이상일 때 넘김 방식: 슬라이드 / 디졸브
   // 메인 바로가기 카드 4개 문구(편집 화면 > 홈 화면). {교회}는 교회 이름으로 바뀜. 비우면 기본 문구
-  homeCards?: { title?: string; desc?: string }[];
+  homeCards?: { title?: string; desc?: string; hidden?: boolean }[];
   heroTextColor?: string; // 메인 사진 위 글자(WELCOME·교회 이름·표어) 색. 비우면 흰색
   // 이번 주 말씀(편집 화면 > 매주 업데이트). 주보 설교가 없거나 주보와 연동하지 않는 교회에서 씀
   weeklySermon?: { title?: string; scripture?: string; preacher?: string; date?: string };
   // 서버(youtubeVideos)가 저장해 둔 유튜브 채널 영상 목록. 홈페이지는 이걸 바로 쓰고 1시간 지났을 때만 새로 받음
   ytVideos?: { url?: string; t?: number; videos?: { id: string; title: string; published: string; short?: boolean }[] };
   ytPlaylist?: { url?: string; t?: number; videos?: { id: string; title: string; published: string; short?: boolean }[] }; // 지난 설교 재생목록 저장본
+  ytShorts?: { url?: string; t?: number; videos?: { id: string; title: string; published: string; short?: boolean }[] }; // 채널 쇼츠 저장본(말씀/영상 쇼츠 칸)
   historyItems?: { date: string; content: string }[]; // 교회 연혁
   // 찬양팀(위쪽 메뉴 "찬양팀"): praiseEnabled가 true일 때만 메뉴에 보임
   praiseEnabled?: boolean;
@@ -117,6 +121,9 @@ export interface ChurchSite {
   // 교회소개 칸 켜기/끄기(false면 홈페이지에서 숨김)
   staffEnabled?: boolean; officersEnabled?: boolean; historyEnabled?: boolean; newcomerEnabled?: boolean; // 홈페이지 "온라인 주보" 메뉴 보이기(기본 켜짐, false면 숨김)
   pendingOwner?: boolean; // 운영자가 먼저 만들고 아직 교회 계정을 연결하지 않은 사이트
+  // 교회 편집 잠금(2026-11-19): true면 교회 관리자는 "내 프로젝트"에 흐리게만 보이고 편집 화면에 못 들어감.
+  // /super 교회 사이트 관리의 Open/Close로 바꿈. 운영자는 항상 편집 가능. 값이 없으면 열림(예전 사이트 그대로)
+  editLocked?: boolean;
   paperBulletins?: {
     id: string; date: string; title: string; fileUrl: string; fileName: string; fileType: string;
     // fileType "images": 사진 여러 장(순서대로) / "link": 블로그·카페 등 링크(fileUrl이 링크) — 2026-11-17

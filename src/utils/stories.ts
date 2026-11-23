@@ -10,6 +10,7 @@ export interface Story {
   category: string;
   title: string;
   churchName: string;
+  desc: string; // 카드에 보일 간단한 내용(한두 줄)
   date: string; // YYYY-MM-DD (카드 정렬·표시용)
   imageUrl: string;
   linkType: StoryLinkType;
@@ -25,6 +26,7 @@ export const toStory = (id: string, d: Record<string, unknown>): Story => ({
   category: String(d.category || ""),
   title: String(d.title || ""),
   churchName: String(d.churchName || ""),
+  desc: String(d.desc || ""),
   date: String(d.date || ""),
   imageUrl: String(d.imageUrl || ""),
   linkType: (["give", "youtube", "url"].includes(String(d.linkType)) ? d.linkType : "none") as StoryLinkType,

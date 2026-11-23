@@ -14,7 +14,7 @@ export interface Person { role: string; name: string; desc?: string; photoUrl?: 
 export interface WorshipItem { group: string; title: string; time: string; place?: string; note?: string }
 // fileUrl: 종이 주보 분석으로 넣은 설교면 그 주보 파일 주소(누르면 파일이 열림)
 export interface BulletinSummary { id: string; date: string; title: string; scripture: string; preacher: string; status: string; fileUrl?: string }
-export interface NewsGroup { id: string; date: string; items: { title: string; content: string }[] }
+export interface NewsGroup { id: string; date: string; items: { title: string; content: string }[]; notice?: string } // notice: 번호 없는 전체 안내(빌더에서 쓴 소식만)
 export interface Post { id: string; title: string; date: string; content: string }
 // 교회 주보(종이 주보 파일) — 빌더에서 교회가 올린 한글·워드·PDF·사진 파일
 // fileType: 확장자(pdf·hwp·jpg…) / "images"(사진 여러 장, images에 순서대로) / "link"(링크)
@@ -27,11 +27,12 @@ export interface SiteContent {
   logoUrl: string; // 교회가 직접 올린 로고(있으면 교단 마크보다 우선)
   denomination: Denomination | null;
   denominationWithLogo: boolean;
+  denominationFullName: boolean;
   heroImageUrl: string;
   heroImages: string[];
   heroTransition: "slide" | "fade";
   heroTextColor: string; // 메인 사진 위 글자 색(#RRGGBB). 기본 흰색
-  homeCards: { title?: string; desc?: string }[]; // 메인 바로가기 카드 문구(저장값 그대로, 화면에서 기본 문구로 채움)
+  homeCards: { title?: string; desc?: string; hidden?: boolean }[]; // 메인 바로가기 카드 문구(저장값 그대로, 화면에서 기본 문구로 채움)
   buildingImageUrl: string;
   galleryImages: string[];
   // 교회 소개
@@ -80,6 +81,8 @@ export interface SiteContent {
   address: string;
   addressDetail: string;
   shuttleInfo: string; // 차량 운행 안내(홈페이지 편집 화면 > 교회 기본 정보)
+  naverMapLink: string; // 네이버 지도 버튼 링크/검색어(비면 주소로 검색)
+  kakaoMapLink: string; // 카카오맵 버튼 링크/검색어
   // 주일학교/교육부서 메뉴(홈페이지 편집 화면 > 소개·소식)
   eduLabel: string;
   eduDepartments: { name: string; target: string; time: string; place: string; leader: string; desc: string; photoUrl: string }[];
@@ -332,7 +335,8 @@ export function buildSiteContent(site: ChurchSite, owner: OwnerData): SiteConten
     // 한 건에 1번·2번… 여러 소식(items). 예전 데이터는 title/content 한 개
     const lines = (arr(n?.items).length ? arr(n.items) : [{ title: n?.title, content: n?.content }])
       .map((a) => ({ title: s(a?.title), content: s(a?.content) })).filter((a) => a.title || a.content);
-    if (lines.length) news.push({ id: s(n?.id) || `site-${i}`, date: normDate(n.date), items: lines });
+    const notice = s(n?.notice);
+    if (lines.length || notice) news.push({ id: s(n?.id) || `site-${i}`, date: normDate(n.date), items: lines, notice });
   });
   // 같은 날짜에 주보 소식과 홈페이지 소식이 둘 다 있으면 홈페이지 것만 보여 줌
   // (홈페이지·주보 저장 때 "반대쪽에도 반영할까요?"로 서로 맞추고, "아니오"면 홈페이지 내용 유지)
@@ -385,6 +389,7 @@ export function buildSiteContent(site: ChurchSite, owner: OwnerData): SiteConten
     logoUrl: site.hideLogo === true ? "" : ((b.churchLogoEnabled !== false && isImage(b.churchLogo) && s(b.churchLogo)) || (isImage(site.logoUrl) ? s(site.logoUrl) : "")),
     denomination: resolveDenomination(site.denomination),
     denominationWithLogo: site.denominationWithLogo === true,
+    denominationFullName: site.denominationFullName === true,
     heroImageUrl: isImage(site.heroImageUrl) ? s(site.heroImageUrl) : "",
     heroImages: arr(site.heroImages).filter(isImage).length
       ? arr(site.heroImages).filter(isImage)
@@ -465,6 +470,8 @@ export function buildSiteContent(site: ChurchSite, owner: OwnerData): SiteConten
     address,
     addressDetail: (b.addressEnabled !== false && s(b.churchAddressDetail)) || s(site.locationDetail),
     shuttleInfo: s(site.shuttleInfo),
+    naverMapLink: s(site.naverMapLink),
+    kakaoMapLink: s(site.kakaoMapLink),
     eduLabel: s(site.eduMenuLabel) || "주일학교",
     eduDepartments: arr(site.eduDepartments).filter((d) => s(d?.name)).map((d) => ({
       name: s(d.name), target: s(d.target), time: s(d.time), place: s(d.place), leader: s(d.leader), desc: s(d.desc),

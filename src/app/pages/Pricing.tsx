@@ -21,7 +21,7 @@ import { useWebsitePayment } from "../../hooks/useWebsitePayment";
 import { useBillingKey, addMonthsClamped } from "../../hooks/useBillingKey";
 // "앞으로 이런 요금제로 확장돼요" 미리보기 전용 — 교회 규모(성도 수)별로
 // 베이직/스탠다드/프로/올인원 가격이 다르게 뜨도록 통합한 매트릭스
-import { PRICING_MATRIX, THREE_MONTH_DISCOUNT_PLANS, type FeaturePlanKey } from "../../utils/pricingMatrix";
+import { MANAGED_PLANS, PRICING_MATRIX, THREE_MONTH_DISCOUNT_PLANS, type FeaturePlanKey, type ManagedVariant } from "../../utils/pricingMatrix";
 import { KakaoChannelButton, KAKAO_CHANNEL_URL } from "../components/KakaoChannelButton";
 import { PRICING_TIERS } from "../../utils/pricingTiers";
 import { setLoginReturnTo } from "../../utils/loginReturn";
@@ -54,6 +54,9 @@ export function Pricing() {
   const [selectedFeaturePlan, setSelectedFeaturePlan] = useState<FeaturePlanKey>("basic");
   // 통합 요금 화면(주보 & 홈페이지, 2026-11-12): 위쪽 1개월/3개월 전환 + 카드 "시작하기" → 결제 방식 고르는 창
   const [billingCycle, setBillingCycle] = useState<"monthly" | "threeMonth">("monthly");
+  // 관리형 카드 안에서 고른 종류(라이트 14,900 / 맥스 19,900). 결제할 때 이 금액·이름으로 넘어감(요금제 등급은 둘 다 allinone)
+  const [managedVariant, setManagedVariant] = useState<ManagedVariant>("lite");
+  const managed = MANAGED_PLANS[managedVariant];
   const [chooserPlan, setChooserPlan] = useState<FeaturePlanKey | null>(null);
   const [currentUserInfo, setCurrentUserInfo] = useState<{
     email: string; churchName: string; status: string; uid: string; congregationSize: string;
@@ -253,21 +256,46 @@ export function Pricing() {
   // buildTierPlan(교회 규모만 반영, 기존 결제 흐름 그대로)과는 별개 —
   // 대표 요금제 카드(위쪽 3장)에서만 쓰는 신규 함수. usePayment.ts 자체는
   // 안 바뀌고, 여기서 계산한 amount/name을 그대로 넘기기만 한다.
-  const FEATURE_PLAN_LABELS: Record<FeaturePlanKey, string> = {
-    basic: "베이직", standard: "스탠다드", pro: "프로", allinone: "올인원",
+  // 요금 카드 앞면 색(실제 카드처럼): 베이직 실버 · 스탠다드 초록 · 프로 파랑 · 관리형 블랙
+  const CARD_FACE: Record<FeaturePlanKey, string> = {
+    basic: "from-slate-400 via-slate-500 to-slate-700",
+    standard: "from-emerald-400 via-teal-500 to-teal-700",
+    pro: "from-sky-500 via-blue-600 to-indigo-700",
+    allinone: "from-slate-700 via-slate-900 to-black",
   };
+  const FEATURE_PLAN_LABELS: Record<FeaturePlanKey, string> = {
+    basic: "베이직", standard: "스탠다드", pro: "프로 · 셀프형", allinone: "관리형", // (2026-11-20) website 화면과 같은 이름으로
+  };
+  // 관리형은 고른 종류(라이트/맥스)의 이름·월 금액으로
+  const planLabel = (k: FeaturePlanKey) => (k === "allinone" ? managed.label : FEATURE_PLAN_LABELS[k]);
+  // 결제 범위(2026-11-20): 베이직·스탠다드 = 주보 / 프로·관리형 = 주보 + 교회 홈페이지. 결제창 상품 이름·안내 창에 씀
+  const includesWeb = (k?: string | null) => k === "pro" || k === "allinone";
+  const scopeName = (k?: string | null) => (includesWeb(k) ? "주보·홈페이지" : "주보");
+  const monthlyOf = (k: FeaturePlanKey) => (k === "allinone" ? managed.monthly : PRICING_MATRIX[featuredTier.value]?.[k]?.monthly ?? null);
   const buildFeaturePlan = (
     tier: (typeof PRICING_TIERS)[number],
     featureKey: FeaturePlanKey,
     duration: "monthly" | "threeMonth"
   ) => {
     const row = PRICING_MATRIX[tier.value]?.[featureKey];
+    // 관리형: 라이트/맥스 고른 금액. 3개월은 할인 없이 1개월 금액 × 3 (2026-11-20)
+    if (featureKey === "allinone") {
+      const three = duration === "threeMonth";
+      return {
+        id: `plan_${tier.value}_allinone_${managedVariant}_${duration}`,
+        name: `${managed.label} ${three ? "3개월" : "1개월"} 주보·홈페이지 플랜`, // "3개월"이 들어가야 결제 후 90일 연장됨(usePayment)
+        price: (managed.monthly * (three ? 3 : 1)).toLocaleString(),
+        period: three ? "3개월" : "월",
+        status: "active",
+        featurePlan: featureKey,
+      };
+    }
     const amount = row ? (duration === "monthly" ? row.monthly : row.threeMonth) : null;
     if (amount === null || amount === undefined) return null;
     return {
       id: `plan_${tier.value}_${featureKey}_${duration}`,
       // 단독 요금제: 이름에서 교회 규모(개척 등)를 뺌 — 결제창·결제 내역에 보이는 상품 이름(예: "프로 1개월 주보 플랜")
-      name: `${FEATURE_PLAN_LABELS[featureKey]} ${duration === "monthly" ? "1개월" : "3개월"} 주보 플랜`,
+      name: `${FEATURE_PLAN_LABELS[featureKey]} ${duration === "monthly" ? "1개월" : "3개월"} ${scopeName(featureKey)} 플랜`, // 예: "프로 · 셀프형 1개월 주보·홈페이지 플랜"
       price: amount.toLocaleString(),
       period: duration === "monthly" ? "월" : "3개월",
       status: "active",
@@ -328,13 +356,15 @@ export function Pricing() {
   // useSavedCard: 결제 관리에서 등록해 둔 카드로 바로 결제(카드 번호 다시 입력 안 함).
   // false면 카드 등록 창을 띄워 새 카드를 등록한 뒤 결제. 어느 쪽이든 첫 달은 바로 결제됨
   const handleConfirmRecurring = async (useSavedCard: boolean) => {
-    const recurringAmount = PRICING_MATRIX[featuredTier.value]?.[selectedFeaturePlan]?.monthly;
+    const recurringAmount = monthlyOf(selectedFeaturePlan);
     if (!recurringAgreed || recurringAmount === null || recurringAmount === undefined) return;
     const plan = {
-      planName: `${FEATURE_PLAN_LABELS[selectedFeaturePlan]} 정기결제 플랜`, // 단독 요금제: 교회 규모 표기 뺌
+      planName: `${planLabel(selectedFeaturePlan)} ${scopeName(selectedFeaturePlan)} 정기결제 플랜`, // 단독 요금제: 교회 규모 표기 뺌
       tierValue: featuredTier.value,
       amount: recurringAmount,
       featurePlan: selectedFeaturePlan,
+      // 관리형: 12개월 연속으로 다 채우면 환급(중도 해지 시 없음)
+      refundAmount: selectedFeaturePlan === "allinone" ? managed.refund : 0,
     };
     setRegisteringRecurring(true);
     try {
@@ -460,7 +490,7 @@ export function Pricing() {
         <div id="plans" className="max-w-6xl mx-auto mb-8 sm:mb-14 scroll-mt-6">
           {fromBuilder && (
             <div className="mb-5 sm:mb-7 flex items-center justify-center gap-2 rounded-2xl bg-blue-50 px-4 py-3 text-center text-sm font-bold text-blue-700 break-keep">
-              <Globe className="w-4 h-4 shrink-0" /> 교회 홈페이지는 프로·올인원 요금제에 포함돼 있어요
+              <Globe className="w-4 h-4 shrink-0" /> 교회 홈페이지는 프로 · 셀프형, 관리형 요금제에 포함돼 있어요
             </div>
           )}
           {/* 300명 이상 안내 */}
@@ -497,10 +527,12 @@ export function Pricing() {
               { key: "basic", web: false, icon: FileText, desc: "모바일 주보를 처음 시작하는 교회", points: ["모바일 주보 무제한 발행", "예배 순서·찬양·말씀", "지난 주보·교회 소식"] },
               { key: "standard", web: false, icon: FileText, desc: "교회 정보까지 담은 주보", points: ["베이직 모든 기능", "교회 소개·섬기는 분·목회 칼럼", "오시는 길·SNS·카톡 미리보기"] },
               { key: "pro", web: true, icon: Globe, desc: "주보 + 직접 꾸미는 교회 홈페이지", points: ["스탠다드 모든 기능", "교회 홈페이지 (셀프형 · 직접 편집)", "커스텀 주보 디자인"] },
-              { key: "allinone", web: true, icon: Crown, desc: "스테이온이 알아서 관리해 드려요", points: ["프로 모든 기능", "스테이온이 대신 업데이트 (관리형)", "교회 홈페이지 검색 노출(SEO) 지원"] },
+              { key: "allinone", web: true, icon: Crown, desc: "스테이온이 알아서 관리해 드려요", points: ["프로 · 셀프형 모든 기능", managed.update, "교회 홈페이지 검색 노출(SEO) 지원"] },
             ] as const).map((pl, i) => {
               const row = PRICING_MATRIX[featuredTier.value]?.[pl.key];
-              const amount = row ? (billingCycle === "monthly" ? row.monthly : row.threeMonth) : null;
+              const isManaged = pl.key === "allinone";
+              // 관리형: 3개월은 할인 없이 1개월 금액 × 3
+              const amount = isManaged ? managed.monthly * (billingCycle === "monthly" ? 1 : 3) : row ? (billingCycle === "monthly" ? row.monthly : row.threeMonth) : null;
               const full = row && row.monthly !== null ? row.monthly * 3 : null;
               const off = billingCycle === "threeMonth" && THREE_MONTH_DISCOUNT_PLANS.includes(pl.key) && full !== null && amount !== null ? full - amount : 0;
               const featured = pl.key === "allinone";
@@ -508,51 +540,92 @@ export function Pricing() {
               return (
                 <motion.div key={pl.key} initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.06, duration: 0.4 }}
                   className="shrink-0 w-[78%] snap-center sm:w-auto sm:shrink">
-                  <Card className={`relative h-full flex flex-col p-5 sm:p-6 rounded-[1.75rem] border-0 transition-all duration-300 hover:-translate-y-1 ${featured ? "bg-slate-900 text-white shadow-2xl shadow-slate-300 ring-2 ring-blue-500" : `bg-white shadow-sm hover:shadow-md ${fromBuilder ? (pl.web ? "ring-2 ring-blue-300" : "opacity-50 hover:opacity-100") : ""}`}`}>
+                  {/* (2026-11-20) 실제 카드처럼: 위쪽은 신용카드 모양(색 그라데이션 · IC칩 · 요금제 이름 · 금액), 아래는 설명·기능·버튼 */}
+                  <Card className={`relative h-full flex flex-col gap-0 p-3.5 rounded-[1.5rem] border-0 bg-white transition-all duration-300 hover:-translate-y-1 ${featured ? "shadow-xl shadow-blue-100 ring-2 ring-blue-500" : `shadow-sm hover:shadow-md ${fromBuilder ? (pl.web ? "ring-2 ring-blue-300" : "opacity-50 hover:opacity-100") : ""}`}`}>
                     {featured && (
-                      <div className="absolute -top-3 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-blue-600 px-4 py-1 text-[11px] font-black text-white shadow-lg">추천</div>
+                      <div className="absolute -top-3 left-1/2 -translate-x-1/2 z-10 whitespace-nowrap rounded-full bg-blue-600 px-4 py-1 text-[11px] font-black text-white shadow-lg">추천</div>
                     )}
-                    <div className="flex items-center justify-between">
-                      <div className={`flex h-10 w-10 items-center justify-center rounded-2xl ${featured ? "bg-white/10 text-blue-300" : pl.web ? "bg-blue-50 text-blue-600" : "bg-slate-100 text-slate-600"}`}>
-                        <Icon className="w-5 h-5" />
+                    {/* 카드 앞면 */}
+                    <div className={`relative overflow-hidden rounded-2xl p-4 text-white aspect-[1.586/1] flex flex-col shadow-[0_8px_20px_rgba(15,23,42,0.18)] bg-gradient-to-br ${CARD_FACE[pl.key]}`}>
+                      {/* 반짝이는 무늬 */}
+                      <span className="pointer-events-none absolute -right-10 -top-12 h-40 w-40 rounded-full bg-white/10" />
+                      <span className="pointer-events-none absolute -left-8 -bottom-16 h-36 w-36 rounded-full bg-white/[0.07]" />
+                      <div className="relative flex items-start justify-between">
+                        <div>
+                          <p className="text-[10px] font-black tracking-[0.2em] text-white/70">STAYON</p>
+                          <h3 className="mt-0.5 text-[17px] font-black leading-tight">{FEATURE_PLAN_LABELS[pl.key]}{isManaged && <span className={`ml-1 ${managedVariant === "max" ? "text-amber-300" : "text-white/80"}`}>{managedVariant === "max" ? "MAX" : "LITE"}</span>}</h3>
+                        </div>
+                        <Icon className="w-5 h-5 text-white/80" />
                       </div>
-                      {/* 포함 범위: 주보 / 주보 + 홈페이지 */}
-                      <div className="flex gap-1">
-                        <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-black ${featured ? "bg-white/10 text-white" : "bg-slate-100 text-slate-600"}`}><FileText className="w-3 h-3" /> 주보</span>
-                        {pl.web && <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-black ${featured ? "bg-blue-500 text-white" : "bg-blue-50 text-blue-600"}`}><Globe className="w-3 h-3" /> 홈페이지</span>}
+                      {/* IC칩 + 비접촉 표시 */}
+                      <div className="relative mt-2 flex items-center gap-2">
+                        <span className="relative h-6 w-8 rounded-[5px] bg-gradient-to-br from-amber-100 via-amber-300 to-amber-500 shadow-inner">
+                          <span className="absolute inset-x-0 top-1/2 h-px bg-amber-700/40" />
+                          <span className="absolute inset-y-0 left-1/2 w-px bg-amber-700/40" />
+                          <span className="absolute inset-[5px] rounded-[3px] border border-amber-700/30" />
+                        </span>
+                        <svg viewBox="0 0 24 24" className="h-4 w-4 text-white/70" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M8.5 7.5a6 6 0 0 1 0 9" /><path d="M12 5a9.5 9.5 0 0 1 0 14" /><path d="M5 10a2.5 2.5 0 0 1 0 4" /></svg>
+                      </div>
+                      {/* 금액(카드 번호 자리) */}
+                      <div className="relative mt-auto flex items-end justify-between gap-2">
+                        {amount === null ? (
+                          <p className="text-xl font-black">별도 문의</p>
+                        ) : (
+                          <motion.div key={`${pl.key}-${billingCycle}-${isManaged ? managedVariant : ""}`} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }} className="flex items-end gap-1">
+                            <span className="text-[28px] font-black leading-none tracking-tight [text-shadow:0_1px_2px_rgba(0,0,0,0.25)]">{amount.toLocaleString()}</span>
+                            <span className="mb-0.5 text-[11px] font-bold text-white/75">원 / {billingCycle === "monthly" ? "월" : "3개월"}</span>
+                          </motion.div>
+                        )}
+                        {/* 포함 범위: 주보 / 주보 + 홈페이지 */}
+                        <div className="flex shrink-0 flex-col items-end gap-1">
+                          <span className="rounded-full bg-white/20 px-2 py-0.5 text-[10px] font-black backdrop-blur">주보</span>
+                          {pl.web && <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-black text-slate-900">+ 홈페이지</span>}
+                        </div>
                       </div>
                     </div>
-                    <h3 className={`mt-4 text-lg sm:text-xl font-black ${featured ? "text-white" : "text-slate-900"}`}>{FEATURE_PLAN_LABELS[pl.key]}</h3>
-                    <p className={`mt-1 text-xs font-bold break-keep ${featured ? "text-slate-400" : "text-slate-500"}`}>{pl.desc}</p>
-                    <div className="mt-4 min-h-[64px]">
-                      {amount === null ? (
-                        <p className="text-2xl font-black">별도 문의</p>
-                      ) : (
-                        <motion.div key={`${pl.key}-${billingCycle}`} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
-                          <div className="flex items-end gap-1">
-                            <span className={`text-3xl font-black tracking-tight ${featured ? "text-white" : "text-slate-900"}`}>{amount.toLocaleString()}</span>
-                            <span className={`mb-1 text-xs font-bold ${featured ? "text-slate-400" : "text-slate-400"}`}>원 / {billingCycle === "monthly" ? "월" : "3개월"}</span>
-                          </div>
-                          {off > 0 && full !== null ? (
-                            <p className="mt-1 text-[11px] font-bold"><span className={`line-through mr-1.5 ${featured ? "text-slate-500" : "text-slate-400"}`}>{full.toLocaleString()}원</span><span className="text-rose-400">{off.toLocaleString()}원 할인 ({Math.round((off / full!) * 100)}%)</span></p>
-                          ) : (
-                            <p className={`mt-1 text-[11px] font-bold ${featured ? "text-slate-500" : "text-slate-400"}`}>{billingCycle === "monthly" ? "1회 결제 또는 정기결제" : "1회 결제 · 자동 갱신 없음"}</p>
-                          )}
-                        </motion.div>
+
+                    <div className="flex flex-1 flex-col px-1.5 pt-3">
+                      <p className="text-[13px] font-bold text-slate-600 break-keep">{pl.desc}</p>
+                      {/* 관리형: 라이트 / 맥스 고르기 */}
+                      {isManaged && (
+                        <div className="mt-2.5 grid grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1">
+                          {(["lite", "max"] as const).map((v) => (
+                            <button key={v} type="button" onClick={() => setManagedVariant(v)} aria-pressed={managedVariant === v}
+                              className={`rounded-lg py-1.5 text-[12px] font-black transition-colors ${managedVariant === v ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}>
+                              {v === "lite" ? `라이트 ${MANAGED_PLANS.lite.monthly.toLocaleString()}` : `맥스 ${MANAGED_PLANS.max.monthly.toLocaleString()}`}
+                            </button>
+                          ))}
+                        </div>
                       )}
+                      {amount !== null && (
+                        isManaged ? (
+                          billingCycle === "threeMonth" ? (
+                            // 3개월 탭: 금액이 같으니 깜빡할 걱정 없는 1개월 정기결제를 추천(누르면 1개월 탭으로)
+                            <button type="button" onClick={() => setBillingCycle("monthly")} className="mt-2 block w-full rounded-lg bg-emerald-50 px-2.5 py-1.5 text-left text-[11px] font-bold leading-snug text-emerald-700 break-keep hover:bg-emerald-100">
+                              금액은 같아요! 3개월마다 결제하면 깜빡하기 쉬워요. <span className="underline underline-offset-2">1개월 정기결제를 추천해요 →</span>
+                            </button>
+                          ) : (
+                            <p className="mt-2 text-[11px] font-bold text-emerald-600 break-keep">정기결제로 1년 다 채우면 {managed.refund.toLocaleString()}원 돌려드려요</p>
+                          )
+                        ) : off > 0 && full !== null ? (
+                          <p className="mt-2 text-[11px] font-bold"><span className="line-through mr-1.5 text-slate-400">{full.toLocaleString()}원</span><span className="text-rose-500">{off.toLocaleString()}원 할인 ({Math.round((off / full!) * 100)}%)</span></p>
+                        ) : (
+                          <p className="mt-2 text-[11px] font-bold text-slate-400">{billingCycle === "monthly" ? "1회 결제 또는 정기결제" : "1회 결제 · 자동 갱신 없음"}</p>
+                        )
+                      )}
+                      <ul className="mt-3 flex-1 space-y-2">
+                        {pl.points.map((pt) => (
+                          <li key={pt} className="flex items-start gap-2">
+                            <Check className="mt-0.5 w-4 h-4 shrink-0 text-blue-500" />
+                            <span className="text-[13px] font-medium leading-snug break-keep text-slate-600">{pt}</span>
+                          </li>
+                        ))}
+                      </ul>
+                      <Button onClick={() => setChooserPlan(pl.key)}
+                        className={`mt-4 w-full rounded-[1rem] py-5 font-black text-sm border-none transition-all active:scale-95 ${featured ? "bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-200" : "bg-slate-900 hover:bg-black text-white"}`}>
+                        시작하기
+                      </Button>
                     </div>
-                    <ul className="mt-4 flex-1 space-y-2.5">
-                      {pl.points.map((pt) => (
-                        <li key={pt} className="flex items-start gap-2">
-                          <Check className={`mt-0.5 w-4 h-4 shrink-0 ${featured ? "text-blue-400" : "text-blue-500"}`} />
-                          <span className={`text-[13px] font-medium leading-snug break-keep ${featured ? "text-slate-200" : "text-slate-600"}`}>{pt}</span>
-                        </li>
-                      ))}
-                    </ul>
-                    <Button onClick={() => setChooserPlan(pl.key)}
-                      className={`mt-6 w-full rounded-[1.1rem] py-6 font-black text-sm border-none transition-all active:scale-95 ${featured ? "bg-blue-500 hover:bg-blue-600 text-white shadow-lg shadow-blue-900/30" : "bg-slate-900 hover:bg-black text-white"}`}>
-                      시작하기
-                    </Button>
                   </Card>
                 </motion.div>
               );
@@ -1007,7 +1080,8 @@ export function Pricing() {
                 최초 결제일을 기준으로 매월 같은 날 등록된 카드로 자동 결제됩니다. 해당 일자가 없는 달은 말일에 결제됩니다.<br />
                 결제 3일 전에 결제 예정 금액과 일자를 이메일로 안내해 드립니다.<br />
                 결제에 실패하면 3일간 재결제를 시도하며, 최종 실패 시 서비스 이용이 일시 정지됩니다.<br />
-                3개월 플랜은 1회 결제 상품으로 자동 갱신되지 않습니다.
+                3개월 플랜은 1회 결제 상품으로 자동 갱신되지 않습니다.<br />
+                관리형(라이트·맥스)은 매월 정기결제 또는 3개월 1회 결제(4회)로 12개월 연속 이용 요금이 모두 결제되면 관리형 라이트 {MANAGED_PLANS.lite.refund.toLocaleString()}원, 관리형 맥스 {MANAGED_PLANS.max.refund.toLocaleString()}원을 돌려드립니다(결제 일부 취소 또는 계좌 입금). 12개월이 되기 전에 해지하거나, 결제가 끊긴 기간이 생긴 경우(카드 해지·한도 초과, 3개월 결제 기간 만료 후 미결제 등)에는 환급되지 않습니다.
               </p>
             </Card>
             <Card className="p-4 sm:p-6 rounded-xl sm:rounded-[1.5rem] border-0 bg-white shadow-sm">
@@ -1088,14 +1162,16 @@ export function Pricing() {
       <Dialog open={!!chooserPlan} onOpenChange={(o) => { if (!o) setChooserPlan(null); }}>
         <DialogContent className="max-w-md rounded-[2rem] p-6 sm:p-8 border-none shadow-2xl bg-white">
           {chooserPlan && (() => {
-            const row = PRICING_MATRIX[featuredTier.value]?.[chooserPlan];
+            const isManaged = chooserPlan === "allinone";
             const oncePlan = buildFeaturePlan(featuredTier, chooserPlan, billingCycle);
-            const monthly = row?.monthly ?? null;
+            // 3개월을 고른 경우엔 정기결제 선택지 없음(3개월 1회 결제만)
+            const monthly = billingCycle === "monthly" ? monthlyOf(chooserPlan) : null;
+            const onceMonths = billingCycle === "monthly" ? "1개월" : "3개월";
             return (
               <>
                 <DialogHeader>
-                  <DialogTitle className="text-xl font-black text-slate-900 text-center tracking-tight">{FEATURE_PLAN_LABELS[chooserPlan]} 요금제 · 결제 방식 선택</DialogTitle>
-                  <DialogDescription className="text-center text-sm text-slate-500 pt-1">원하시는 결제 방식을 골라 주세요</DialogDescription>
+                  <DialogTitle className="text-xl font-black text-slate-900 text-center tracking-tight">{planLabel(chooserPlan)} · 결제 방식 선택</DialogTitle>
+                  <DialogDescription className="text-center text-sm text-slate-500 pt-1">{includesWeb(chooserPlan) ? "모바일 주보 + 교회 홈페이지 · " : "모바일 주보 · "}원하시는 결제 방식을 골라 주세요</DialogDescription>
                 </DialogHeader>
                 <div className="mt-5 space-y-3">
                   {oncePlan && (
@@ -1103,15 +1179,33 @@ export function Pricing() {
                       className="group w-full rounded-2xl border-2 border-slate-200 p-4 text-left transition-all hover:border-slate-900 hover:-translate-y-0.5">
                       <div className="flex items-center gap-3">
                         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-700">
-                          {billingCycle === "monthly" ? <Clock className="w-5 h-5" /> : <Calendar className="w-5 h-5" />}
+                          {onceMonths === "1개월" ? <Clock className="w-5 h-5" /> : <Calendar className="w-5 h-5" />}
                         </div>
                         <div className="flex-1">
-                          <p className="text-sm font-black text-slate-900">{billingCycle === "monthly" ? "1개월" : "3개월"} 1회 결제</p>
+                          <p className="text-sm font-black text-slate-900">{onceMonths} 1회 결제</p>
                           <p className="text-xs text-slate-500 font-medium">한 번 결제 · 자동으로 다시 결제되지 않아요</p>
+                          {/* 관리형 3개월: 4번(12개월) 연속으로 내도 정기결제와 똑같이 환급(2026-11-20) */}
+                          {isManaged && onceMonths === "3개월" && (
+                            <p className="mt-1 text-xs font-bold text-emerald-600 break-keep">4번(12개월) 연속으로 결제하면 {managed.refund.toLocaleString()}원 돌려드려요</p>
+                          )}
                         </div>
                         <p className="text-base font-black text-slate-900 whitespace-nowrap">{oncePlan.price}원</p>
                       </div>
                     </button>
+                  )}
+                  {/* 3개월 탭 + 관리형: 금액이 같으니 1개월 정기결제를 추천. 누르면 이 창 그대로 1개월로 바뀌어 정기결제가 나타남 */}
+                  {isManaged && billingCycle === "threeMonth" && (
+                    <div className="rounded-2xl border-2 border-dashed border-emerald-300 bg-emerald-50/60 p-4">
+                      <p className="text-[15px] font-black text-slate-900">💡 금액은 똑같아요</p>
+                      <p className="mt-1 text-[13px] font-medium leading-relaxed text-slate-600 break-keep">
+                        3개월마다 직접 결제하다 보면 깜빡하기 쉬워요. 한 번이라도 놓치면 12개월 환급도 끊겨요.
+                        <b className="text-slate-800"> 매월 {managed.monthly.toLocaleString()}원 정기결제</b>로 하시면 신경 쓸 일 없이 자동으로 결제돼요.
+                      </p>
+                      <button type="button" onClick={() => setBillingCycle("monthly")}
+                        className="mt-3 w-full rounded-xl bg-emerald-600 py-3 text-sm font-black text-white hover:bg-emerald-700">
+                        1개월 정기결제로 바꾸기 (추천)
+                      </button>
+                    </div>
                   )}
                   {monthly !== null && (
                     <button type="button" onClick={() => { setSelectedFeaturePlan(chooserPlan); setChooserPlan(null); handleRecurringSelection(); }}
@@ -1121,11 +1215,18 @@ export function Pricing() {
                           <RefreshCcw className="w-5 h-5" />
                         </div>
                         <div className="flex-1">
-                          <p className="text-sm font-black text-slate-900">매월 정기결제</p>
+                          <p className="text-sm font-black text-slate-900">매월 정기결제{isManaged && <span className="ml-1.5 rounded-full bg-emerald-500 px-1.5 py-0.5 text-[10px] text-white align-middle">환급 혜택</span>}</p>
                           <p className="text-xs text-slate-500 font-medium">카드 등록 한 번으로 매달 자동 결제 · 언제든 해지</p>
                         </div>
                         <p className="text-base font-black text-emerald-700 whitespace-nowrap">{monthly.toLocaleString()}원<span className="text-xs font-bold">/월</span></p>
                       </div>
+                      {/* 관리형 정기결제: "1년 채우면 돌려드려요, 대신 중간에 그만두면 없어요"를 크게 */}
+                      {isManaged && (
+                        <div className="mt-3 rounded-xl bg-white px-3.5 py-3">
+                          <p className="text-[15px] font-black text-slate-900">12개월 다 채우면 <span className="text-emerald-600">{managed.refund.toLocaleString()}원</span> 돌려드려요</p>
+                          <p className="mt-0.5 text-[12px] font-bold text-rose-500">대신 중간에 해지하면 환급은 없어요</p>
+                        </div>
+                      )}
                     </button>
                   )}
                 </div>
@@ -1138,21 +1239,21 @@ export function Pricing() {
       <Dialog open={showTrialDialog} onOpenChange={setShowTrialDialog}>
         <DialogContent className="rounded-[2rem] sm:rounded-[2.5rem] max-w-md bg-white border-none p-5 sm:p-8 font-sans">
           <DialogHeader>
-            <DialogTitle className="text-2xl font-black text-slate-900 text-center tracking-tight">무료 주보 체험 및 결제 안내</DialogTitle>
+            <DialogTitle className="text-2xl font-black text-slate-900 text-center tracking-tight">{includesWeb(selectedPlan?.featurePlan) ? "주보 + 교회 홈페이지 결제 안내" : "무료 주보 체험 및 결제 안내"}</DialogTitle>
             <div className="text-base pt-6 space-y-4">
               <div className="bg-blue-50 p-5 rounded-[1.5rem] border border-blue-100">
                 <p className="font-black text-blue-900 mb-1">🎁 선택한 플랜: {selectedPlan?.name}</p>
-                <p className="text-blue-700 text-sm font-medium">최초 1개월은 0원으로 스마트 주보를 이용하며, 이후 {selectedPlan?.price}원이 결제됩니다.</p>
+                <p className="text-blue-700 text-sm font-medium">{includesWeb(selectedPlan?.featurePlan) ? "모바일 주보와 교회 홈페이지를 함께 이용하는 요금제예요. " : ""}최초 1개월은 0원으로 {includesWeb(selectedPlan?.featurePlan) ? "주보·홈페이지" : "스마트 주보"}를 이용하며, 이후 {selectedPlan?.price}원이 결제됩니다.</p>
               </div>
               <div className="bg-orange-50 p-5 rounded-[1.5rem] border border-orange-100">
                 <p className="font-black text-orange-900 mb-1">📢 가격 변동 안내</p>
-                <p className="text-orange-700 text-sm font-medium">본 가격은 베타 전용이며, 정식 서비스 시점에 주보 이용 금액이 인상될 수 있습니다.</p>
+                <p className="text-orange-700 text-sm font-medium">본 가격은 베타 전용이며, 정식 서비스 시점에 {includesWeb(selectedPlan?.featurePlan) ? "주보·홈페이지" : "주보"} 이용 금액이 인상될 수 있습니다.</p>
               </div>
             </div>
           </DialogHeader>
           <div className="flex gap-3 mt-8">
             <Button variant="outline" onClick={() => setShowTrialDialog(false)} className="flex-1 rounded-[1.2rem] h-14 border-slate-200 text-slate-500 font-bold">취소</Button>
-            <Button onClick={() => { handleStartPayment(selectedPlan); setShowTrialDialog(false); }} className="flex-1 rounded-[1.2rem] h-14 bg-blue-600 hover:bg-blue-700 border-none font-black text-white shadow-xl shadow-blue-100">주보 결제 진행하기</Button>
+            <Button onClick={() => { handleStartPayment(selectedPlan); setShowTrialDialog(false); }} className="flex-1 rounded-[1.2rem] h-14 bg-blue-600 hover:bg-blue-700 border-none font-black text-white shadow-xl shadow-blue-100">{includesWeb(selectedPlan?.featurePlan) ? "주보·홈페이지 결제 진행하기" : "주보 결제 진행하기"}</Button>
           </div>
         </DialogContent>
       </Dialog>
@@ -1168,12 +1269,22 @@ export function Pricing() {
               <div className="bg-emerald-50 p-5 rounded-[1.5rem] border border-emerald-100 space-y-1.5">
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-emerald-700 font-bold">요금제</span>
-                  <span className="text-emerald-900 font-black">{FEATURE_PLAN_LABELS[selectedFeaturePlan]}</span>
+                  <span className="text-emerald-900 font-black">{planLabel(selectedFeaturePlan)}</span>
+                </div>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-emerald-700 font-bold">포함</span>
+                  <span className="text-emerald-900 font-black">{includesWeb(selectedFeaturePlan) ? "모바일 주보 + 교회 홈페이지" : "모바일 주보"}</span>
                 </div>
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-emerald-700 font-bold">결제 금액</span>
-                  <span className="text-emerald-900 font-black">{PRICING_MATRIX[featuredTier.value]?.[selectedFeaturePlan]?.monthly?.toLocaleString()}원 / 월</span>
+                  <span className="text-emerald-900 font-black">{monthlyOf(selectedFeaturePlan)?.toLocaleString()}원 / 월</span>
                 </div>
+                {selectedFeaturePlan === "allinone" && (
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-emerald-700 font-bold">12개월 완납 환급</span>
+                    <span className="text-emerald-900 font-black">{managed.refund.toLocaleString()}원</span>
+                  </div>
+                )}
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-emerald-700 font-bold">결제 주기</span>
                   <span className="text-emerald-900 font-black">매월 자동 결제</span>
@@ -1184,7 +1295,10 @@ export function Pricing() {
                 </div>
               </div>
               <p className="text-slate-500 text-[13px] font-medium leading-relaxed break-keep">
-                카드를 등록하면 첫 달 {PRICING_MATRIX[featuredTier.value]?.[selectedFeaturePlan]?.monthly?.toLocaleString()}원이 바로 결제되고, 이후 매월 결제일에 등록된 카드로 자동 결제됩니다. 마이페이지(관리자 홈 &gt; 결제 관리)에서 언제든 해지할 수 있으며, 해지 시 다음 결제일부터 청구되지 않습니다.
+                카드를 등록하면 첫 달 {monthlyOf(selectedFeaturePlan)?.toLocaleString()}원이 바로 결제되고, 이후 매월 결제일에 등록된 카드로 자동 결제됩니다. 마이페이지(관리자 홈 &gt; 결제 관리)에서 언제든 해지할 수 있으며, 해지 시 다음 결제일부터 청구되지 않습니다.
+                {selectedFeaturePlan === "allinone" && (
+                  <> <b className="text-slate-700">12개월 연속으로 결제가 완료되면 {managed.refund.toLocaleString()}원을 돌려드립니다.</b> 중간에 해지하거나 카드 해지·한도 초과 등으로 결제가 끊기면 환급되지 않습니다.</>
+                )}
               </p>
               <label className="flex items-start gap-2.5 cursor-pointer">
                 <Checkbox

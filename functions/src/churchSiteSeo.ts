@@ -51,8 +51,9 @@ const PAGES: {path: string; label: string; group: string}[] = [
   // 주일학교/교육부서(메뉴 이름은 교회가 정함 - 화면에선 eduLabel).
   // 부서별 화면은 /education/1, /education/2 …
   {path: "/education", label: "주일학교", group: "주일학교"},
-  {path: "/worship/online", label: "온라인 예배", group: "예배"},
-  {path: "/sermons", label: "말씀/영상", group: "말씀/영상"},
+  // 2026-11-21: 온라인 예배 → 말씀/영상 첫 탭 "실시간 예배"(/sermons/live)
+  {path: "/sermons/live", label: "실시간 예배", group: "말씀/영상"},
+  {path: "/sermons", label: "말씀 / 영상", group: "말씀/영상"},
   {path: "/bulletins", label: "교회 주보", group: "주보"},
   {path: "/jubo", label: "온라인 주보", group: "주보"},
   // 앨범(홈페이지 편집 화면 > 매주 업데이트). 앨범별 화면은 /album/{앨범 id}
@@ -82,7 +83,8 @@ interface Content {
   address: string;
   addressDetail: string;
   phone: string;
-  news: {id: string; date: string; items: {title: string; content: string}[]}[];
+  news: {id: string; date: string; notice?: string;
+    items: {title: string; content: string}[]}[];
   paperSermons: {date: string; fileUrl: string; text: string}[];
   prayers: {id: string; title: string; date: string; content: string}[];
   history: Doc[];
@@ -193,9 +195,10 @@ function buildContent(site: Doc, ctx: Ctx | null): Content {
       [{title: n.title, content: n.content}])
       .map((a) => ({title: str(a.title), content: str(a.content)}))
       .filter((a) => a.title || a.content);
-    if (lines.length) {
+    const notice = str(n.notice); // 번호 없이 맨 위에 보이는 전체 안내
+    if (lines.length || notice) {
       news.push({id: str(n.id) || `site-${i}`, date: normDate(n.date),
-        items: lines});
+        items: lines, notice});
     }
   });
   // 같은 날짜에 주보 소식과 홈페이지 소식이 둘 다 있으면 홈페이지 것만
@@ -290,12 +293,15 @@ function hasPage(path: string, c: Content): boolean {
   case "/about/staff": return c.staff.length + c.officers.length > 0;
   case "/location": return !!c.address;
   case "/worship": return c.worship.length > 0;
-  case "/worship/online": return !!c.youtube || c.videos.length > 0;
+  case "/sermons/live": return !!c.youtube || c.videos.length > 0;
+  // 화면(MultiPageSite.tsx)과 같은 기준: 유튜브 채널·다음 주 설교만 있어도 메뉴가
+  // 보이므로 서버도 페이지를 만든다(안 그러면 메뉴 링크가 404가 됨, 2026-11-22)
   case "/sermons": return list.some((x) => str(x.data.title) ||
     str(x.data.scripture)) || c.videos.length > 0 ||
-    c.paperSermons.length > 0;
-  // 교회 주보 = 올린 종이 주보 파일
-  case "/bulletins": return arr(c.site.paperBulletins).length > 0;
+    c.paperSermons.length > 0 || !!c.youtube || !!nextSermonOf(c.site);
+  // 교회 주보 = 올린 종이 주보 파일. 화면(MultiPageSite.tsx)은 파일이 없어도 메뉴를
+  // 항상 보여 주므로 서버도 항상 페이지를 만든다(없으면 404였음, 2026-11-22)
+  case "/bulletins": return true;
   // 편집 화면 "온라인 주보 메뉴"를 끄면 숨김(2026-11-17)
   case "/jubo": return !!(c.ctx && c.ctx.bulletin) &&
     c.site.juboMenuEnabled !== false;
@@ -312,6 +318,17 @@ function hasPage(path: string, c: Content): boolean {
   case "/schedule": return c.site.scheduleEnabled === true;
   }
   return false;
+}
+
+/**
+ * 다음 주 설교. 화면 churchSiteContent.ts nextSermon과 같은 규칙
+ * (켜져 있고 제목이 있을 때).
+ * @param {Doc} site 홈페이지 문서
+ * @return {Doc | null} 다음 주 설교 또는 null
+ */
+function nextSermonOf(site: Doc): Doc | null {
+  const n = (site.nextSermon || {}) as Doc;
+  return site.nextSermonEnabled === true && str(n.title) ? n : null;
 }
 
 const ul = (items: string[]) => items.length ?
@@ -376,7 +393,33 @@ function buildPage(c: Content, base: string, path: string): Page | null {
     const id = seg[1];
     if (seg[0] === "bulletins") {
       const x = list.find((y) => y.id === id);
-      if (!x) return null;
+      if (!x) {
+        // 종이 주보 상세(화면 MultiPageSite.tsx paperPath = /bulletins/{id}).
+        // 온라인 주보 id가 아닐 때만 여기로 옴 — 온라인 주보 처리는 그대로(2026-11-22)
+        const pb = arr(c.site.paperBulletins).find((y) =>
+          str(y.id) === id && /^https?:\/\//.test(str(y.fileUrl)));
+        if (!pb) return null;
+        const date = normDate(pb.date) || str(pb.date);
+        const t = str(pb.title) || `${date} 주보`;
+        const pNews = arr(pb.news).filter((n) => str(n.title) ||
+          str(n.content));
+        const pSermons = arr(pb.sermons).filter((n) => str(n.title) ||
+          str(n.scripture)).map((n) => [str(n.title), str(n.scripture),
+          str(n.preacher)].filter(Boolean).join(" · "));
+        return {
+          title: `${t} | ${c.name}`,
+          description: clip([t, ...pSermons,
+            ...pNews.map((n) => str(n.title))].filter(Boolean)
+            .join(" · "), 150),
+          h1: t,
+          body: `<p>주보 날짜 ${esc(date)}</p>` +
+            ul(pSermons.map((x) => esc(x))) +
+            pNews.map((n) => (str(n.title) ? `<h2>${esc(str(n.title))}</h2>` :
+              "") + (str(n.content) ? `<p>${nl2br(str(n.content))}</p>` : ""))
+              .join("") +
+            `<p><a href="${esc(str(pb.fileUrl))}">주보 파일 보기</a></p>`,
+        };
+      }
       const d = x.data;
       const t = `${str(d.date)} 주보`;
       return {
@@ -401,7 +444,9 @@ function buildPage(c: Content, base: string, path: string): Page | null {
         description: clip(n.items.map((i) => i.title || i.content)
           .join(" · "), 150),
         h1: `${n.date} 교회소식`,
-        body: n.items.map((i) => (i.title ? `<h2>${esc(i.title)}</h2>` : "") +
+        body: (n.notice ? `<p>${nl2br(n.notice)
+          .replace(/\*\*([\s\S]+?)\*\*/g, "<strong>$1</strong>")}</p>` : "") +
+          n.items.map((i) => (i.title ? `<h2>${esc(i.title)}</h2>` : "") +
           (i.content ? `<p>${nl2br(i.content)}</p>` : "")).join(""),
       };
     }
@@ -490,7 +535,7 @@ function buildPage(c: Content, base: string, path: string): Page | null {
     body = ul(c.worship.map((w) => `<strong>${esc(w.title)}</strong> ` +
       esc([w.time, w.place].filter(Boolean).join(" "))));
     break;
-  case "/worship/online":
+  case "/sermons/live":
     body = (c.youtube ? `<p><a href="${esc(c.youtube)}">유튜브 채널</a></p>` :
       "") + ul(c.videos.map((v) => esc([str(v.date), str(v.title),
       str(v.speaker)].filter(Boolean).join(" · "))));
@@ -505,13 +550,24 @@ function buildPage(c: Content, base: string, path: string): Page | null {
     const paper = c.paperSermons.map((x) =>
       `<a href="${esc(x.fileUrl)}">` +
       `${esc([x.date, x.text].filter(Boolean).join(" · "))}</a>`);
-    body = ul(online.concat(paper));
+    const ns = nextSermonOf(c.site);
+    body = (ns ? `<h2>다음 주 설교</h2><p>${esc([str(ns.date),
+      str(ns.title), str(ns.scripture), str(ns.preacher)]
+      .filter(Boolean).join(" · "))}</p>` : "") +
+      ul(online.concat(paper)) +
+      ul(c.videos.map((v) => esc([str(v.date), str(v.title),
+        str(v.speaker)].filter(Boolean).join(" · ")))) +
+      (c.youtube ? `<p><a href="${esc(c.youtube)}">유튜브 채널</a></p>` : "");
     break;
   }
   case "/bulletins":
+    // 화면처럼 각 주보는 상세 화면(/bulletins/{id})으로 연결(2026-11-22).
+    // id가 없는 예전 데이터만 파일로 바로 연결
     body = ul(arr(c.site.paperBulletins).filter((p) => str(p.fileUrl))
-      .map((p) => `<a href="${esc(str(p.fileUrl))}">${esc(str(p.date))} ` +
-        `${esc(str(p.title) || "주보")}</a>`));
+      .map((p) => `<a href="${esc(str(p.id) ? `/bulletins/${str(p.id)}` :
+        str(p.fileUrl))}">${esc(str(p.date))} ` +
+        `${esc(str(p.title) || "주보")}</a>`)) ||
+      "<p>아직 올린 교회 주보가 없습니다.</p>";
     break;
   case "/jubo":
     body = `<p>${esc(label(list[0]?.data || {}))}</p>` +
@@ -659,7 +715,10 @@ export function churchSitePage(
   const logoUrl = site.hideLogo === true ? "" :
     (bd.churchLogoEnabled !== false && isUrl(bd.churchLogo) ?
       str(bd.churchLogo) : (isUrl(site.logoUrl) ? str(site.logoUrl) : ""));
-  const denomName = (DENOM_NAMES[denom] || "").replace(/\s*\(.*\)$/, "");
+  // "교단 이름까지 표시"를 켰으면 괄호까지(대한예수교장로회(합신)), 아니면 괄호 앞부분만
+  const denomName = site.denominationFullName === true ?
+    (DENOM_NAMES[denom] || "") :
+    (DENOM_NAMES[denom] || "").replace(/\s*\(.*\)$/, "");
   const brand = logoUrl ?
     `${site.denominationWithLogo === true && mark ?
       mark + "<span class=\"bar\"></span>" : ""}` +
@@ -797,6 +856,11 @@ export function churchSitePaths(
     .forEach((x) => out.push(base + x.path));
   // 온라인 주보 상세(설교 목록에서 연결) — 교회 주보 파일 유무와 상관없이
   (ctx?.list || []).forEach((x) => out.push(`${base}/bulletins/${x.id}`));
+  // 교회 주보(종이 주보 파일) 상세 — 올릴 때마다 자동으로 사이트맵에 들어감(2026-11-22)
+  const onlineIds = new Set((ctx?.list || []).map((x) => x.id));
+  arr(site.paperBulletins).filter((p) => str(p.id) &&
+    !onlineIds.has(str(p.id)) && /^https?:\/\//.test(str(p.fileUrl)))
+    .forEach((p) => out.push(`${base}/bulletins/${str(p.id)}`));
   c.news.forEach((n) => out.push(`${base}/news/${n.id}`));
   (ctx?.columns || []).forEach((x) => out.push(`${base}/column/${x.id}`));
   c.prayers.forEach((x) => out.push(`${base}/prayer/${x.id}`));

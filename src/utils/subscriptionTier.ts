@@ -42,7 +42,7 @@ export const PLAN_TIERS: PlanTierMeta[] = [
     textClass: "text-white",
   },
   {
-    value: "allinone", label: "올인원", icon: Crown,
+    value: "allinone", label: "관리형", icon: Crown, // (2026-11-20) 올인원 → 관리형(라이트·맥스). 등급 값(allinone)은 그대로
     chipClass: "bg-gradient-to-r from-fuchsia-500 via-purple-600 to-indigo-600 shadow-lg shadow-purple-400/50",
     textClass: "text-white",
   },

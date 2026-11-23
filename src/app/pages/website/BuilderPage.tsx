@@ -7,7 +7,7 @@ import { auth, storage, db } from '../../../firebase'
 import { getExpiryInfo, getPlanTierMeta, type ExpiryInfo } from '../../../utils/subscriptionTier'
 import { getChurchSite, getChurchSitesByOwner, createChurchSite, updateChurchSite, publishChurchSite, extendChurchSiteAccess, extractYoutubeId, MENU_ITEMS as menuItems, ChurchSite } from '../../../utils/churchSite'
 import { checkSlugFormat, isSlugTaken, confirmPermanentAddress } from '../../../utils/slugValidation'
-import { DEFAULT_DENOMINATION, NO_DENOMINATION } from '../../../utils/denominations'
+import { DEFAULT_DENOMINATION, NO_DENOMINATION, resolveDenomination, hasDenominationBranch } from '../../../utils/denominations'
 import { fetchOwnerData, builderDefaultsFromBulletin, BuilderDefaults } from '../../../utils/churchSiteContent'
 import { isOperatorEmail } from '../../../utils/operator'
 import { DenominationPicker } from '../../components/DenominationPicker'
@@ -31,28 +31,40 @@ const ALBUM_MAX_PHOTOS = 50
 interface AlbumItem { id: string; title: string; date: string; photos: string[] }
 type WeeklySermon = { title: string; scripture: string; preacher: string; date: string }
 const EMPTY_WEEKLY: WeeklySermon = { title: '', scripture: '', preacher: '', date: '' }
-const EMPTY_HOME_CARDS: HomeCardText[] = [0, 1, 2, 3].map(() => ({ title: '', desc: '' }))
+const EMPTY_HOME_CARDS: HomeCardText[] = [0, 1, 2, 3].map(() => ({ title: '', desc: '', hidden: false }))
 
 // "홈 화면" 탭: 메인 바로가기 카드 4개 문구. 기본 문구 중 고르거나 "기타(직접 입력)".
 // 목록에는 {교회} 대신 지금 교회 이름을 넣어 보여 주고, 저장은 {교회}로 해서 교회 이름을 바꿔도 따라가게
 function HomeCardsEditor({ value, onChange, churchName }: { value: HomeCardText[]; onChange: (v: HomeCardText[]) => void; churchName: string }) {
   const show = (t: string) => t.split(CHURCH_TOKEN).join(churchName)
   const store = (t: string) => (churchName ? t.split(churchName).join(CHURCH_TOKEN) : t)
-  const set = (i: number, k: keyof HomeCardText, v: string) => onChange(value.map((c, j) => (j === i ? { ...c, [k]: store(v) } : c)))
+  const set = (i: number, k: 'title' | 'desc', v: string) => onChange(value.map((c, j) => (j === i ? { ...c, [k]: store(v) } : c)))
+  // ON/OFF 토글(2026-11-19): OFF면 홈페이지에 그 카드를 아예 안 보여 줌(예: 유튜브가 없는 교회)
+  const toggle = (i: number) => onChange(value.map((c, j) => (j === i ? { ...c, hidden: !c.hidden } : c)))
   return (
     <div style={{ background: 'white', borderRadius: 16, border: `1px solid ${THEME.border}`, padding: '28px' }}>
       <h3 style={{ fontWeight: 700, color: THEME.navy, marginBottom: 6, fontSize: 16 }}>메인 바로가기 카드 문구</h3>
-      <p style={{ color: THEME.muted, fontSize: 13, marginBottom: 20, lineHeight: 1.6 }}>메인 사진 아래 카드 4개(처음 오셨나요 · 예배 · 유튜브 · 오시는 길)의 제목과 설명이에요. 기본 문구 중에서 고르거나 <b>기타(직접 입력)</b>로 바꿀 수 있어요.</p>
+      <p style={{ color: THEME.muted, fontSize: 13, marginBottom: 20, lineHeight: 1.6 }}>메인 사진 아래 카드 4개(처음 오셨나요 · 예배 · 유튜브 · 오시는 길)의 제목과 설명이에요. 기본 문구 중에서 고르거나 <b>기타(직접 입력)</b>로 바꿀 수 있어요. <b>OFF</b>로 두면 홈페이지에 그 카드가 보이지 않아요.</p>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
         {HOME_CARD_PRESETS.map((p, i) => {
           const cur = value[i] || { title: '', desc: '' }
+          const on = !cur.hidden
           return (
-            <div key={p.key} style={{ border: `1px solid ${THEME.border}`, borderRadius: 12, padding: 16 }}>
-              <p style={{ fontSize: 12, fontWeight: 800, color: THEME.muted, marginBottom: 10 }}>{i + 1}. {p.en}</p>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12 }}>
+            <div key={p.key} style={{ border: `1px solid ${THEME.border}`, borderRadius: 12, padding: 16, background: on ? 'white' : '#F9FAFB' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: on ? 10 : 0 }}>
+                <p style={{ fontSize: 12, fontWeight: 800, color: THEME.muted }}>{i + 1}. {p.en}{!on && ' · 홈페이지에 안 보임'}</p>
+                <button type="button" role="switch" aria-checked={on} aria-label={`${p.en} 카드 ${on ? '끄기' : '켜기'}`} onClick={() => toggle(i)}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit' }}>
+                  <span style={{ fontSize: 12, fontWeight: 800, color: on ? THEME.navy : '#9CA3AF', width: 26, textAlign: 'right' }}>{on ? 'ON' : 'OFF'}</span>
+                  <span style={{ position: 'relative', width: 44, height: 26, borderRadius: 999, background: on ? THEME.navy : '#D1D5DB', transition: 'background .2s' }}>
+                    <span style={{ position: 'absolute', top: 3, left: on ? 21 : 3, width: 20, height: 20, borderRadius: 999, background: 'white', boxShadow: '0 1px 3px rgba(0,0,0,.25)', transition: 'left .2s' }} />
+                  </span>
+                </button>
+              </div>
+              {on && <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12 }}>
                 <RolePicker label="제목" options={p.titles.map(show)} value={show(cur.title || p.titles[0])} onChange={(v) => set(i, 'title', v)} />
                 <RolePicker label="설명" options={p.descs.map(show)} value={show(cur.desc || p.descs[0])} onChange={(v) => set(i, 'desc', v)} />
-              </div>
+              </div>}
             </div>
           )
         })}
@@ -67,12 +79,110 @@ const newsLines = (n: NewsItem): NewsLine[] =>
   (Array.isArray(n.items) && n.items.length ? n.items : [{ title: n.title || '', content: n.content || '' }])
 
 // 번호 소식 입력칸(새 소식 쓰기·수정 공통): 1번 소식 / 2번 소식 … + "소식 추가"
+// 전체 안내(2026-11-21): 1번·2번 소식 위에 번호 없이 보이는 안내 한 단락(ex. "처음 오신 분들을 환영합니다…").
+// 비어 있으면 "+ 전체 안내 추가" 버튼만, 누르면 입력칸이 열림
+// 굵게(2026-11-21): 글자를 고르고 [B 굵게]를 누르면 **글자** 로 감싸서 홈페이지에 굵게 보임(한 번 더 누르면 풀림)
+function NewsNoticeEditor({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [open, setOpen] = useState(!!value)
+  const ta = useRef<HTMLTextAreaElement>(null)
+  const toggleBold = () => {
+    const el = ta.current
+    if (!el) return
+    const a = el.selectionStart, b = el.selectionEnd
+    if (a === b) { alert('굵게 할 글자를 먼저 마우스로 골라 주세요.'); el.focus(); return }
+    const sel = value.slice(a, b)
+    let next: string, na: number, nb: number
+    if (value.slice(a - 2, a) === '**' && value.slice(b, b + 2) === '**') { // 이미 굵게 → 풀기
+      next = value.slice(0, a - 2) + sel + value.slice(b + 2); na = a - 2; nb = b - 2
+    } else if (/^\*\*[\s\S]+\*\*$/.test(sel)) { // **까지 같이 고른 경우 → 풀기
+      next = value.slice(0, a) + sel.slice(2, -2) + value.slice(b); na = a; nb = b - 4
+    } else {
+      next = value.slice(0, a) + '**' + sel + '**' + value.slice(b); na = a + 2; nb = b + 2
+    }
+    onChange(next)
+    requestAnimationFrame(() => { el.focus(); el.setSelectionRange(na, nb) })
+  }
+  useEffect(() => { if (value) setOpen(true) }, [value])
+  if (!open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)}
+        style={{ display: 'block', marginBottom: 10, background: 'none', border: '1px dashed #9CA3AF', borderRadius: 10, padding: '8px 14px', fontSize: 13, fontWeight: 700, color: '#374151', cursor: 'pointer' }}>
+        + 전체 안내 추가 <span style={{ fontWeight: 500, color: THEME.muted }}>(번호 없이 맨 위에 보여요)</span>
+      </button>
+    )
+  }
+  return (
+    <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', background: 'white', border: `1px solid ${THEME.border}`, borderRadius: 12, padding: 12, marginBottom: 10 }}>
+      <span style={{ flexShrink: 0, height: 28, padding: '0 10px', borderRadius: 999, background: '#E8F3FF', color: '#3182F6', fontSize: 12, fontWeight: 800, display: 'flex', alignItems: 'center', marginTop: 2 }}>전체 안내</span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+          <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={toggleBold} title="고른 글자 굵게"
+            style={{ height: 28, padding: '0 10px', borderRadius: 8, border: `1px solid ${THEME.border}`, background: 'white', fontSize: 13, fontWeight: 900, color: '#111827', cursor: 'pointer' }}>B <span style={{ fontWeight: 600 }}>굵게</span></button>
+          <span style={{ fontSize: 12, color: THEME.muted }}>글자를 고르고 B를 누르면 홈페이지에 굵게 보여요 (**글자**)</span>
+        </div>
+        <textarea ref={ta} value={value} onChange={(e) => onChange(e.target.value)} rows={2} autoFocus={!value}
+          placeholder="번호 없이 맨 위에 보이는 안내 (ex. 처음 오신 분들을 진심으로 환영합니다…)"
+          style={{ width: '100%', border: '1px solid #D1D5DB', borderRadius: 10, padding: '10px 12px', fontSize: 13.5, fontFamily: 'inherit', outline: 'none', resize: 'vertical' }} />
+      </div>
+      <button type="button" onClick={() => { onChange(''); setOpen(false) }} aria-label="전체 안내 빼기"
+        style={{ flexShrink: 0, width: 26, background: 'none', border: 'none', color: '#9CA3AF', fontSize: 18, cursor: 'pointer', lineHeight: 1, marginTop: 4 }}>×</button>
+    </div>
+  )
+}
+
+// 순서 바꾸기(2026-11-21): 오른쪽 ▲▼로 한 칸씩, 또는 왼쪽 손잡이(⠿)를 마우스로 잡고 끌어서 원하는 자리에 놓기.
+// 글 쓰다가 잘못 끌리지 않게 손잡이를 눌렀을 때만 끌 수 있음
 function NewsLinesEditor({ lines, onChange }: { lines: NewsLine[]; onChange: (v: NewsLine[]) => void }) {
   const set = (i: number, k: keyof NewsLine, v: string) => onChange(lines.map((l, j) => (j === i ? { ...l, [k]: v } : l)))
+  const move = (from: number, to: number) => {
+    if (from === to || to < 0 || to >= lines.length) return
+    const next = [...lines]
+    const [x] = next.splice(from, 1)
+    next.splice(to, 0, x)
+    onChange(next)
+  }
+  const [armed, setArmed] = useState<number | null>(null) // 손잡이를 누른 칸(이 칸만 끌 수 있음)
+  const [dragFrom, setDragFrom] = useState<number | null>(null)
+  const [dropAt, setDropAt] = useState<number | null>(null) // 놓을 자리(0~lines.length, 이 번호 칸 앞)
+  const endDrag = () => { setArmed(null); setDragFrom(null); setDropAt(null) }
+  // 손잡이를 눌렀다가 끌지 않고 다른 곳에서 손을 떼도 풀어 둠(그 칸 글자를 고를 때 칸 전체가 끌리지 않게)
+  useEffect(() => {
+    if (armed === null) return
+    const up = () => setArmed((a) => (dragFrom === null ? null : a))
+    window.addEventListener('mouseup', up)
+    return () => window.removeEventListener('mouseup', up)
+  }, [armed, dragFrom])
+  const arrowBtn = (disabled: boolean): React.CSSProperties => ({
+    width: 26, height: 22, borderRadius: 6, border: `1px solid ${THEME.border}`, background: 'white', fontSize: 10, lineHeight: 1,
+    color: disabled ? '#D1D5DB' : '#4B5563', cursor: disabled ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+  })
+  const dropLine = (at: number) => dragFrom !== null && dropAt === at && at !== dragFrom && at !== dragFrom + 1
+    ? <div style={{ height: 3, borderRadius: 3, background: '#3182F6', margin: '-6px 0' }} /> : null
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       {lines.map((l, i) => (
-        <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', background: 'white', border: `1px solid ${THEME.border}`, borderRadius: 12, padding: 12 }}>
+        <div key={i} style={{ display: 'contents' }}>
+        {dropLine(i)}
+        <div
+          draggable={armed === i}
+          onDragStart={(e) => { setDragFrom(i); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(i)) }}
+          onDragOver={(e) => {
+            if (dragFrom === null) return
+            e.preventDefault()
+            const r = e.currentTarget.getBoundingClientRect()
+            setDropAt(e.clientY < r.top + r.height / 2 ? i : i + 1)
+          }}
+          onDrop={(e) => {
+            e.preventDefault()
+            if (dragFrom !== null && dropAt !== null) move(dragFrom, dropAt > dragFrom ? dropAt - 1 : dropAt)
+            endDrag()
+          }}
+          onDragEnd={endDrag}
+          style={{ display: 'flex', gap: 10, alignItems: 'flex-start', background: 'white', border: `1px solid ${dragFrom === i ? '#3182F6' : THEME.border}`, borderRadius: 12, padding: 12, opacity: dragFrom === i ? 0.45 : 1 }}>
+          {lines.length > 1 && (
+            <span onMouseDown={() => setArmed(i)} onMouseUp={() => { if (dragFrom === null) setArmed(null) }} title="잡고 끌어서 순서 바꾸기" aria-label="잡고 끌어서 순서 바꾸기"
+              style={{ flexShrink: 0, width: 18, height: 28, marginTop: 2, marginRight: -4, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9CA3AF', fontSize: 16, cursor: 'grab', userSelect: 'none' }}>⠿</span>
+          )}
           <span style={{ flexShrink: 0, width: 28, height: 28, borderRadius: 999, background: THEME.navy, color: 'white', fontSize: 13, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: 2 }}>{i + 1}</span>
           <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
             <input value={l.title} onChange={(e) => set(i, 'title', e.target.value)} placeholder={`${i + 1}번 소식 제목 (ex. 여름 수련회 안내)`}
@@ -81,11 +191,17 @@ function NewsLinesEditor({ lines, onChange }: { lines: NewsLine[]; onChange: (v:
               style={{ width: '100%', border: '1px solid #D1D5DB', borderRadius: 10, padding: '10px 12px', fontSize: 13.5, fontFamily: 'inherit', outline: 'none', resize: 'vertical' }} />
           </div>
           {lines.length > 1 && (
-            <button type="button" onClick={() => onChange(lines.filter((_, j) => j !== i))} aria-label="이 소식 빼기"
-              style={{ flexShrink: 0, background: 'none', border: 'none', color: '#9CA3AF', fontSize: 18, cursor: 'pointer', lineHeight: 1, marginTop: 4 }}>×</button>
+            <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+              <button type="button" onClick={() => onChange(lines.filter((_, j) => j !== i))} aria-label="이 소식 빼기"
+                style={{ background: 'none', border: 'none', color: '#9CA3AF', fontSize: 18, cursor: 'pointer', lineHeight: 1, marginTop: 4, marginBottom: 4 }}>×</button>
+              <button type="button" disabled={i === 0} onClick={() => move(i, i - 1)} aria-label="위로 옮기기" style={arrowBtn(i === 0)}>▲</button>
+              <button type="button" disabled={i === lines.length - 1} onClick={() => move(i, i + 1)} aria-label="아래로 옮기기" style={arrowBtn(i === lines.length - 1)}>▼</button>
+            </div>
           )}
         </div>
+        </div>
       ))}
+      {dropLine(lines.length)}
       <button type="button" onClick={() => onChange([...lines, { title: '', content: '' }])}
         style={{ alignSelf: 'flex-start', background: 'none', border: '1px dashed #9CA3AF', borderRadius: 10, padding: '8px 14px', fontSize: 13, fontWeight: 700, color: '#374151', cursor: 'pointer' }}>+ {lines.length + 1}번 소식 추가</button>
     </div>
@@ -106,6 +222,7 @@ function NewsManager({ items: rawItems, onChange }: { items: NewsItem[]; onChang
   const today = () => new Date().toLocaleDateString('sv-SE')
   const [draftDate, setDraftDate] = useState(today())
   const [draftLines, setDraftLines] = useState<NewsLine[]>([{ title: '', content: '' }])
+  const [draftNotice, setDraftNotice] = useState('') // 전체 안내(번호 없음)
   const [editId, setEditId] = useState<string | null>(null)
   const [page, setPage] = useState(1)
   const showDate = (d: string) => { const m = (d || '').match(/(\d{4})[.\-/]\s*(\d{1,2})[.\-/]\s*(\d{1,2})/); return m ? `${m[1]}.${m[2].padStart(2, '0')}.${m[3].padStart(2, '0')}` : '-' }
@@ -116,22 +233,23 @@ function NewsManager({ items: rawItems, onChange }: { items: NewsItem[]; onChang
   const pages = Math.max(1, Math.ceil(sorted.length / PER))
   const cur = Math.min(page, pages)
   const clean = (ls: NewsLine[]) => ls.map((l) => ({ title: l.title.trim(), content: l.content.trim() })).filter((l) => l.title || l.content)
-  const entry = (id: string, date: string, ls: NewsLine[]): NewsItem => {
+  const entry = (id: string, date: string, ls: NewsLine[], notice = ''): NewsItem => {
     const c = clean(ls)
-    return { id, date, items: c, title: c[0]?.title || '', content: c[0]?.content || '' }
+    return { id, date, items: c, title: c[0]?.title || '', content: c[0]?.content || '', notice: notice.trim() }
   }
   const add = () => {
-    if (!clean(draftLines).length) { alert('소식을 한 개 이상 입력해 주세요.'); return }
+    if (!clean(draftLines).length && !draftNotice.trim()) { alert('소식을 한 개 이상 입력해 주세요.'); return }
     if (!draftDate) { alert('발행 날짜를 골라 주세요.'); return }
-    onChange([entry(`n${Date.now().toString(36)}`, draftDate, draftLines), ...items])
+    onChange([entry(`n${Date.now().toString(36)}`, draftDate, draftLines, draftNotice), ...items])
     setDraftLines([{ title: '', content: '' }])
+    setDraftNotice('')
     setDraftDate(today())
     setPage(1)
   }
-  const patch = (id: string, p: Partial<{ date: string; lines: NewsLine[] }>) => onChange(items.map((n) => {
+  const patch = (id: string, p: Partial<{ date: string; lines: NewsLine[]; notice: string }>) => onChange(items.map((n) => {
     if (n.id !== id) return n
     const lines = p.lines ?? newsLines(n)
-    return { ...n, date: p.date ?? n.date, items: lines, title: lines[0]?.title || '', content: lines[0]?.content || '' }
+    return { ...n, date: p.date ?? n.date, items: lines, title: lines[0]?.title || '', content: lines[0]?.content || '', notice: p.notice ?? n.notice ?? '' }
   }))
   const remove = (id: string) => { if (confirm('이 소식을 삭제할까요? (저장해야 홈페이지에 반영돼요)')) onChange(items.filter((n) => n.id !== id)) }
   // 복사: 그 소식(1번·2번…)을 같은 날짜로 똑같이 하나 더 만들어 원래 소식 바로 **위**에 넣음
@@ -142,7 +260,7 @@ function NewsManager({ items: rawItems, onChange }: { items: NewsItem[]; onChang
     const id = `n${Date.now().toString(36)}`
     const at = items.findIndex((x) => x.id === n.id)
     const next = [...items]
-    next.splice(Math.max(0, at), 0, entry(id, isoDate(n.date) || n.date || today(), newsLines(n)))
+    next.splice(Math.max(0, at), 0, entry(id, isoDate(n.date) || n.date || today(), newsLines(n), n.notice || ''))
     onChange(next)
     setEditId(id)
     setJustCopied(id)
@@ -167,6 +285,7 @@ function NewsManager({ items: rawItems, onChange }: { items: NewsItem[]; onChang
           <label style={{ fontSize: 13, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 6 }}>발행 날짜</label>
           <DatePickerField value={draftDate} onChange={setDraftDate} />
         </div>
+        <NewsNoticeEditor value={draftNotice} onChange={setDraftNotice} />
         <NewsLinesEditor lines={draftLines} onChange={setDraftLines} />
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
           <button type="button" onClick={add} style={{ background: THEME.navy, color: 'white', border: 'none', borderRadius: 10, padding: '10px 18px', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}>소식 등록</button>
@@ -192,7 +311,7 @@ function NewsManager({ items: rawItems, onChange }: { items: NewsItem[]; onChang
                     <span style={{ flex: 1, minWidth: 0 }}>
                       <span style={{ display: 'block', fontSize: 14, fontWeight: 700, color: '#111827' }}>{showDate(n.date).replace(/\./g, '. ')} 교회 소식</span>
                       <span style={{ display: 'block', marginTop: 2, fontSize: 12.5, color: THEME.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {ls[0]?.title || '(제목 없음)'}{ls.length > 1 && ` 외 ${ls.length - 1}건`}
+                        {ls[0]?.title || (n.notice || '').replace(/\*\*/g, '') || '(제목 없음)'}{ls.length > 1 && ` 외 ${ls.length - 1}건`}
                       </span>
                     </span>
                     <button type="button" onClick={() => copy(n)} style={{ fontSize: 12, fontWeight: 700, color: '#4B5563', background: 'none', border: 'none', cursor: 'pointer' }}>복사</button>
@@ -205,6 +324,7 @@ function NewsManager({ items: rawItems, onChange }: { items: NewsItem[]; onChang
                         <label style={{ fontSize: 13, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 6 }}>발행 날짜</label>
                         <DatePickerField value={isoDate(n.date)} onChange={(v) => patch(id, { date: v })} />
                       </div>
+                      <NewsNoticeEditor value={n.notice || ''} onChange={(v) => patch(id, { notice: v })} />
                       <NewsLinesEditor lines={ls} onChange={(v) => patch(id, { lines: v })} />
                     </div>
                   )}
@@ -295,7 +415,7 @@ interface Props {
 
 type WorshipService = { title: string; time: string; place: string; note: string; group: string }
 type VisionItem = { title: string; desc: string }
-type NewsItem = { id?: string; title: string; date: string; content: string; items?: { title: string; content: string }[] }
+type NewsItem = { id?: string; title: string; date: string; content: string; items?: { title: string; content: string }[]; notice?: string } // notice: 번호 없이 맨 위에 보이는 전체 안내
 type PaperSermon = { service: string; title: string; scripture: string; preacher: string }
 type PaperNews = { title: string; content: string }
 // sermons/news: 자동 분석 후 교회가 확인 화면에서 고른 설교·교회 소식(홈페이지 '설교'·'교회 소식'에 보임)
@@ -368,7 +488,7 @@ const colorPresets = [
 
 const emptyForm = {
   churchName: '', pastor: '', pastorRole: '담임목사', pastorMessage: '', pastorTagline: '', pastorPhotoUrl: '',
-  phone: '', email: '', address: '', locationDetail: '', shuttleInfo: '', intro: '', mottoText: '', mottoReference: '', vision: '', mission: '', logoUrl: '', heroImageUrl: '', buildingImageUrl: '',
+  phone: '', email: '', address: '', locationDetail: '', shuttleInfo: '', naverMapLink: '', kakaoMapLink: '', intro: '', mottoText: '', mottoReference: '', vision: '', mission: '', logoUrl: '', heroImageUrl: '', buildingImageUrl: '',
   metaTitle: '', metaDesc: '',
   kakaoLink: '', youtubeLink: '', sermonPlaylistUrl: '', instagramLink: '',
   youtubeVideoId: '', latestSermonTitle: '', latestSermonSpeaker: '', sermonExcerpt: '',
@@ -590,6 +710,7 @@ export default function BuilderPage({ onBack }: Props) {
   const [homeCards, setHomeCards] = useState<HomeCardText[]>(EMPTY_HOME_CARDS)
   const [denomination, setDenomination] = useState<string>(DEFAULT_DENOMINATION) // 교단 마크(기본 예장 합동)
   const [denominationWithLogo, setDenominationWithLogo] = useState(false) // 로고가 있어도 교단 마크 같이 표시
+  const [denominationFullName, setDenominationFullName] = useState(false) // 교단 이름을 괄호까지: 대한예수교장로회(합신)
   const [hideLogo, setHideLogo] = useState(false) // 홈페이지에서는 로고 이미지 안 씀
   const [sermons, setSermons] = useState<Sermon[]>([])
   const [onlineWorshipEnabled, setOnlineWorshipEnabled] = useState<boolean>(true)
@@ -654,14 +775,16 @@ export default function BuilderPage({ onBack }: Props) {
   //  website : 주보는 안 쓰고 홈페이지만(여기 입력한 내용이 나옴)
   // null = 아직 저장된 적 없음 → 주보가 있으면 bulletin, 없으면 website로 취급
   const [dataSource, setDataSource] = useState<'bulletin' | 'custom' | 'website' | null>(null)
-  const bulletinReady = !!bulletinDefaults && bulletinDefaultsOwner === currentOwnerId
+  // 운영자가 먼저 만든 사이트(currentPending)는 소유자가 운영자 계정이라 운영자 주보와 계정이 같음 →
+  // 이미 받아 둔 운영자 주보(스테이온교회)를 "그 교회 주보"로 착각해 로고·표어 등이 채워졌음(2026-11-19). 이때는 언제나 주보 없음
+  const bulletinReady = !currentPending && !!bulletinDefaults && bulletinDefaultsOwner === currentOwnerId
   const effectiveSource: 'bulletin' | 'custom' | 'website' = dataSource ?? (bulletinReady ? 'bulletin' : 'website')
 
   // 주보 내용을 편집 칸에 채움. overwrite=true면 지금 칸 값을 주보 내용으로 바꿈(연동 선택 시),
   // false면 빈 칸만 채움. 편집 칸은 언제나 수정 가능
   const applyBulletinDefaults = (overwrite: boolean) => {
     const d = bulletinDefaults
-    if (!d) return
+    if (!d || currentPending) return
     setForm(p => {
       const next = { ...p }
       ;(Object.keys(d.text) as (keyof typeof d.text)[]).forEach(k => {
@@ -680,12 +803,12 @@ export default function BuilderPage({ onBack }: Props) {
   useEffect(() => {
     const key = selectedProject ?? (creating ? '__new__' : null)
     // 다른 교회 주보로 빈 칸이 채워지는 일이 없게, 지금 사이트 소유 교회의 주보를 다 불러온 뒤에만 채움
-    if (!key || !bulletinDefaults || bulletinDefaultsOwner !== currentOwnerId || prefilledFor.current === key) return
+    if (!key || currentPending || !bulletinDefaults || bulletinDefaultsOwner !== currentOwnerId || prefilledFor.current === key) return
     prefilledFor.current = key
     // 연동(1번, 또는 아직 선택 안 함) 상태면 주보 최신 내용으로 칸을 맞추고, 2·3번이면 빈 칸만 채움
     applyBulletinDefaults(dataSource === null || dataSource === 'bulletin')
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bulletinDefaults, bulletinDefaultsOwner, currentOwnerId, selectedProject, creating])
+  }, [bulletinDefaults, bulletinDefaultsOwner, currentOwnerId, currentPending, selectedProject, creating])
 
   const chooseDataSource = (v: 'bulletin' | 'custom' | 'website') => {
     setDataSource(v)
@@ -1180,6 +1303,7 @@ export default function BuilderPage({ onBack }: Props) {
     setHeroTransition('slide')
     setDenomination(DEFAULT_DENOMINATION)
     setDenominationWithLogo(false)
+    setDenominationFullName(false)
     setHideLogo(false)
     setSermons([])
     setOnlineWorshipEnabled(true)
@@ -1196,6 +1320,11 @@ export default function BuilderPage({ onBack }: Props) {
 
   // 기존 프로젝트를 선택하면, 이미 불러온 Firestore 데이터로 폼을 채워서 편집을 이어갈 수 있게 함
   const handleSelectProject = (site: ChurchSite) => {
+    // 운영자가 Close(편집 잠금)한 사이트는 교회 관리자가 열 수 없음(운영자는 항상 가능, 2026-11-19)
+    if (site.editLocked && !isOperatorEmail(auth.currentUser?.email)) {
+      alert('아직 편집할 수 없는 사이트예요. 스테이온이 준비를 마치면 열어 드릴게요.')
+      return
+    }
     setSelectedProject(site.slug)
     setForm({
       churchName: site.churchName || '',
@@ -1209,6 +1338,8 @@ export default function BuilderPage({ onBack }: Props) {
       address: site.address || '',
       locationDetail: site.locationDetail || '',
       shuttleInfo: site.shuttleInfo || '',
+      naverMapLink: site.naverMapLink || '',
+      kakaoMapLink: site.kakaoMapLink || '',
       mottoText: site.mottoText || '',
       mottoReference: site.mottoReference || '',
       vision: site.vision || '',
@@ -1270,10 +1401,11 @@ export default function BuilderPage({ onBack }: Props) {
     setHeroTransition(site.heroTransition === 'fade' ? 'fade' : 'slide')
     setWeeklySermon({ ...EMPTY_WEEKLY, ...(site.weeklySermon || {}) })
     syncBase.current = makeSyncBase(site.newsItems || [], { ...EMPTY_WEEKLY, ...(site.weeklySermon || {}) })
-    setHomeCards(EMPTY_HOME_CARDS.map((e, i) => ({ title: site.homeCards?.[i]?.title || '', desc: site.homeCards?.[i]?.desc || '' })))
+    setHomeCards(EMPTY_HOME_CARDS.map((e, i) => ({ title: site.homeCards?.[i]?.title || '', desc: site.homeCards?.[i]?.desc || '', hidden: site.homeCards?.[i]?.hidden === true })))
     setHeroTextColor(/^#[0-9a-f]{6}$/i.test(site.heroTextColor || '') ? site.heroTextColor! : '#FFFFFF')
     setDenomination(site.denomination || DEFAULT_DENOMINATION)
     setDenominationWithLogo(site.denominationWithLogo === true)
+    setDenominationFullName(site.denominationFullName === true)
     setHideLogo(site.hideLogo === true)
     setSermons((site.sermons || []).map(s => ({
       title: s.title || '',
@@ -1362,6 +1494,8 @@ export default function BuilderPage({ onBack }: Props) {
     address: form.address,
     locationDetail: form.locationDetail,
     shuttleInfo: form.shuttleInfo,
+    naverMapLink: form.naverMapLink.trim(),
+    kakaoMapLink: form.kakaoMapLink.trim(),
     mottoText: form.mottoText,
     mottoReference: form.mottoReference,
     vision: form.vision,
@@ -1376,6 +1510,7 @@ export default function BuilderPage({ onBack }: Props) {
     homeCards,
     denomination,
     denominationWithLogo,
+    denominationFullName,
     hideLogo,
     buildingImageUrl: form.buildingImageUrl,
     metaTitle: form.metaTitle,
@@ -1392,7 +1527,7 @@ export default function BuilderPage({ onBack }: Props) {
     latestSermonSpeaker: form.latestSermonSpeaker,
     worshipServices: worshipServices.filter(s => s.title.trim() || s.time.trim()),
     visionItems: visionItems.filter(v => v.title.trim() || v.desc.trim()),
-    newsItems: newsItems.filter(n => n.title.trim() || n.content.trim()),
+    newsItems: newsItems.filter(n => n.title.trim() || n.content.trim() || (n.notice || '').trim()), // 전체 안내만 있는 소식도 저장
     paperBulletins,
     staffMembers: staffMembers.filter(s => s.name.trim() || s.role.trim()),
     layLeaders: layLeaders.filter(l => l.name.trim()),
@@ -1755,9 +1890,23 @@ export default function BuilderPage({ onBack }: Props) {
         {/* PROJECT SELECTOR */}
         {!selectedProject && !creating ? (
           <div>
-            <div style={{ marginBottom: 32 }}>
-              <h1 style={{ fontSize: 26, fontWeight: 800, color: THEME.navy, marginBottom: 6 }}>내 프로젝트</h1>
-              <p style={{ color: THEME.muted, fontSize: 14 }}>기존 프로젝트를 이어서 수정하거나, 새 교회 사이트를 만들어보세요.</p>
+            <div style={{ marginBottom: 32, display: 'flex', flexWrap: 'wrap', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16 }}>
+              <div>
+                <h1 style={{ fontSize: 26, fontWeight: 800, color: THEME.navy, marginBottom: 6 }}>내 프로젝트</h1>
+                <p style={{ color: THEME.muted, fontSize: 14 }}>기존 프로젝트를 이어서 수정하거나, 새 교회 사이트를 만들어보세요.</p>
+              </div>
+              {/* 요금제·결제 화면으로(2026-11-19) — 편집 화면 안 "요금제 선택하기"와 같은 곳(/pricing, 홈페이지 포함 요금제 강조) */}
+              <button
+                type="button"
+                onClick={() => navigate('/pricing?from=builder')}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                  background: THEME.navy, color: 'white', border: 'none', borderRadius: 12,
+                  padding: '12px 18px', fontSize: 14, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+                }}
+              >
+                요금제 · 결제하기 →
+              </button>
             </div>
 
             {loadingProjects ? (
@@ -1765,22 +1914,29 @@ export default function BuilderPage({ onBack }: Props) {
             ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 }}>
               {/* existing */}
-              {projects.map(p => (
+              {projects.map(p => {
+                // 운영자가 Close한 사이트: 교회 관리자에겐 흐리게 보이고 눌러도 안 열림(운영자는 그대로)
+                const locked = !!p.editLocked && !isOperatorEmail(auth.currentUser?.email)
+                return (
                 <button
                   key={p.slug}
                   onClick={() => handleSelectProject(p)}
+                  disabled={locked}
+                  aria-disabled={locked}
                   style={{
-                    background: 'white',
+                    background: locked ? '#F9FAFB' : 'white',
                     border: `1px solid ${THEME.border}`,
                     borderRadius: 16,
                     padding: '24px',
-                    cursor: 'pointer',
+                    cursor: locked ? 'not-allowed' : 'pointer',
+                    opacity: locked ? 0.55 : 1,
+                    filter: locked ? 'grayscale(1)' : undefined,
                     textAlign: 'left',
                     transition: 'all 0.18s',
                     fontFamily: 'inherit',
                   }}
-                  onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 8px 28px rgba(27,58,107,0.12)'; e.currentTarget.style.borderColor = THEME.sky }}
-                  onMouseLeave={e => { e.currentTarget.style.boxShadow = 'none'; e.currentTarget.style.borderColor = THEME.border }}
+                  onMouseEnter={e => { if (locked) return; e.currentTarget.style.boxShadow = '0 8px 28px rgba(27,58,107,0.12)'; e.currentTarget.style.borderColor = THEME.sky }}
+                  onMouseLeave={e => { if (locked) return; e.currentTarget.style.boxShadow = 'none'; e.currentTarget.style.borderColor = THEME.border }}
                 >
                   {/* church icon placeholder */}
                   <div style={{
@@ -1804,8 +1960,10 @@ export default function BuilderPage({ onBack }: Props) {
                       borderRadius: 100, padding: '3px 10px',
                     }}>{p.published ? '운영중' : '초안'}</span>
                   </div>
+                  {locked && <p style={{ marginTop: 12, fontSize: 12, fontWeight: 600, color: THEME.muted }}>🔒 스테이온에서 준비 중이에요. 열리면 편집할 수 있어요.</p>}
                 </button>
-              ))}
+                )
+              })}
 
               {/* new project card — 로그인 계정 1개당 사이트 1개만 허용(주보 플랫폼과 동일한 정책)이라
                   이미 보유한 사이트가 있으면 이 카드 자체를 숨김 */}
@@ -1822,6 +1980,7 @@ export default function BuilderPage({ onBack }: Props) {
                     setHeroTransition('slide')
                     setDenomination(DEFAULT_DENOMINATION)
                     setDenominationWithLogo(false)
+                    setDenominationFullName(false)
                     setHideLogo(false)
                     setSermons([])
                     setOnlineWorshipEnabled(true)
@@ -1914,10 +2073,10 @@ export default function BuilderPage({ onBack }: Props) {
             const desc = planIncludesWeb
               ? '교회 홈페이지가 요금제에 포함되어 있어요. 요금제를 연장하면 홈페이지도 같이 이어서 이용할 수 있어요.'
               : isPaidOtherPlan
-                ? `지금 이용 중인 ${tierLabel} 요금제에는 홈페이지가 포함되지 않아요. 프로·올인원으로 바꾸면 홈페이지를 계속 이용할 수 있어요.`
+                ? `지금 이용 중인 ${tierLabel} 요금제에는 홈페이지가 포함되지 않아요. 프로 · 셀프형이나 관리형으로 바꾸면 홈페이지를 계속 이용할 수 있어요.`
                 : isExpired
-                  ? '프로·올인원 요금제로 시작하면 홈페이지를 계속 이용할 수 있어요.'
-                  : '교회 홈페이지는 프로·올인원 요금제에 포함돼 있어요. 무료체험이 끝나기 전에 시작해 보세요.'
+                  ? '프로 · 셀프형이나 관리형 요금제로 시작하면 홈페이지를 계속 이용할 수 있어요.'
+                  : '교회 홈페이지는 프로 · 셀프형, 관리형 요금제에 포함돼 있어요. 무료체험이 끝나기 전에 시작해 보세요.'
             const colors = tone === 'ok'
               ? { bg: '#ECFDF5', border: '#A7F3D0', title: '#047857', desc: THEME.muted }
               : tone === 'bad'
@@ -1998,10 +2157,11 @@ export default function BuilderPage({ onBack }: Props) {
           })()}
 
           {/* BUILDER LAYOUT */}
-          <div style={{ display: selectedProject && builderMode === 'paper' ? 'none' : 'grid', gridTemplateColumns: '1fr 380px', gap: 24, alignItems: 'start' }}>
+          {/* 왼쪽 칸은 minmax(0,1fr): 안에 긴 글자(주보 파일 제목 등)가 있어도 왼쪽 칸이 늘어나 미리보기를 화면 밖으로 밀지 않게 */}
+          <div style={{ display: selectedProject && builderMode === 'paper' ? 'none' : 'grid', gridTemplateColumns: 'minmax(0, 1fr) 380px', gap: 24, alignItems: 'start' }}>
 
             {/* LEFT: FORM */}
-            <div>
+            <div style={{ minWidth: 0 }}>
               <div style={{ marginBottom: 24, display: 'flex', alignItems: 'center', gap: 12 }}>
                 <button
                   onClick={goBackToList}
@@ -2308,6 +2468,14 @@ export default function BuilderPage({ onBack }: Props) {
                         <Field label="상세 위치 안내" placeholder="ex. 상가 3층, 엘리베이터 옆 계단으로 올라오세요" value={form.locationDetail} onChange={v => update('locationDetail', v)} hint={bulletinHint('locationDetail')} action={bulletinLoad('locationDetail')} />
                         <p style={{ fontSize: 12, color: THEME.muted, marginTop: 4 }}>상가/건물 안에 있는 경우, 처음 오시는 분이 헷갈리지 않도록 입구·층수 등을 적어주세요.</p>
                       </div>
+                      {/* 네이버 지도·카카오맵 버튼(2026-11-21): 교회가 직접 넣은 링크/검색어로 열림. 비우면 위 주소로 검색 */}
+                      <div style={{ gridColumn: '1 / -1', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12 }}>
+                        <Field label="네이버 지도 (선택)" placeholder="ex. https://naver.me/xxxx 또는 대구나눔의교회" value={form.naverMapLink} onChange={v => update('naverMapLink', v)} />
+                        <Field label="카카오맵 (선택)" placeholder="ex. https://kko.to/xxxx 또는 대구나눔의교회" value={form.kakaoMapLink} onChange={v => update('kakaoMapLink', v)} />
+                      </div>
+                      <p style={{ gridColumn: '1 / -1', fontSize: 12, color: THEME.muted, marginTop: -12, lineHeight: 1.6 }}>
+                        홈페이지 '네이버 지도'·'카카오맵' 버튼을 누르면 열리는 곳이에요. 지도 앱에서 우리 교회를 찾아 <b>공유 → 링크 복사</b>한 주소를 붙여 넣거나, 검색할 이름(ex. 교회 이름)을 적어 주세요. 비워 두면 위 주소로 검색돼요.
+                      </p>
                       <div style={{ gridColumn: '1 / -1' }}>
                         <TextareaField label="차량 운행 안내 (선택)" placeholder={"ex. 주일 오전 9:30 ○○아파트 정문 출발 → 교회\n주일 오후 1:00 교회 출발 → ○○역\n문의: 010-0000-0000"} value={form.shuttleInfo} onChange={v => update('shuttleInfo', v)} />
                         <p style={{ fontSize: 12, color: THEME.muted, marginTop: 4 }}>홈페이지 '오시는 길'에 펼쳐 보기로 나와요. 비워 두면 표시되지 않아요.</p>
@@ -2625,7 +2793,7 @@ export default function BuilderPage({ onBack }: Props) {
                         {paperBulletins.map((p, i) => (
                           <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', borderTop: i ? `1px solid ${THEME.border}` : 'none', fontSize: 13 }}>
                             <span style={{ color: THEME.muted, width: 84, flexShrink: 0 }}>{p.date.replace(/-/g, '.')}</span>
-                            <span style={{ flex: 1, fontWeight: 600, color: THEME.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.title}</span>
+                            <span style={{ flex: 1, minWidth: 0, fontWeight: 600, color: THEME.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.title}</span>
                             <span style={{ fontSize: 11, fontWeight: 700, color: THEME.navy, background: THEME.skyLight, borderRadius: 6, padding: '2px 8px', textTransform: 'uppercase' }}>{p.fileType === 'images' ? `사진 ${p.images?.length || 1}장` : p.fileType === 'link' ? '링크' : p.fileType}</span>
                             {(p.sermons?.length || p.news?.length) ? (
                               <span style={{ fontSize: 11, color: THEME.muted, whiteSpace: 'nowrap' }}>설교 {p.sermons?.length || 0} · 소식 {p.news?.length || 0}</span>
@@ -3152,10 +3320,17 @@ export default function BuilderPage({ onBack }: Props) {
                         로고 이미지가 있어도 교단 마크를 옆에 같이 표시
                       </label>
                     )}
+                    {/* 교단 이름까지 표시(2026-11-21): 괄호가 있는 교단(합동·통합·고신·백석·합신·KAICAM)만 보임 */}
+                    {hasDenominationBranch(resolveDenomination(denomination)) && (
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, cursor: 'pointer', fontSize: 13, color: THEME.text }}>
+                        <input type="checkbox" checked={denominationFullName} onChange={e => setDenominationFullName(e.target.checked)} style={{ width: 16, height: 16, accentColor: THEME.navy }} />
+                        <span>교단 이름까지 표시 <span style={{ color: THEME.muted }}>(예: {resolveDenomination(denomination)?.name})</span></span>
+                      </label>
+                    )}
                   </div>
                   <div style={{ marginBottom: 28 }}>
                     <label style={{ fontSize: 13, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 10 }}>로고 이미지 <span style={{ fontWeight: 400, color: THEME.muted }}>(선택 · 직접 올리면 교단 마크 대신 표시)</span></label>
-                    {bulletinDefaults?.text.logoUrl && form.logoUrl === bulletinDefaults.text.logoUrl && (
+                    {bulletinReady && bulletinDefaults?.text.logoUrl && form.logoUrl === bulletinDefaults.text.logoUrl && (
                       <p style={{ fontSize: 12, color: THEME.muted, marginTop: -4, marginBottom: 10 }}>주보 관리자 화면에 등록된 교회 로고를 불러왔어요.</p>
                     )}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>

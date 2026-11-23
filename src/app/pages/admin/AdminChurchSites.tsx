@@ -2,7 +2,7 @@ import { Fragment, useEffect, useState } from "react";
 import { collection, getDocs, query, where, doc, setDoc, Timestamp } from "firebase/firestore";
 import { auth, db } from "../../../firebase";
 import { onAuthStateChanged } from "firebase/auth";
-import { ExternalLink, Trash2, Globe, CalendarClock, ShieldCheck, Pencil, Plus, Link2 } from "lucide-react";
+import { ExternalLink, Trash2, Globe, CalendarClock, ShieldCheck, Pencil, Plus, Link2, Lock, LockOpen } from "lucide-react";
 import { deleteChurchSite, createChurchSite, ChurchSite } from "../../../utils/churchSite";
 import { checkSlugFormat, isSlugTaken, confirmPermanentAddress } from "../../../utils/slugValidation";
 
@@ -112,9 +112,30 @@ const PeriodEditor = ({ site, onSaved, onClose }: { site: SiteRow; onSaved: (d: 
 };
 
 // 교회 홈페이지를 네이버 서치어드바이저에 교회별 사이트로 등록할 때 쓰는 소유확인 코드
+// 사이트맵·RSS 한 줄: 주소 + 복사 + 서치어드바이저 제출 화면 바로가기
+const SubmitRow = ({ label, url, consoleUrl }: { label: string; url: string; consoleUrl: string }) => {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(url); } catch {
+      const ta = document.createElement("textarea"); ta.value = url; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove();
+    }
+    setCopied(true); setTimeout(() => setCopied(false), 1500);
+  };
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-xl px-3 py-2.5" style={{ background: C.card, border: `1px solid ${C.line}` }}>
+      <span className="w-14 shrink-0 text-xs font-bold" style={{ color: C.sub }}>{label}</span>
+      <a href={url} target="_blank" rel="noopener noreferrer" className="min-w-0 flex-1 truncate text-xs hover:underline" style={{ color: C.blue }}>{url}</a>
+      <button type="button" onClick={copy} className="rounded-lg px-2.5 py-1.5 text-[11px] font-bold" style={copied ? { background: C.greenBg, color: C.green } : { background: C.bg, color: C.sub }}>{copied ? "복사됨" : "복사"}</button>
+      <a href={consoleUrl} target="_blank" rel="noopener noreferrer" className="rounded-lg px-2.5 py-1.5 text-[11px] font-bold" style={{ background: C.blueBg, color: C.blue }}>제출하러 가기 ↗</a>
+    </div>
+  );
+};
+
 const VerificationEditor = ({ site, onSaved, onClose }: { site: SiteRow; onSaved: (code: string) => void; onClose: () => void }) => {
   const [value, setValue] = useState<string>(site.naverSiteVerification || "");
   const [saving, setSaving] = useState(false);
+  const origin = `https://${site.slug}.stayon-platform.com`;
+  const consoleBase = (kind: "sitemap" | "rss") => `https://searchadvisor.naver.com/console/site/request/${kind}?site=${encodeURIComponent(origin)}`;
   const handleSave = async () => {
     setSaving(true);
     try {
@@ -133,6 +154,13 @@ const VerificationEditor = ({ site, onSaved, onClose }: { site: SiteRow; onSaved
       <p className="text-[15px] font-bold" style={{ color: C.ink }}>네이버 소유확인 코드</p>
       <p className="mt-1 text-xs" style={{ color: C.muted }}>네이버 서치어드바이저에 https://{site.slug}.stayon-platform.com 을 등록한 뒤, HTML 태그 방식의 메타 태그를 통째로 붙여 넣어 주세요.</p>
       <input value={value} onChange={(e) => setValue(e.target.value)} placeholder='<meta name="naver-site-verification" content="..." />' className="mt-3 w-full rounded-xl border px-3 py-2.5 text-sm outline-none focus:border-[#3182F6]" style={inputStyle} />
+      {/* 사이트맵·RSS(교회마다 자동 생성됨) — 네이버는 제출 API가 없어서 주소 복사 → 서치어드바이저에서 직접 제출 */}
+      <p className="mt-5 text-[15px] font-bold" style={{ color: C.ink }}>사이트맵 · RSS 제출</p>
+      <p className="mt-1 text-xs" style={{ color: C.muted }}>소유확인을 마친 뒤 주소를 복사하고 "제출하러 가기"에서 붙여 넣은 다음 확인을 누르세요.</p>
+      <div className="mt-3 space-y-2">
+        <SubmitRow label="사이트맵" url={`${origin}/sitemap.xml`} consoleUrl={consoleBase("sitemap")} />
+        <SubmitRow label="RSS" url={`${origin}/rss.xml`} consoleUrl={consoleBase("rss")} />
+      </div>
       <div className="mt-4 flex justify-end gap-2">
         <button onClick={onClose} className="rounded-xl px-4 py-2.5 text-sm font-bold" style={{ color: C.sub }}>닫기</button>
         <button onClick={handleSave} disabled={saving} className="rounded-xl px-5 py-2.5 text-sm font-bold text-white disabled:opacity-50" style={{ background: C.blue }}>{saving ? "저장 중..." : "저장"}</button>
@@ -235,8 +263,9 @@ const CreateForChurch = ({ users, onCreated, onClose }: { users: UserOption[]; o
       if (!confirmPermanentAddress(`${s}.stayon-platform.com`)) return;
       const ownerId = picked ? picked.uid : (operatorUid as string);
       await createChurchSite(s, churchName.trim(), ownerId);
-      await setDoc(doc(db, "churchSites", s), { createdByOperator: true, pendingOwner: !picked }, { merge: true });
-      onCreated({ slug: s, churchName: churchName.trim(), ownerId, published: false, ownerEmail: picked ? picked.email : "", pendingOwner: !picked });
+      // 대신 만든 사이트는 처음엔 Close(교회 편집 잠금) — 운영자가 Open을 눌러야 교회가 편집 가능(2026-11-19)
+      await setDoc(doc(db, "churchSites", s), { createdByOperator: true, pendingOwner: !picked, editLocked: true }, { merge: true });
+      onCreated({ slug: s, churchName: churchName.trim(), ownerId, published: false, ownerEmail: picked ? picked.email : "", pendingOwner: !picked, editLocked: true });
     } catch (error) {
       console.error("교회 사이트 대신 만들기 오류:", error);
       alert(error instanceof Error ? error.message : "만들기에 실패했습니다.");
@@ -381,9 +410,35 @@ export const AdminChurchSites = () => {
   // 운영자가 그 교회 사이트 편집 화면으로 바로 들어감(BuilderPage가 ?site=주소를 운영자에게만 열어 줌)
   const openBuilder = (slug: string) => { window.location.href = `/website-builder?site=${encodeURIComponent(slug)}`; };
 
+  // 교회 편집 Open/Close(2026-11-19): Close면 교회 관리자 "내 프로젝트"에 흐리게만 보이고 편집 화면에 못 들어감
+  const [lockingSlug, setLockingSlug] = useState<string | null>(null);
+  const toggleEditLock = async (site: SiteRow) => {
+    const next = !site.editLocked;
+    if (!window.confirm(next
+      ? `"${site.churchName}" 교회 관리자의 편집을 막을까요? (Close)\n교회 화면에는 목록만 보이고 편집 화면에 들어갈 수 없어요.`
+      : `"${site.churchName}" 교회 관리자가 편집할 수 있게 열까요? (Open)`)) return;
+    setLockingSlug(site.slug);
+    try {
+      await setDoc(doc(db, "churchSites", site.slug), { editLocked: next }, { merge: true });
+      setRows((prev) => prev.map((r) => (r.slug === site.slug ? { ...r, editLocked: next } : r)));
+    } catch (error) {
+      console.error("편집 Open/Close 저장 오류:", error);
+      alert("저장 중 오류가 발생했습니다.");
+    } finally {
+      setLockingSlug(null);
+    }
+  };
+
   const actionBtn = "inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-bold whitespace-nowrap transition-colors hover:brightness-95";
   const Actions = ({ site }: { site: SiteRow }) => (
     <>
+      {/* 지금 상태를 보여 주는 버튼 — 누르면 반대로 바뀜 */}
+      <button onClick={() => toggleEditLock(site)} disabled={lockingSlug === site.slug}
+        title={site.editLocked ? "교회 편집 막힘 — 누르면 Open" : "교회 편집 가능 — 누르면 Close"}
+        className={`${actionBtn} disabled:opacity-50`}
+        style={site.editLocked ? { background: C.redBg, color: C.red } : { background: C.greenBg, color: C.green }}>
+        {site.editLocked ? <Lock className="w-3.5 h-3.5" /> : <LockOpen className="w-3.5 h-3.5" />} {site.editLocked ? "Close" : "Open"}
+      </button>
       <button onClick={() => openBuilder(site.slug)} className={actionBtn} style={{ background: C.blue, color: "#fff" }}><Pencil className="w-3.5 h-3.5" /> 편집</button>
       {site.pendingOwner && <button onClick={() => toggle(site.slug, "link")} className={actionBtn} style={{ background: C.greenBg, color: C.green }}><Link2 className="w-3.5 h-3.5" /> 교회 계정 연결</button>}
       <button onClick={() => toggle(site.slug, "period")} className={actionBtn} style={{ background: C.blueBg, color: C.blue }}><CalendarClock className="w-3.5 h-3.5" /> 기간 조정</button>
@@ -482,8 +537,7 @@ export const AdminChurchSites = () => {
                             </span>
                           </td>
                           <td className="px-5 py-4">
-                            <span className="text-xs font-bold" style={{ color: site.naverSiteVerification ? C.green : C.muted }}>{site.naverSiteVerification ? "등록됨" : "미설정"}</span>
-                          </td>
+                            <span className="text-xs font-bold" style={{ color: site.naverSiteVerification ? C.green : C.muted }}>{site.naverSiteVerification ? "등록됨" : "미설정"}</span>                          </td>
                           <td className="px-5 py-4"><span className="flex justify-end gap-2"><Actions site={site} /></span></td>
                         </tr>
                         {editing?.slug === site.slug && (

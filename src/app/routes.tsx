@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { createBrowserRouter, Outlet, ScrollRestoration, useLocation, useNavigate } from "react-router";
+import { auth } from "../firebase";
 import { Landing } from "./pages/Landing";
 import { SignUp } from "./pages/SignUp";
 import { Login } from "./pages/Login";
@@ -53,6 +54,8 @@ const AdminChurchSites = lazyPage(() => import("./pages/admin/AdminChurchSites")
 const AdminAdSettings = lazyPage(() => import("./pages/admin/AdminAdSettings"), "AdminAdSettings");
 const AdminFeatureSettings = lazyPage(() => import("./pages/admin/AdminFeatureSettings"), "AdminFeatureSettings");
 const AdminFeatureUpdateNotice = lazyPage(() => import("./pages/admin/AdminFeatureUpdateNotice"), "AdminFeatureUpdateNotice");
+const AdminPromoPopup = lazyPage(() => import("./pages/admin/AdminPromoPopup"), "AdminPromoPopup"); // 홍보 팝업 관리
+const AdminPayments = lazyPage(() => import("./pages/admin/AdminPayments"), "AdminPayments"); // 결제·정산(보기 전용)
 const AdminCustomDesign = lazyPage(() => import("./pages/admin/AdminCustomDesign"), "AdminCustomDesign");
 const NoticeBoard = lazyPage(() => import("./pages/NoticeBoard"), "NoticeBoard");
 const WebsiteCreate = lazyPage(() => import("./pages/website/WebsiteCreate"), "WebsiteCreate");
@@ -64,6 +67,7 @@ const JobBoost = lazyPage(() => import("./pages/JobBoost"), "JobBoost");
 const JobDetail = lazyPage(() => import("./pages/JobDetail"), "JobDetail");
 const JobEdit = lazyPage(() => import("./pages/JobEdit"), "JobEdit");
 const BuilderPage = lazyPage(() => import("./pages/website/BuilderPage"), "default");
+const CellGroupPage = lazyPage(() => import("./pages/CellGroupPage"), "CellGroupPage"); // 소그룹(셀그룹) 편성
 
 const SEOManager = () => {
   const location = useLocation();
@@ -165,7 +169,21 @@ const BuilderPageRoute = () => {
       return v ?? sessionStorage.getItem(BUILDER_FROM_KEY) ?? "";
     } catch { return v ?? ""; }
   });
+  // (2026-11-19) 편집 화면은 website 주소에서만 — bulletin 주소로 들어오면(주보 메인 "사이트 관리자", /super "편집" 등)
+  // 로그인 상태를 이어서 website 주소의 같은 화면으로 넘김. 로그인 확인이 끝난 뒤 넘겨야 열쇠를 받을 수 있음
+  const moveToWebsite = window.location.hostname === "bulletin.stayon-platform.com";
   useEffect(() => {
+    if (!moveToWebsite) return;
+    const sp = new URLSearchParams(location.search);
+    sp.delete("from");
+    const rest = sp.toString();
+    void auth.authStateReady()
+      .then(() => websiteUrlWithLogin(null, `${location.pathname}${rest ? `?${rest}` : ""}`))
+      .then((url: string) => window.location.replace(url));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    if (moveToWebsite) return;
     // 주소창의 ?from=website 는 지움(화면엔 영향 없음)
     const sp = new URLSearchParams(location.search);
     if (sp.has("from")) {
@@ -183,8 +201,9 @@ const BuilderPageRoute = () => {
       void websiteUrlWithLogin(null).then((url) => { window.location.href = url; });
       return;
     }
-    navigate("/website");
+    navigate(isWebsiteHost() ? "/" : "/website"); // website 주소에선 website 첫 화면으로
   };
+  if (moveToWebsite) return null; // website 주소로 넘어가는 중
   return <BuilderPage onBack={onBack} />;
 };
 
@@ -254,7 +273,7 @@ const ChurchOnlineWorshipRoute = churchSectionRoute("online-worship");
 // 교회 서브도메인이 아니면(bulletin 등) 위 라우트들과 똑같이 랜딩으로 대체되어 주보 플랫폼엔 영향 없음
 const ChurchPageRoute = churchSectionRoute("home");
 const CHURCH_PAGE_PATHS = [
-  "about", "about/pastor", "about/history", "about/staff", "about/newcomer", "worship/online", "sermons", "praise",
+  "about", "about/pastor", "about/history", "about/staff", "about/newcomer", "worship/online", "sermons", "sermons/live", "praise",
   "bulletins", "bulletins/:pageId", "jubo", "news/:pageId", "column", "column/:pageId",
   "prayer", "prayer/:pageId", "education", "education/:pageId", "album", "album/:pageId", "schedule",
 ];
@@ -355,6 +374,8 @@ export const router = createBrowserRouter([
           { path: "custom-design", Component: AdminCustomDesign }, // 커스텀 디자인 교회별 사용 권한 관리 라우터 연결
           { path: "features", Component: AdminFeatureSettings }, // 화면 노출 on/off 관리 라우터 연결
           { path: "feature-update", Component: AdminFeatureUpdateNotice }, // 기능 업데이트 알림 관리 라우터 연결
+          { path: "promo-popup", Component: AdminPromoPopup }, // 주보 첫 화면·관리 화면 홍보 팝업 켜고 끄기
+          { path: "payments", Component: AdminPayments }, // 정기결제 중인 교회 · 결제 내역 · 월별 정산
         ],
       },
     ],
@@ -378,6 +399,9 @@ export const router = createBrowserRouter([
     ),
   },
   // 모금 프로젝트(러브링 등) 교회 관리자 화면 — /admin 묶음 밖에 따로(/admin/editor 처럼). 기존 /admin 화면엔 영향 없음
+  // 소그룹(셀그룹) 편성 — 인쇄할 때 공통 Footer가 같이 찍히지 않게 RootLayout 밖에 둠
+  { path: "/cell-group", element: (<><SEOManager /><CellGroupPage /></>) },
+  { path: "/cell-group/:planId", element: (<><SEOManager /><CellGroupPage /></>) }, // 공유 편성표(실시간 함께 편집)
   { path: "/admin/fundraising", Component: FundraisingList },
   { path: "/admin/fundraising/:projectId", Component: FundraisingAdmin },
   { path: "/give/:projectId", Component: GivePage },

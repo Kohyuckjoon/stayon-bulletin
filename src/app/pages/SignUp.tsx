@@ -9,6 +9,7 @@ import { auth, db } from "../../firebase";
 import { createUserWithEmailAndPassword } from "firebase/auth";
 import { doc, getDoc, writeBatch } from "firebase/firestore";
 import { CONGREGATION_SIZES } from "../../utils/congregationSizes";
+import { isWebsiteHost } from "../../utils/websiteHost";
 
 // 회원가입(2026-11-13 디자인 개편): 로그인 화면과 같은 좌우 분할(왼쪽 AuthShowcase) + 오른쪽 3단계 폼
 //   ① 교회 정보(교회명·부서·성도 수·담임목사) ② 가입자 정보(성함·직분·연락처) ③ 계정 만들기(이메일·비밀번호)
@@ -380,7 +381,9 @@ export function SignUp() {
       {/* --- 가입 완료 팝업(2026-11-13 새 디자인): 로그인·가입 화면과 같은 남색·파랑 톤
           위: 남색 그라데이션 + 빛나는 원 + 흰 원 안에 체크가 그려짐 / 가운데: 교회 이름 환영 + 무료 기간(끝나는 날짜)
           + 혜택 3가지 / 아래: 파란 "주보 만들러 가기". 뜰 때 종이 꽃가루가 터짐 --- */}
-      {showSuccessModal && <WelcomePopup churchName={formData.churchName.trim()} onStart={() => leaveTo("/admin")} />}
+      {/* website 주소에서 가입하면 "교회 사이트 만들러 가기" → 홈페이지 편집 화면(로그인 이어서 bulletin으로 넘어감, routes.tsx) (2026-11-19) */}
+      {showSuccessModal && <WelcomePopup churchName={formData.churchName.trim()} forWebsite={isWebsiteHost()}
+        onStart={() => leaveTo(isWebsiteHost() ? "/website-builder" : "/admin")} />}
 
       <KakaoChannelButton />
     </div>
@@ -388,7 +391,7 @@ export function SignUp() {
 }
 
 // 가입 완료 팝업
-function WelcomePopup({ churchName, onStart }: { churchName: string; onStart: () => void }) {
+function WelcomePopup({ churchName, onStart, forWebsite }: { churchName: string; onStart: () => void; forWebsite?: boolean }) {
   const end = new Date(); end.setMonth(end.getMonth() + 1);
   const endText = `${end.getFullYear()}. ${String(end.getMonth() + 1).padStart(2, "0")}. ${String(end.getDate()).padStart(2, "0")}`;
   useEffect(() => {
@@ -456,7 +459,7 @@ function WelcomePopup({ churchName, onStart }: { churchName: string; onStart: ()
           <button type="button" autoFocus onClick={onStart}
             className="mt-6 flex h-[56px] w-full items-center justify-center gap-1.5 rounded-2xl bg-[#3182F6] text-[17px] font-bold text-white shadow-[0_10px_24px_rgba(49,130,246,.3)] transition-all hover:bg-[#1B64DA] active:scale-[0.98]"
             style={{ animation: "wpUp .4s ease-out .9s both" }}>
-            주보 만들러 가기 <span aria-hidden>→</span>
+            {forWebsite ? "교회 사이트 만들러 가기" : "주보 만들러 가기"} <span aria-hidden>→</span>
           </button>
         </div>
       </div>

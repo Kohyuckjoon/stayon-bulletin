@@ -24,7 +24,7 @@ interface Bank { name: string; account: string; holder: string; memoGuide: strin
 interface RandomGift { enabled: boolean; label: string; desc: string; goal: number | null }
 interface Project {
   id: string; ownerUid: string; churchName: string; title: string; startDate: string; endDate: string; status: Status;
-  bank: Bank; displayMode: "instant" | "confirmed"; randomGift: RandomGift; displayShowQr?: boolean;
+  bank: Bank; displayMode: "instant" | "confirmed"; randomGift: RandomGift; displayShowQr?: boolean; kakaoCover?: string;
   qrIssuedAt?: { toDate?: () => Date } | null;
   headline: string; notice: string; // 성도 화면·9:16 화면 큰 제목 / 맨 아래 안내 문구
 }
@@ -124,7 +124,7 @@ function useProject(pid: string) {
         bank: { name: "", account: "", holder: "", memoGuide: "", ...(d.bank || {}) },
         displayMode: d.displayMode === "confirmed" ? "confirmed" : "instant",
         randomGift: { enabled: false, label: "", desc: "", goal: null, ...(d.randomGift || {}) },
-        displayShowQr: d.displayShowQr !== false,
+        displayShowQr: d.displayShowQr !== false, kakaoCover: d.kakaoCover || "",
         qrIssuedAt: d.qrIssuedAt || null,
         headline: d.headline || "", notice: d.notice || "",
       });
@@ -777,7 +777,66 @@ function AccountQr({ project, qrSmallRef }: { project: Project; qrSmallRef: Reac
           </div>
         </Card>
       </div>
+      <KakaoCoverCard project={project} />
     </div>
+  );
+}
+
+// ── 카카오톡 공유 이미지(링크 미리보기) 설정 ─────────────────────────────
+function KakaoCoverCard({ project }: { project: Project }) {
+  const [cover, setCover] = useState(project.kakaoCover || "");
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef<HTMLInputElement | null>(null);
+  const pick = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (!file.type.startsWith("image/")) { notify({ tone: "warn", title: "사진 파일만 올릴 수 있어요", desc: "JPG·PNG 같은 사진 파일을 골라 주세요." }); return; }
+    if (file.size > 5 * 1024 * 1024) { notify({ tone: "warn", title: "파일이 너무 커요", desc: "5MB 이하 사진으로 올려 주세요." }); return; }
+    setUploading(true);
+    try {
+      const uid = auth.currentUser?.uid || "admin";
+      const r = storageRef(storage, `fundraisers/${project.id}/kakao-cover-${Date.now()}.${(file.name.split(".").pop() || "jpg").toLowerCase()}`);
+      await uploadBytes(r, file, { contentType: file.type, customMetadata: { uploadedBy: uid } });
+      const u = await getDownloadURL(r);
+      await updateDoc(doc(db, "fundraisers", project.id), { kakaoCover: u, updatedAt: serverTimestamp() });
+      setCover(u);
+      notify({ tone: "success", title: "카카오톡 공유 이미지를 저장했어요", desc: "이제 이 주소를 카카오톡에 보내면 이 이미지로 미리보기가 떠요. (카톡이 기존 미리보기를 기억하고 있으면 반영까지 조금 걸릴 수 있어요.)" });
+    } catch (err) {
+      console.error(err); notify({ tone: "error", title: "올리지 못했어요", desc: "인터넷 연결을 확인하고 다시 시도해 주세요." });
+    } finally { setUploading(false); }
+  };
+  const remove = async () => {
+    try { await updateDoc(doc(db, "fundraisers", project.id), { kakaoCover: "", updatedAt: serverTimestamp() }); setCover(""); notify({ tone: "success", title: "기본 이미지로 돌아갔어요", desc: "" }); } catch (e) { console.error(e); }
+  };
+  return (
+    <Card className="mt-6 p-7">
+      <p className="text-lg font-black" style={{ color: C.ink }}>카카오톡 공유 이미지</p>
+      <p className="mt-1 text-[15px]" style={{ color: C.sub }}>이 모금 주소를 카카오톡으로 보냈을 때 미리보기에 뜨는 이미지예요. 올리지 않으면 기본 이미지로 나와요.</p>
+      <div className="mt-5 grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px] items-start">
+        <div>
+          <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={pick} />
+          <button type="button" onClick={() => fileRef.current?.click()} disabled={uploading} className="h-13 w-full rounded-2xl py-4 text-[16px] font-bold text-white disabled:opacity-50" style={{ background: C.blue }}>{uploading ? "올리는 중…" : cover ? "이미지 바꾸기" : "이미지 올리기"}</button>
+          {cover && <button type="button" onClick={remove} className="mt-3 w-full rounded-2xl border py-3.5 text-[15px] font-bold" style={{ borderColor: C.line, color: C.sub }}>기본 이미지로 되돌리기</button>}
+          {/* 권장 사이즈 안내 */}
+          <div className="mt-5 rounded-2xl p-5 text-sm leading-relaxed" style={{ background: C.bg, color: C.sub }}>
+            <p className="font-bold" style={{ color: C.ink }}>권장 사이즈</p>
+            <p className="mt-2">· <b>가로 1200 × 세로 630 px</b> (가로:세로 = 1.9:1) 를 권장해요.</p>
+            <p className="mt-1">· 최소 600 × 315 px 이상, 5MB 이하 JPG·PNG.</p>
+            <p className="mt-1">· 카카오톡은 가로로 긴 직사각형으로 보여줘요. 정사각형·세로 사진은 위아래가 잘릴 수 있어요.</p>
+            <p className="mt-1">· 중요한 글자·로고는 <b>가운데</b>에 두면 잘려도 안전해요.</p>
+          </div>
+        </div>
+        <div>
+          <p className="text-sm" style={{ color: C.sub }}>미리보기 (1.9:1)</p>
+          <div className="mt-2 overflow-hidden rounded-2xl border" style={{ borderColor: C.line, aspectRatio: "1200 / 630", background: C.bg }}>
+            {cover
+              ? <img src={cover} alt="카카오톡 공유 이미지 미리보기" className="h-full w-full object-cover" />
+              : <div className="flex h-full w-full items-center justify-center text-center text-sm" style={{ color: C.muted }}><span><ImageIcon className="mx-auto mb-2 h-7 w-7" />기본 이미지로 표시돼요</span></div>}
+          </div>
+        </div>
+      </div>
+    </Card>
   );
 }
 

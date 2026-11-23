@@ -3,10 +3,11 @@
 // sessionStorage를 쓰기 때문에 새로고침에도 유지되고, 탭을 닫으면 자동으로 사라짐.
 const KEY = "stayon_login_return_to";
 
-export type LoginReturnTarget = "/pricing" | "/website-offer" | "/website" | "/jobs/boost" | "/website-builder" | "/website-create";
+// /cell-group/{편성표 아이디}: 공유받은 소그룹 편성표 주소로 들어왔다가 로그인하러 간 경우 그 편성표로
+export type LoginReturnTarget = "/pricing" | "/website-offer" | "/website" | "/jobs/boost" | "/website-builder" | "/website-create" | "/cell-group" | `/cell-group/${string}`;
 
 // /website-builder · /website-create: 교회 홈페이지 제작 화면에서 로그아웃 상태로 "무료로 시작하기"·"만들기"를 눌렀을 때 → 로그인 후 그 화면으로
-const VALID_TARGETS: LoginReturnTarget[] = ["/pricing", "/website-offer", "/website", "/jobs/boost", "/website-builder", "/website-create"];
+const VALID_TARGETS: LoginReturnTarget[] = ["/pricing", "/website-offer", "/website", "/jobs/boost", "/website-builder", "/website-create", "/cell-group"];
 
 export const setLoginReturnTo = (target: LoginReturnTarget) => {
   try {
@@ -28,7 +29,8 @@ export const consumeLoginReturnTo = (): LoginReturnTarget | null => {
   try {
     const value = sessionStorage.getItem(KEY);
     sessionStorage.removeItem(KEY);
-    return VALID_TARGETS.includes(value as LoginReturnTarget) ? (value as LoginReturnTarget) : null;
+    const ok = VALID_TARGETS.includes(value as LoginReturnTarget) || /^\/cell-group\/[A-Za-z0-9]+$/.test(value ?? "");
+    return ok ? (value as LoginReturnTarget) : null;
   } catch {
     return null;
   }

@@ -9,8 +9,9 @@ export const WEBSITE_HOST = "website.stayon-platform.com";
 export const BULLETIN_ORIGIN = "https://bulletin.stayon-platform.com";
 export const WEBSITE_ORIGIN = `https://${WEBSITE_HOST}`;
 // website 주소에서 그대로 보여 주는 화면
-export const WEBSITE_PATHS = ["/", "/login", "/signup"];
-
+// (2026-11-19) 홈페이지 편집 화면(/website-builder·/website-create)도 website 주소에서 그대로 —
+// bulletin 주소로 들어오면 BuilderPageRoute(routes.tsx)가 로그인 이어서 website 주소로 넘김
+export const WEBSITE_PATHS = ["/", "/login", "/signup", "/website-builder", "/website-create"];
 export const isWebsiteHost = () =>
   typeof window !== "undefined" && window.location.hostname === WEBSITE_HOST;
 
@@ -58,9 +59,10 @@ const withHandoff = (url: string, token: string | null, churchName?: string | nu
 
 // bulletin → website: 로그인했으면 열쇠(+ 교회 이름)를 붙인 website 주소, 로그아웃이면 #out(website 쪽도 정리)
 // 교회 이름을 같이 보내면 website 쪽 헤더가 처음부터 "○○교회 / 바로 가기"로 그려짐(깜빡임 없음)
-export async function websiteUrlWithLogin(churchName?: string | null): Promise<string> {
-  if (!auth.currentUser) return `https://${WEBSITE_HOST}/#out`;
-  return withHandoff(`https://${WEBSITE_HOST}/`, await takeToken(), churchName);
+// path: 넘어갈 website 주소의 화면(기본 첫 화면, 편집 화면이면 "/website-builder?site=…")
+export async function websiteUrlWithLogin(churchName?: string | null, path = "/"): Promise<string> {
+  if (!auth.currentUser) return `https://${WEBSITE_HOST}${path}#out`;
+  return withHandoff(`https://${WEBSITE_HOST}${path}`, await takeToken(), churchName);
 }
 
 // website → bulletin: 그 화면 주소에 (로그인했으면) 열쇠를 붙여 줌.

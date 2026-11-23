@@ -13,7 +13,8 @@ import { doc, getDoc } from 'firebase/firestore';
 import { setLoginReturnTo } from '../../../utils/loginReturn';
 import { WEBSITE_PATHS, bulletinUrlWithLogin, prefetchLoginToken, isWebsiteHost, readWebsiteHostName, saveWebsiteHostName, isHandoffPending, whenHandoffDone } from '../../../utils/websiteHost';
 import { getPublishedChurchSites, ChurchSite } from '../../../utils/churchSite';
-import { resolveDenomination, denominationLogoSrc } from '../../../utils/denominations';
+import { resolveDenomination, denominationLogoSrc, denominationDisplayName } from '../../../utils/denominations';
+import { MANAGED_PLANS } from '../../../utils/pricingMatrix'; // 관리형 라이트·맥스 가격·환급(/pricing과 같은 값)
 
 // ── 요금 안내 > 오픈 이벤트 배너 왼쪽: 슬라이드(2026-11-12) ─────────────────────────
 // 1장은 기존 오픈 이벤트 문구, 2~5장은 관리형(스테이온이 대신 관리) 소개 카드뉴스를 짧게 정리.
@@ -264,18 +265,32 @@ function HeroSlider() {
                     );
                 })}
             </div>
-            <div className="mt-4 sm:mt-5 lg:mt-3.5 flex items-center gap-1.5">
+            {/* 넘기기(2026-11-20): 점만으로는 누를 수 있는지 몰라서 양옆에 ‹ › 버튼 추가. 점도 누르기 쉽게 터치 영역을 키움 */}
+            <div className="mt-4 sm:mt-5 lg:mt-3.5 flex items-center gap-1">
+                <button type="button" aria-label="이전 문구" onClick={() => go(idx - 1)}
+                    className="flex h-8 w-8 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-500 shadow-2xs transition-colors hover:border-gray-300 hover:text-gray-900 active:scale-95">
+                    <ChevronLeft className="w-4 h-4" />
+                </button>
+                <div className="flex items-center px-1">
                 {HERO_SLIDES.map((_, i) => (
                     <button key={i} type="button" aria-label={`${i + 1}번째 문구`} onClick={() => go(i)}
-                        className="relative h-1.5 rounded-full overflow-hidden transition-all duration-500"
+                        className="flex h-8 items-center px-[3px]">
+                    <span
+                        className="relative block h-1.5 rounded-full overflow-hidden transition-all duration-500"
                         style={{ width: i === idx ? 28 : 8, background: '#D1D6DB' }}>
                         {/* 현재 장: 다음 장으로 넘어갈 때까지 파란 막대가 차오름(멈추면 같이 멈춤) */}
                         {i === idx && (
                             <span key={`${idx}-${paused}`} className="absolute inset-y-0 left-0 rounded-full bg-[#3182F6]"
                                 style={{ width: paused ? '100%' : undefined, animation: paused ? undefined : 'heroFill 7s linear forwards' }} />
                         )}
+                    </span>
                     </button>
                 ))}
+                </div>
+                <button type="button" aria-label="다음 문구" onClick={() => go(idx + 1)}
+                    className="flex h-8 w-8 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-500 shadow-2xs transition-colors hover:border-gray-300 hover:text-gray-900 active:scale-95">
+                    <ChevronRight className="w-4 h-4" />
+                </button>
                 <style>{`@keyframes heroFill{from{width:0}to{width:100%}}`}</style>
             </div>
         </div>
@@ -632,7 +647,11 @@ export function WebsiteMain() {
                                 </div>
                                 <div className="bg-white p-3 sm:p-4 lg:py-3 rounded-xl sm:rounded-2xl border border-gray-100 shadow-2xs">
                                     <div className="text-[10px] sm:text-xs text-gray-400 font-bold mb-1">월 이용요금</div>
-                                    <div className="text-sm sm:text-base font-black text-[#3182F6]">7,900원~</div>
+                                    {/* 오픈 프로모션(2026-11-20): 원래 가격에 취소선 + 무료 */}
+                                    <div className="flex flex-wrap items-baseline gap-x-1.5">
+                                        <span className="text-[11px] sm:text-sm font-bold text-gray-400 line-through decoration-gray-400 decoration-2">7,900원~</span>
+                                        <span className="text-sm sm:text-base font-black text-[#F04452] break-keep">오픈 프로모션 무료!</span>
+                                    </div>
                                 </div>
                             </div>
 
@@ -652,6 +671,14 @@ export function WebsiteMain() {
 
                         <div className="lg:col-span-5 relative">
                             <div className="absolute -inset-4 bg-gradient-to-tr from-blue-100/60 to-indigo-50/30 rounded-[2.5rem] blur-2xl -z-10" />
+                            {/* 눌러 볼 수 있다는 걸 알려 주는 말풍선(늘 보임, 살짝 둥실). 누르면 아래 미리보기 링크로 그대로 통과 */}
+                            <span className="pointer-events-none absolute -top-3 right-3 sm:-top-4 sm:right-5 z-10 animate-[previewFloat_2.4s_ease-in-out_infinite]">
+                                <span className="relative block whitespace-nowrap rounded-full bg-[#3182F6] px-3 py-1.5 sm:px-3.5 sm:py-2 text-[11px] sm:text-[13px] font-bold text-white shadow-[0_6px_16px_rgba(49,130,246,0.35)]">
+                                    👆 눌러서 실제 홈페이지 구경하기
+                                    <span className="absolute -bottom-1 right-6 h-2.5 w-2.5 rotate-45 bg-[#3182F6]" />
+                                </span>
+                            </span>
+                            <style>{`@keyframes previewFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}`}</style>
 
                             {/* 실제 교회 홈페이지 미리보기(2026-11-12): 스테이온으로 만든 실제 홈페이지(스테이 교회) 화면을
                                 브라우저 창 모양 안에 그대로 보여 줌 → 처음 보는 분도 "홈페이지가 이렇게 생기는구나" 바로 알 수 있게.
@@ -683,8 +710,8 @@ export function WebsiteMain() {
                                         실제 홈페이지 보기 <ArrowRight className="w-3 h-3" />
                                     </span>
                                 </div>
-                                <div className="flex items-center justify-center gap-1.5 py-2.5 lg:py-2 border-t border-gray-100 text-[11px] font-bold text-gray-400">
-                                    <Smartphone className="w-3.5 h-3.5" /> 스테이온으로 만든 실제 교회 홈페이지
+                                <div className="flex items-center justify-center gap-1.5 py-2.5 border-t border-gray-100 text-[12px] sm:text-[13px] font-bold text-[#3182F6] group-hover:bg-[#F2F8FF] transition-colors">
+                                    스테이온으로 만든 실제 교회 홈페이지 보러 가기 <ArrowRight className="w-3.5 h-3.5" />
                                 </div>
                             </a>
                             {/* 검색엔진용(화면엔 안 보임): 예전 미리보기 글 */}
@@ -810,7 +837,7 @@ export function WebsiteMain() {
                                         </span>
                                         <span className="min-w-0 flex-1 text-left">
                                             <span className="block font-bold text-gray-900 truncate group-hover:text-[#3182F6] transition-colors">{site.churchName}</span>
-                                            {denom && <span className="block text-xs text-gray-400 truncate">{denom.name.replace(/\s*\(.*\)$/, "")}</span>}
+                                            {denom && <span className="block text-xs text-gray-400 truncate">{denominationDisplayName(denom, (site as { denominationFullName?: unknown }).denominationFullName === true)}</span>}
                                         </span>
                                         <ArrowRight className="w-4 h-4 text-gray-300 group-hover:text-[#3182F6] shrink-0 transition-colors" />
                                     </a>
@@ -941,7 +968,7 @@ export function WebsiteMain() {
                                 </div>
                                 <div className="flex items-center gap-3 text-sm font-semibold text-white">
                                     <div className="w-6 h-6 rounded-full bg-emerald-400/20 text-emerald-400 flex items-center justify-center flex-shrink-0 text-xs font-bold">✓</div>
-                                    <span>월 7,900원부터 투명하고 합리적인 비용 <span className="text-slate-400 text-xs font-normal">(올인원 · 관리형 9,900원)</span></span>
+                                    <span>월 7,900원부터 투명하고 합리적인 비용 <span className="text-slate-400 text-xs font-normal">(관리형 라이트 {MANAGED_PLANS.lite.monthly.toLocaleString()}원 · 관리형 맥스 {MANAGED_PLANS.max.monthly.toLocaleString()}원)</span></span>
                                 </div>
                             </div>
                         </div>
@@ -1004,8 +1031,8 @@ export function WebsiteMain() {
                                         <span className="text-xs font-bold text-blue-200 uppercase tracking-wider">Open Event</span>
                                         <span className="text-[10px] bg-amber-400 text-gray-900 font-black px-2.5 py-1 rounded-full shrink-0 whitespace-nowrap">기간 한정</span>
                                     </div>
-                                    {/* 요금 두 가지(2026-11-12 요금제 통합): 프로·셀프형 월 7,900원 / 올인원·관리형 월 9,900원 — 둘 다 모바일 주보 포함.
-                                        오픈 이벤트 기간에는 무료라는 안내를 아래에 */}
+                                    {/* 요금(2026-11-20 /pricing과 통일): 프로·셀프형 월 7,900원 / 관리형 라이트 14,900원 / 관리형 맥스 19,900원 — 모두 모바일 주보 포함.
+                                        관리형은 정기결제 12개월 다 채우면 환급. 오픈 이벤트 기간에는 무료라는 안내를 아래에 */}
                                     <div className="space-y-2.5">
                                         <div className="flex items-center justify-between gap-3 rounded-2xl bg-white/5 px-4 py-3">
                                             <div className="min-w-0">
@@ -1014,12 +1041,22 @@ export function WebsiteMain() {
                                             </div>
                                             <p className="shrink-0 text-white"><span className="text-xs text-blue-200 mr-1">월</span><span className="text-2xl sm:text-3xl font-black tracking-tight">7,900</span><span className="text-xs text-blue-200 ml-0.5">원</span></p>
                                         </div>
+                                        <div className="flex items-center justify-between gap-3 rounded-2xl bg-white/5 px-4 py-3">
+                                            <div className="min-w-0">
+                                                <p className="text-sm font-black text-white">관리형 라이트</p>
+                                                <p className="text-[11px] text-slate-400 break-keep">스테이온이 월 2회 대신 업데이트 + 검색 노출(SEO) 지원 + 모바일 주보</p>
+                                                <p className="mt-0.5 text-[11px] font-bold text-emerald-300 break-keep">정기결제 1년 다 채우면 {MANAGED_PLANS.lite.refund.toLocaleString()}원 환급</p>
+                                            </div>
+                                            <p className="shrink-0 text-white"><span className="text-xs text-blue-200 mr-1">월</span><span className="text-2xl sm:text-3xl font-black tracking-tight">{MANAGED_PLANS.lite.monthly.toLocaleString()}</span><span className="text-xs text-blue-200 ml-0.5">원</span></p>
+                                        </div>
+                                        {/* 관리형 맥스(추천) — /pricing 관리형 카드에서 "맥스"를 골라 결제 */}
                                         <div className="flex items-center justify-between gap-3 rounded-2xl bg-[#3182F6]/20 ring-1 ring-[#3182F6]/50 px-4 py-3">
                                             <div className="min-w-0">
-                                                <p className="text-sm font-black text-white flex items-center gap-1.5">올인원 · 관리형 <span className="text-[10px] bg-amber-400 text-gray-900 font-black px-1.5 py-0.5 rounded-full">추천</span></p>
-                                                <p className="text-[11px] text-slate-400 break-keep">스테이온이 대신 업데이트 + 검색 노출(SEO) 지원 + 모바일 주보</p>
+                                                <p className="text-sm font-black text-white flex items-center gap-1.5">관리형 맥스 <span className="text-[10px] bg-amber-400 text-gray-900 font-black px-1.5 py-0.5 rounded-full">추천</span></p>
+                                                <p className="text-[11px] text-slate-400 break-keep">매주 1회 대신 업데이트(월 4회, 5주인 달은 5회 모두) + 검색 노출(SEO) 지원 + 모바일 주보</p>
+                                                <p className="mt-0.5 text-[11px] font-bold text-emerald-300 break-keep">정기결제 1년 다 채우면 {MANAGED_PLANS.max.refund.toLocaleString()}원 환급</p>
                                             </div>
-                                            <p className="shrink-0 text-white"><span className="text-xs text-blue-200 mr-1">월</span><span className="text-2xl sm:text-3xl font-black tracking-tight">9,900</span><span className="text-xs text-blue-200 ml-0.5">원</span></p>
+                                            <p className="shrink-0 text-white"><span className="text-xs text-blue-200 mr-1">월</span><span className="text-2xl sm:text-3xl font-black tracking-tight">{MANAGED_PLANS.max.monthly.toLocaleString()}</span><span className="text-xs text-blue-200 ml-0.5">원</span></p>
                                         </div>
                                     </div>
                                     <div className="mt-3 mb-5 sm:mb-6 inline-flex items-center gap-1.5 rounded-full bg-emerald-400/15 px-3 py-1 text-xs font-bold text-emerald-300">
