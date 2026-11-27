@@ -40,6 +40,7 @@ const ChurchNewsDetail = lazyPage(() => import("./pages/ChurchNewsDetail"), "Chu
 const AdminJuboManagement = lazyPage(() => import("./pages/AdminJuboManagement"), "AdminJuboManagement");
 const AdminBulletinList = lazyPage(() => import("./pages/AdminBulletinList"), "AdminBulletinList");
 const AdminAuthUsers = lazyPage(() => import("./pages/admin/AdminAuthUsers"), "AdminAuthUsers");
+const AdminRequests = lazyPage(() => import("./pages/admin/AdminRequests"), "AdminRequests"); // /super 신청 관리
 const AdminFundraisers = lazyPage(() => import("./pages/admin/AdminFundraisers"), "AdminFundraisers"); // 모금 프로젝트(러브링 등) 운영자 화면
 // 모금 프로젝트 교회 관리자 화면(필요할 때만 불러옴). 기존 /admin 묶음(대시보드·결제 등)과 따로 둠
 const FundraisingAdmin = lazyPage(() => import("./pages/fundraising/FundraisingAdmin"), "FundraisingAdmin");
@@ -47,6 +48,9 @@ const FundraisingList = lazyPage(() => import("./pages/fundraising/FundraisingAd
 // 모금 프로젝트 성도 화면(QR 연결) · 교회 입구 9:16 화면 — 필요할 때만 불러옴. 성도 주보 화면(/view)과 별개
 const GivePage = lazyPage(() => import("./pages/fundraising/Give"), "GivePage");
 const GiveDisplay = lazyPage(() => import("./pages/fundraising/Give"), "GiveDisplay");
+const RetreatPage = lazyPage(() => import("./pages/retreat/RetreatPage"), "RetreatPage"); // 수련회 성도 화면(2026-11-24)
+const PaperJuboPage = lazyPage(() => import("./pages/PaperJuboPage"), "PaperJuboPage"); // 종이 주보 만들기(주보 관리자, 2026-11-24)
+const PaperFilesPage = lazyPage(() => import("./pages/PaperFilesPage"), "PaperFilesPage"); // 올린 종이 주보 전체 보기(카드/표, 2026-11-25)
 // "함께한 이야기"(/story) 공개 카드 화면 · 운영자 관리 화면 — 필요할 때만 불러옴
 const StoryPage = lazyPage(() => import("./pages/story/StoryPage"), "StoryPage");
 const AdminStories = lazyPage(() => import("./pages/admin/AdminStories"), "AdminStories");
@@ -211,6 +215,8 @@ const BuilderPageRoute = () => {
 // 주소/연락처)를 그리고 있으므로, STAYON 플랫폼 자체의 사업자 정보 footer는 중복으로 붙이지 않음.
 // 성도 화면(주보)도 마찬가지로 이 공통 Footer 대신 BulletinView 자체에 있는 작은 하단
 // 정보(상호/문의전화/SNS)만 보여주므로 여기서 숨긴다.
+// 주보 관리자(/admin…) 화면 전환 애니메이션(2026-11-25)은 각 화면 맨 바깥 칸에 둠(animate-in …).
+// 여기(공통 틀)에 두면 화면 파일을 받아 오는 동안 로딩 화면에서 먼저 끝나 버려 실제 화면이 뚝 나타났음
 const RootLayout = () => {
   const location = useLocation();
   const isBulletinRoute = location.pathname === "/bulletin" || location.pathname.startsWith("/view/");
@@ -276,6 +282,7 @@ const CHURCH_PAGE_PATHS = [
   "about", "about/pastor", "about/history", "about/staff", "about/newcomer", "worship/online", "sermons", "sermons/live", "praise",
   "bulletins", "bulletins/:pageId", "jubo", "news/:pageId", "column", "column/:pageId",
   "prayer", "prayer/:pageId", "education", "education/:pageId", "album", "album/:pageId", "schedule",
+  "grace", "grace/:pageId", // 은혜나눔 게시판(2026-11-24)
 ];
 
 
@@ -368,6 +375,7 @@ export const router = createBrowserRouter([
           { path: "notify", Component: NoticeBoard }, // 운영자용 공지사항 관리(CRUD) 라우터 추가
           { path: "auth-users", Component: AdminAuthUsers }, // 전체 가입자 현황 라우터 연결
           { path: "church-sites", Component: AdminChurchSites }, // 교회 사이트 제작 플랫폼 발행 관리 라우터 연결
+          { path: "requests", Component: AdminRequests }, // 신청 관리(1년 결제 신청 · 환급 요청 · 1개월 무료 쿠폰, 2026-11-25)
           { path: "fundraisers", Component: AdminFundraisers }, // 모금 프로젝트(러브링 등) 생성·교회 계정 연결·열기/닫기
           { path: "stories", Component: AdminStories }, // 메인 화면 "함께한 이야기"(/story) 카드 관리
           { path: "ads", Component: AdminAdSettings }, // 사역자 청빙 게시판 끌어올리기(광고) 설정 라우터 연결
@@ -402,10 +410,13 @@ export const router = createBrowserRouter([
   // 소그룹(셀그룹) 편성 — 인쇄할 때 공통 Footer가 같이 찍히지 않게 RootLayout 밖에 둠
   { path: "/cell-group", element: (<><SEOManager /><CellGroupPage /></>) },
   { path: "/cell-group/:planId", element: (<><SEOManager /><CellGroupPage /></>) }, // 공유 편성표(실시간 함께 편집)
+  { path: "/admin/paper-jubo", Component: PaperJuboPage },
+  { path: "/admin/paper-files", Component: PaperFilesPage },
   { path: "/admin/fundraising", Component: FundraisingList },
   { path: "/admin/fundraising/:projectId", Component: FundraisingAdmin },
   { path: "/give/:projectId", Component: GivePage },
   { path: "/give/:projectId/display", Component: GiveDisplay },
+  { path: "/retreat/:id", Component: RetreatPage },
   // 메인 화면 상단 "함께한 이야기" — STAYON과 함께한 프로젝트 카드 목록
   { path: "/story", Component: StoryPage },
   {

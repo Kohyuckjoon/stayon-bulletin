@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router";
+import { useSmoothNavigate as useNavigate, preloadAdminPages } from "../../utils/smoothNavigate"; // 관리자 화면 사이 부드러운 이동(2026-11-25)
 import { auth, db } from "../../firebase";
 import { collection, query, where, orderBy, getDocs } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
@@ -27,6 +27,7 @@ interface ChurchNewsGroup {
 // 카드를 클릭하면 그 주보의 교회 소식만 전문 텍스트로 보는 상세 화면(/admin/church-news/:id)으로 이동.
 export function ChurchNewsHistory() {
   const navigate = useNavigate();
+  useEffect(() => { preloadAdminPages(); }, []);
   const [groups, setGroups] = useState<ChurchNewsGroup[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");

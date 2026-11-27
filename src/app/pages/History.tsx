@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router";
+import { useSmoothNavigate as useNavigate, preloadAdminPages } from "../../utils/smoothNavigate"; // 관리자 화면 사이 부드러운 이동(2026-11-25)
 import { auth, db } from "../../firebase"; // Firebase 설정 경로 확인 필요
 import { collection, query, where, orderBy, getDocs, deleteDoc, doc, addDoc, serverTimestamp, getDoc} from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
@@ -36,6 +36,7 @@ import { toast } from "sonner";
 
 export function History() {
   const navigate = useNavigate();
+  useEffect(() => { preloadAdminPages(); }, []);
   const [searchQuery, setSearchQuery] = useState("");
   const [filterMonth, setFilterMonth] = useState("all");
 

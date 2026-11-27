@@ -1,6 +1,6 @@
-import { useState, useEffect, useLayoutEffect, useRef } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { onAuthStateChanged } from 'firebase/auth'
-import { Timestamp, doc, getDoc } from 'firebase/firestore'
+import { Timestamp, doc, getDoc, setDoc, addDoc, collection, serverTimestamp } from 'firebase/firestore'
 import { useNavigate } from 'react-router'
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage'
 import { auth, storage, db } from '../../../firebase'
@@ -10,13 +10,22 @@ import { checkSlugFormat, isSlugTaken, confirmPermanentAddress } from '../../../
 import { DEFAULT_DENOMINATION, NO_DENOMINATION, resolveDenomination, hasDenominationBranch } from '../../../utils/denominations'
 import { fetchOwnerData, builderDefaultsFromBulletin, BuilderDefaults } from '../../../utils/churchSiteContent'
 import { isOperatorEmail } from '../../../utils/operator'
+import { MANAGED_PLANS, PRICING_MATRIX, SELF_PLAN_REFUND } from '../../../utils/pricingMatrix'
+import { isWebsiteHost, bulletinUrlWithLogin, prefetchLoginToken } from '../../../utils/websiteHost'
+// 편집 화면 공통 사이드바 부품(주보 편집 화면과 같이 씀)
+import { SlidingTabs as BuilderTabs, SidebarItem, SidebarCollapse } from '../../components/EditorSidebar'
 import { DenominationPicker } from '../../components/DenominationPicker'
 import { DatePickerField, TypeableDateField } from '../../components/DatePickerField'
 import { RolePicker } from '../../components/RolePicker'
+import { PaymentHistory, RefundTree, type PayInfo } from '../../components/PaymentTree'
+import { PlanBillingCard } from '../../components/PlanBillingCard'
+import { AnnualRequestButton } from '../../components/AnnualRequest'
 import { HOME_CARD_PRESETS, CHURCH_TOKEN, HomeCardText } from '../../../utils/homeCards'
 import { WebsiteRenderer } from './WebsiteRenderer'
-import { PaperJuboEditor } from './paperJubo/PaperJuboEditor'
-import type { PaperJubo } from './paperJubo/types'
+import { PaperJuboGate, PAPER_JUBO_LOCKED } from './paperJubo/PaperJuboGate'
+import { PaperUploadList } from './paperJubo/PaperUploadList'
+import { ImageFocusPicker } from './ImageFocusPicker'
+import { GraceAdminCard } from './GraceAdminCard'
 import { BANNER_PAGES, BANNER_PRESETS, defaultBannerPhoto, resolveBannerColors, bannerTextIsDark, cropToBannerBlob, type BannerMode } from '../../../utils/pageBanners'
 import { syncDate, siteNewsLines, cleanSermon, dotDate, findBulletinTargets, applyBulletinTarget, BulletinSyncTarget } from '../../../utils/weeklySync'
 
@@ -224,14 +233,32 @@ function NewsManager({ items: rawItems, onChange }: { items: NewsItem[]; onChang
   const [draftLines, setDraftLines] = useState<NewsLine[]>([{ title: '', content: '' }])
   const [draftNotice, setDraftNotice] = useState('') // 전체 안내(번호 없음)
   const [editId, setEditId] = useState<string | null>(null)
+  // 편집 화면 목록은 최근 5건만(2026-11-25). 나머지는 "더보기 →" → 전체 화면(표/카드 · 검색 · 한 쪽 10건)
+  const SHOW = 5
+  const [allOpen, setAllOpen] = useState(false)
+  const [view, setView] = useState<'list' | 'card'>('list')
+  const [q, setQ] = useState('')
   const [page, setPage] = useState(1)
   const showDate = (d: string) => { const m = (d || '').match(/(\d{4})[.\-/]\s*(\d{1,2})[.\-/]\s*(\d{1,2})/); return m ? `${m[1]}.${m[2].padStart(2, '0')}.${m[3].padStart(2, '0')}` : '-' }
   const isoDate = (d: string) => (showDate(d) === '-' ? '' : showDate(d).replace(/\./g, '-'))
   const sortKey = (d: string) => showDate(d).replace(/\./g, '')
   const sorted = [...items].sort((a, b) => sortKey(b.date).localeCompare(sortKey(a.date)))
   const PER = 10
-  const pages = Math.max(1, Math.ceil(sorted.length / PER))
+  const kw = q.replace(/\s+/g, '').toLowerCase()
+  const filtered = kw
+    ? sorted.filter((n) => [n.date, showDate(n.date), n.notice || '', ...newsLines(n).flatMap((l) => [l.title, l.content])].join(' ').replace(/\s+/g, '').toLowerCase().includes(kw))
+    : sorted
+  const pages = Math.max(1, Math.ceil(filtered.length / PER))
   const cur = Math.min(page, pages)
+  const noOf = (n: NewsItem) => sorted.length - sorted.indexOf(n) // 번호: 가장 최근 소식이 가장 큰 번호
+  // 전체 화면이 열려 있는 동안 뒤 화면 스크롤 잠금 + ESC로 닫기(닫을 때 잠금은 완전히 풂)
+  useEffect(() => {
+    if (!allOpen) return
+    document.body.style.overflow = 'hidden'
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setAllOpen(false) }
+    window.addEventListener('keydown', onKey)
+    return () => { document.body.style.overflow = ''; window.removeEventListener('keydown', onKey) }
+  }, [allOpen])
   const clean = (ls: NewsLine[]) => ls.map((l) => ({ title: l.title.trim(), content: l.content.trim() })).filter((l) => l.title || l.content)
   const entry = (id: string, date: string, ls: NewsLine[], notice = ''): NewsItem => {
     const c = clean(ls)
@@ -244,7 +271,6 @@ function NewsManager({ items: rawItems, onChange }: { items: NewsItem[]; onChang
     setDraftLines([{ title: '', content: '' }])
     setDraftNotice('')
     setDraftDate(today())
-    setPage(1)
   }
   const patch = (id: string, p: Partial<{ date: string; lines: NewsLine[]; notice: string }>) => onChange(items.map((n) => {
     if (n.id !== id) return n
@@ -265,16 +291,52 @@ function NewsManager({ items: rawItems, onChange }: { items: NewsItem[]; onChang
     setEditId(id)
     setJustCopied(id)
   }
-  // 복사한 소식이 있는 페이지로 넘기고 그 줄로 스크롤
+  // 복사한 소식이 있는 곳으로 스크롤(전체 화면이면 그 쪽으로 넘김)
   useEffect(() => {
     if (!justCopied) return
-    const k = sorted.findIndex((x) => x.id === justCopied)
-    if (k >= 0 && Math.floor(k / PER) + 1 !== cur) { setPage(Math.floor(k / PER) + 1); return }
+    if (allOpen) {
+      const k = filtered.findIndex((x) => x.id === justCopied)
+      if (k >= 0 && Math.floor(k / PER) + 1 !== cur) { setPage(Math.floor(k / PER) + 1); return }
+    }
     const el = document.getElementById(`news-row-${justCopied}`)
     if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
     const t = setTimeout(() => setJustCopied(null), 1600)
     return () => clearTimeout(t)
-  }, [justCopied, cur, sorted.length]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [justCopied, cur, sorted.length, allOpen]) // eslint-disable-line react-hooks/exhaustive-deps
+  // 소식 한 줄(편집 화면 목록 · 전체 화면 표 보기가 같이 씀): 번호 · 날짜 제목 · 복사/수정/삭제 + 열면 수정 칸
+  const renderRow = (n: NewsItem) => {
+    const no = noOf(n)
+    const id = n.id || ''
+    const open = editId === id
+    const ls = newsLines(n)
+    return (
+      <div key={id} id={`news-row-${id}`} style={{ borderBottom: `1px solid ${THEME.border}`, padding: '12px 4px', background: justCopied === id ? '#EFF6FF' : 'transparent', transition: 'background 0.6s' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span style={{ width: 32, flexShrink: 0, textAlign: 'center', fontSize: 13, fontWeight: 700, color: THEME.muted, fontVariantNumeric: 'tabular-nums' }}>{no}</span>
+          {/* 제목: "2026. 11. 08 교회 소식" + 아래 작은 글씨로 1번 소식 미리보기 */}
+          <span style={{ flex: 1, minWidth: 0 }}>
+            <span style={{ display: 'block', fontSize: 14, fontWeight: 700, color: '#111827' }}>{showDate(n.date).replace(/\./g, '. ')} 교회 소식</span>
+            <span style={{ display: 'block', marginTop: 2, fontSize: 12.5, color: THEME.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {ls[0]?.title || (n.notice || '').replace(/\*\*/g, '') || '(제목 없음)'}{ls.length > 1 && ` 외 ${ls.length - 1}건`}
+            </span>
+          </span>
+          <button type="button" onClick={() => copy(n)} style={{ fontSize: 12, fontWeight: 700, color: '#4B5563', background: 'none', border: 'none', cursor: 'pointer' }}>복사</button>
+          <button type="button" onClick={() => setEditId(open ? null : id)} style={{ fontSize: 12, fontWeight: 700, color: '#2563EB', background: 'none', border: 'none', cursor: 'pointer' }}>{open ? '닫기' : '수정'}</button>
+          <button type="button" onClick={() => remove(id)} style={{ fontSize: 12, fontWeight: 700, color: '#DC2626', background: 'none', border: 'none', cursor: 'pointer' }}>삭제</button>
+        </div>
+        {open && (
+          <div style={{ marginTop: 12, background: '#F9FAFB', borderRadius: 12, padding: 12 }}>
+            <div style={{ maxWidth: 260, marginBottom: 10 }}>
+              <label style={{ fontSize: 13, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 6 }}>발행 날짜</label>
+              <DatePickerField value={isoDate(n.date)} onChange={(v) => patch(id, { date: v })} />
+            </div>
+            <NewsNoticeEditor value={n.notice || ''} onChange={(v) => patch(id, { notice: v })} />
+            <NewsLinesEditor lines={ls} onChange={(v) => patch(id, { lines: v })} />
+          </div>
+        )}
+      </div>
+    )
+  }
   return (
     <>
       <h3 style={{ fontWeight: 700, color: THEME.navy, marginBottom: 6, fontSize: 16 }}>교회 소식</h3>
@@ -292,55 +354,95 @@ function NewsManager({ items: rawItems, onChange }: { items: NewsItem[]; onChang
         </div>
       </div>
       <div style={{ marginTop: 18 }}>
-        <p style={{ fontSize: 13, fontWeight: 700, color: '#374151', marginBottom: 8 }}>등록된 소식 <span style={{ color: THEME.muted, fontWeight: 500 }}>{items.length}건</span></p>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
+          <p style={{ fontSize: 13, fontWeight: 700, color: '#374151' }}>등록된 소식 <span style={{ color: THEME.muted, fontWeight: 500 }}>{items.length}건{sorted.length > SHOW ? ` · 최근 ${SHOW}건` : ''}</span></p>
+          {sorted.length > SHOW && (
+            <button type="button" onClick={() => { setAllOpen(true); setPage(1) }}
+              style={{ fontSize: 13, fontWeight: 700, color: THEME.navy, background: '#F1F5F9', border: 'none', borderRadius: 999, padding: '7px 14px', cursor: 'pointer', fontFamily: 'inherit' }}>더보기 →</button>
+          )}
+        </div>
         {sorted.length === 0 ? (
           <p style={{ fontSize: 13, color: THEME.muted, padding: '16px 0' }}>아직 등록된 소식이 없어요.</p>
         ) : (
           <div style={{ borderTop: '2px solid #111827' }}>
-            {sorted.slice((cur - 1) * PER, cur * PER).map((n, idx) => {
-              // 번호: 게시판처럼 가장 최근 소식이 가장 큰 번호
-              const no = sorted.length - ((cur - 1) * PER + idx)
-              const id = n.id || ''
-              const open = editId === id
-              const ls = newsLines(n)
-              return (
-                <div key={id} id={`news-row-${id}`} style={{ borderBottom: `1px solid ${THEME.border}`, padding: '12px 4px', background: justCopied === id ? '#EFF6FF' : 'transparent', transition: 'background 0.6s' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <span style={{ width: 32, flexShrink: 0, textAlign: 'center', fontSize: 13, fontWeight: 700, color: THEME.muted, fontVariantNumeric: 'tabular-nums' }}>{no}</span>
-                    {/* 제목: "2026. 11. 08 교회 소식" + 아래 작은 글씨로 1번 소식 미리보기 */}
-                    <span style={{ flex: 1, minWidth: 0 }}>
-                      <span style={{ display: 'block', fontSize: 14, fontWeight: 700, color: '#111827' }}>{showDate(n.date).replace(/\./g, '. ')} 교회 소식</span>
-                      <span style={{ display: 'block', marginTop: 2, fontSize: 12.5, color: THEME.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {ls[0]?.title || (n.notice || '').replace(/\*\*/g, '') || '(제목 없음)'}{ls.length > 1 && ` 외 ${ls.length - 1}건`}
-                      </span>
-                    </span>
-                    <button type="button" onClick={() => copy(n)} style={{ fontSize: 12, fontWeight: 700, color: '#4B5563', background: 'none', border: 'none', cursor: 'pointer' }}>복사</button>
-                    <button type="button" onClick={() => setEditId(open ? null : id)} style={{ fontSize: 12, fontWeight: 700, color: '#2563EB', background: 'none', border: 'none', cursor: 'pointer' }}>{open ? '닫기' : '수정'}</button>
-                    <button type="button" onClick={() => remove(id)} style={{ fontSize: 12, fontWeight: 700, color: '#DC2626', background: 'none', border: 'none', cursor: 'pointer' }}>삭제</button>
-                  </div>
-                  {open && (
-                    <div style={{ marginTop: 12, background: '#F9FAFB', borderRadius: 12, padding: 12 }}>
-                      <div style={{ maxWidth: 260, marginBottom: 10 }}>
-                        <label style={{ fontSize: 13, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 6 }}>발행 날짜</label>
-                        <DatePickerField value={isoDate(n.date)} onChange={(v) => patch(id, { date: v })} />
-                      </div>
-                      <NewsNoticeEditor value={n.notice || ''} onChange={(v) => patch(id, { notice: v })} />
-                      <NewsLinesEditor lines={ls} onChange={(v) => patch(id, { lines: v })} />
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        )}
-        {pages > 1 && (
-          <div style={{ display: 'flex', justifyContent: 'center', gap: 4, marginTop: 14 }}>
-            {Array.from({ length: pages }, (_, i) => i + 1).map((p) => (
-              <button key={p} type="button" onClick={() => setPage(p)} style={{ minWidth: 34, height: 34, borderRadius: 8, border: `1px solid ${p === cur ? THEME.navy : THEME.border}`, background: p === cur ? THEME.navy : 'white', color: p === cur ? 'white' : '#4B5563', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>{p}</button>
-            ))}
+            {!allOpen && sorted.slice(0, SHOW).map((n) => renderRow(n))}
           </div>
         )}
       </div>
+
+      {/* 전체 소식 화면(편집 화면 위에 꽉 차게): 표 / 카드 보기 · 검색 · 한 쪽 10건. 고친 내용은 편집 화면 "저장"으로 반영 */}
+      {allOpen && (
+        <div role="dialog" aria-modal="true" aria-label="등록된 교회 소식 전체"
+          className="animate-in fade-in duration-200"
+          style={{ position: 'fixed', inset: 0, zIndex: 80, background: '#F8FAFC', overflowY: 'auto' }}>
+          {/* 달력 같은 떠 있는 창(z-50)이 이 화면(80) 뒤로 숨지 않게, 열려 있는 동안만 위로 */}
+          <style>{'[data-radix-popper-content-wrapper]{z-index:90 !important}'}</style>
+          <div style={{ position: 'sticky', top: 0, zIndex: 2, background: 'rgba(255,255,255,0.95)', backdropFilter: 'blur(8px)', borderBottom: `1px solid ${THEME.border}` }}>
+            <div style={{ maxWidth: 960, margin: '0 auto', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 10 }}>
+              <button type="button" onClick={() => setAllOpen(false)} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 700, color: THEME.muted, fontFamily: 'inherit', padding: '6px 4px' }}>← 돌아가기</button>
+              <p style={{ flex: 1, textAlign: 'center', fontSize: 16, fontWeight: 800, color: THEME.navy }}>등록된 교회 소식 <span style={{ color: THEME.muted, fontWeight: 600, fontSize: 14 }}>{sorted.length}건</span></p>
+              <span style={{ width: 72 }} />
+            </div>
+          </div>
+          <div style={{ maxWidth: 960, margin: '0 auto', padding: '16px 16px 40px' }}>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12 }}>
+              <input value={q} onChange={(e) => { setQ(e.target.value); setPage(1) }} placeholder="날짜·소식 내용으로 찾기"
+                style={{ flex: '1 1 220px', minWidth: 0, height: 42, borderRadius: 10, border: `1px solid ${THEME.border}`, padding: '0 14px', fontSize: 15, fontFamily: 'inherit', background: 'white', outline: 'none' }} />
+              <div style={{ display: 'flex', background: '#E2E8F0', borderRadius: 10, padding: 3, flexShrink: 0 }}>
+                {([['list', '☰ 표'], ['card', '⊞ 카드']] as const).map(([v, l]) => (
+                  <button key={v} type="button" onClick={() => setView(v)}
+                    style={{ border: 'none', borderRadius: 8, padding: '8px 14px', fontSize: 13, fontWeight: 800, cursor: 'pointer', fontFamily: 'inherit',
+                      background: view === v ? 'white' : 'transparent', color: view === v ? THEME.navy : THEME.muted, boxShadow: view === v ? '0 1px 3px rgba(0,0,0,.08)' : 'none' }}>{l}</button>
+                ))}
+              </div>
+            </div>
+            {kw && <p style={{ fontSize: 13, color: THEME.muted, marginBottom: 10 }}>‘{q.trim()}’ 찾은 소식 {filtered.length}건</p>}
+            {filtered.length === 0 ? (
+              <p style={{ textAlign: 'center', padding: '60px 0', fontSize: 14, color: THEME.muted }}>찾는 소식이 없어요.</p>
+            ) : view === 'list' ? (
+              <div style={{ background: 'white', borderRadius: 14, border: `1px solid ${THEME.border}`, padding: '4px 12px' }}>
+                {filtered.slice((cur - 1) * PER, cur * PER).map((n) => renderRow(n))}
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
+                {filtered.slice((cur - 1) * PER, cur * PER).map((n) => {
+                  const ls = newsLines(n)
+                  const id = n.id || ''
+                  return (
+                    <div key={id} id={`news-row-${id}`} style={{ background: justCopied === id ? '#EFF6FF' : 'white', borderRadius: 14, border: `1px solid ${THEME.border}`, padding: 16, display: 'flex', flexDirection: 'column', gap: 8, transition: 'background 0.6s' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                        <span style={{ fontSize: 15, fontWeight: 800, color: '#111827' }}>{showDate(n.date).replace(/\./g, '. ')}</span>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: THEME.muted }}>No. {noOf(n)}</span>
+                      </div>
+                      {n.notice && <p style={{ fontSize: 12.5, color: '#92400E', background: '#FFFBEB', borderRadius: 8, padding: '6px 8px', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{n.notice.replace(/\*\*/g, '')}</p>}
+                      <ol style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: '#374151', lineHeight: 1.6, flex: 1 }}>
+                        {ls.slice(0, 4).map((l, i) => <li key={i} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.title || l.content}</li>)}
+                      </ol>
+                      {ls.length > 4 && <p style={{ fontSize: 12, color: THEME.muted }}>외 {ls.length - 4}건</p>}
+                      <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end', borderTop: `1px solid ${THEME.border}`, paddingTop: 8 }}>
+                        <button type="button" onClick={() => copy(n)} style={{ fontSize: 12, fontWeight: 700, color: '#4B5563', background: 'none', border: 'none', cursor: 'pointer' }}>복사</button>
+                        {/* 카드에서 수정 → 표 보기로 바꿔 그 줄의 수정 칸을 엶 */}
+                        <button type="button" onClick={() => { setView('list'); setEditId(id); setTimeout(() => document.getElementById(`news-row-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 60) }} style={{ fontSize: 12, fontWeight: 700, color: '#2563EB', background: 'none', border: 'none', cursor: 'pointer' }}>수정</button>
+                        <button type="button" onClick={() => remove(id)} style={{ fontSize: 12, fontWeight: 700, color: '#DC2626', background: 'none', border: 'none', cursor: 'pointer' }}>삭제</button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+            {pages > 1 && (
+              <div style={{ display: 'flex', justifyContent: 'center', gap: 4, marginTop: 18, flexWrap: 'wrap' }}>
+                <button type="button" disabled={cur <= 1} onClick={() => setPage(cur - 1)} style={{ minWidth: 34, height: 34, borderRadius: 8, border: `1px solid ${THEME.border}`, background: 'white', color: cur <= 1 ? '#CBD5E1' : '#4B5563', fontWeight: 700, cursor: cur <= 1 ? 'default' : 'pointer' }}>‹</button>
+                {Array.from({ length: pages }, (_, i) => i + 1).map((p) => (
+                  <button key={p} type="button" onClick={() => setPage(p)} style={{ minWidth: 34, height: 34, borderRadius: 8, border: `1px solid ${p === cur ? THEME.navy : THEME.border}`, background: p === cur ? THEME.navy : 'white', color: p === cur ? 'white' : '#4B5563', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>{p}</button>
+                ))}
+                <button type="button" disabled={cur >= pages} onClick={() => setPage(cur + 1)} style={{ minWidth: 34, height: 34, borderRadius: 8, border: `1px solid ${THEME.border}`, background: 'white', color: cur >= pages ? '#CBD5E1' : '#4B5563', fontWeight: 700, cursor: cur >= pages ? 'default' : 'pointer' }}>›</button>
+              </div>
+            )}
+            <p style={{ marginTop: 18, textAlign: 'center', fontSize: 12.5, color: THEME.muted }}>여기서 고친 내용도 편집 화면의 <b>저장</b>을 눌러야 홈페이지에 반영돼요.</p>
+          </div>
+        </div>
+      )}
     </>
   )
 }
@@ -407,6 +509,27 @@ const THEME = {
   text: '#111827',
   muted: '#6B7280',
   border: '#E5E7EB',
+}
+
+// 한글 자판(두벌식)으로 친 글자 → 같은 자리 영문 자판 글자. "ㅡ무ㅜㅁ" → "manna", "ㅠㄷ소무ㅛ" → "bethany"
+const KO_INITIAL = ['r','R','s','e','E','f','a','q','Q','t','T','d','w','W','c','z','x','v','g']
+const KO_MEDIAL = ['k','o','i','O','j','p','u','P','h','hk','ho','hl','y','n','nj','np','nl','b','m','ml','l']
+const KO_FINAL = ['','r','R','rt','s','sw','sg','e','f','fr','fa','fq','ft','fx','fv','fg','a','q','qt','t','T','d','w','c','z','x','v','g']
+const KO_JAMO: Record<string, string> = {
+  'ㄱ':'r','ㄲ':'R','ㄳ':'rt','ㄴ':'s','ㄵ':'sw','ㄶ':'sg','ㄷ':'e','ㄸ':'E','ㄹ':'f','ㄺ':'fr','ㄻ':'fa','ㄼ':'fq','ㄽ':'ft','ㄾ':'fx','ㄿ':'fv','ㅀ':'fg',
+  'ㅁ':'a','ㅂ':'q','ㅃ':'Q','ㅄ':'qt','ㅅ':'t','ㅆ':'T','ㅇ':'d','ㅈ':'w','ㅉ':'W','ㅊ':'c','ㅋ':'z','ㅌ':'x','ㅍ':'v','ㅎ':'g',
+  'ㅏ':'k','ㅐ':'o','ㅑ':'i','ㅒ':'O','ㅓ':'j','ㅔ':'p','ㅕ':'u','ㅖ':'P','ㅗ':'h','ㅘ':'hk','ㅙ':'ho','ㅚ':'hl','ㅛ':'y','ㅜ':'n','ㅝ':'nj','ㅞ':'np','ㅟ':'nl','ㅠ':'b','ㅡ':'m','ㅢ':'ml','ㅣ':'l',
+}
+function koToQwerty(text: string): string {
+  let out = ''
+  for (const ch of text) {
+    const c = ch.charCodeAt(0)
+    if (c >= 0xAC00 && c <= 0xD7A3) {
+      const i = c - 0xAC00
+      out += KO_INITIAL[Math.floor(i / 588)] + KO_MEDIAL[Math.floor((i % 588) / 28)] + KO_FINAL[i % 28]
+    } else out += KO_JAMO[ch] ?? ch
+  }
+  return out
 }
 
 interface Props {
@@ -488,7 +611,7 @@ const colorPresets = [
 
 const emptyForm = {
   churchName: '', pastor: '', pastorRole: '담임목사', pastorMessage: '', pastorTagline: '', pastorPhotoUrl: '',
-  phone: '', email: '', address: '', locationDetail: '', shuttleInfo: '', naverMapLink: '', kakaoMapLink: '', intro: '', mottoText: '', mottoReference: '', vision: '', mission: '', logoUrl: '', heroImageUrl: '', buildingImageUrl: '',
+  phone: '', email: '', address: '', locationDetail: '', shuttleInfo: '', naverMapLink: '', kakaoMapLink: '', intro: '', mottoText: '', mottoReference: '', vision: '', mission: '', logoUrl: '', heroImageUrl: '', buildingImageUrl: '', buildingImagePos: '50% 50%',
   metaTitle: '', metaDesc: '',
   kakaoLink: '', youtubeLink: '', sermonPlaylistUrl: '', instagramLink: '',
   youtubeVideoId: '', latestSermonTitle: '', latestSermonSpeaker: '', sermonExcerpt: '',
@@ -598,7 +721,7 @@ export default function BuilderPage({ onBack }: Props) {
   const [urlCopied, setUrlCopied] = useState(false)
   const [selectedColor, setSelectedColor] = useState('#1B3A6B')
   // 편집 탭 = 홈페이지 메뉴 순서(2026-11-10 재구성). 매주 할 일은 첫 탭 하나에서
-  const [activeTab, setActiveTab] = useState<'weekly' | 'home' | 'about' | 'worship' | 'edu' | 'settings'>('weekly')
+  const [activeTab, setActiveTab] = useState<'weekly' | 'home' | 'about' | 'worship' | 'edu' | 'board' | 'settings'>('weekly')
   const [activeMenus, setActiveMenus] = useState<string[]>(['home', 'worship', 'community', 'news', 'online-worship', 'location'])
   const [form, setForm] = useState(emptyForm)
   const [worshipServices, setWorshipServices] = useState<WorshipService[]>([])
@@ -665,7 +788,11 @@ export default function BuilderPage({ onBack }: Props) {
   // 홈페이지 위쪽 메뉴에 "온라인 주보"를 보일지(온라인 주보가 있어도 끄면 숨김). 기본 켜짐
   const [juboMenuEnabled, setJuboMenuEnabled] = useState(true)
   // 위쪽 탭(2026-11-17): 교회 홈페이지 편집 / 교회 주보(종이 주보 만들기)
-  const [builderMode, setBuilderMode] = useState<'site' | 'paper'>('site')
+  // plan: 요금제·이용 기간 화면(2026-11-24) — 예전엔 편집 화면 위에 늘 떠 있던 안내를 사이드바 메뉴로 뺌
+  // 주소 ?mode=paper 로 들어오면 처음부터 "교회 주보" 화면(주보 관리자 사이드바 "종이 주보 만들기"에서 연결, 2026-11-25)
+  const [builderMode, setBuilderMode] = useState<'site' | 'paper' | 'plan'>(() => {
+    try { const m = new URLSearchParams(window.location.search).get('mode'); return m === 'paper' ? 'paper' : m === 'plan' ? 'plan' : 'site' } catch { return 'site' }
+  })
   const [uploadingPaper, setUploadingPaper] = useState(false)
   // "이 주보로 교회 소식·설교도 채우기" — 켜고 올리면 AI가 주보를 읽고 확인 화면을 띄움(교회가 고른 것만 들어감)
   const [paperAnalyze, setPaperAnalyze] = useState(false)
@@ -685,6 +812,8 @@ export default function BuilderPage({ onBack }: Props) {
   const [praiseEnabled, setPraiseEnabled] = useState(false)
   // 교회 일정(홈페이지 위쪽 메뉴 "교회 일정", 앨범 오른쪽): ON일 때만 홈페이지에 보임
   const [scheduleEnabled, setScheduleEnabled] = useState(false)
+  // 앨범 메뉴 ON/OFF(2026-11-25): 기본 ON. OFF면 홈페이지 위쪽 메뉴에서 "앨범"이 빠짐(올린 사진은 그대로)
+  const [albumEnabled, setAlbumEnabled] = useState(true)
   const [schedules, setSchedules] = useState<{ id: string; date: string; title: string }[]>([])
   const [praiseIntro, setPraiseIntro] = useState('')
   const [praiseTeams, setPraiseTeams] = useState<{ name: string; time: string; place: string; leader: string; desc: string; photoUrl: string }[]>([])
@@ -735,21 +864,36 @@ export default function BuilderPage({ onBack }: Props) {
   // 편집할 때(?site=주소)도 운영자 주보가 아니라 그 교회 주보가 들어가야 하므로 uid가 아닌 ownerId 기준
   const currentOwnerId = (selectedProject && projects.find(p => p.slug === selectedProject)?.ownerId) || uid
   const navigate = useNavigate()
+  // 온라인 주보 관리자(/admin)를 새 탭으로(2026-11-25).
+  //  - bulletin 주소: opener를 남긴 채 열어야 이 탭의 로그인(세션)이 새 탭에 복사됨(noopener 금지)
+  //  - website 주소: 로그인 열쇠를 붙인 bulletin 주소로. 열쇠를 기다리는 동안 팝업 차단을 피하려고 빈 탭을 먼저 열고 주소만 나중에 넣음
+  const goOnlineBulletin = () => {
+    if (isWebsiteHost()) {
+      const w = window.open('about:blank', '_blank')
+      void bulletinUrlWithLogin('/admin').then((url) => { if (w) w.location.href = url; else window.location.assign(url) })
+      return
+    }
+    if (!window.open('/admin', '_blank')) navigate('/admin') // 팝업이 막히면 이 탭에서
+  }
   // 홈페이지 이용 상태 = 교회 계정 요금제 기준(2026-11-13). /pricing의 프로·올인원에 홈페이지가 포함되므로
   // 결제는 /pricing 한 곳에서 하고, 여기서는 그 교회 계정(users/{소유자})의 요금제·만료일을 읽기만 함(결제 코드 변경 없음)
   const [ownerPlan, setOwnerPlan] = useState<{ status: string; expiry: ExpiryInfo } | null>(null)
+  // 요금제 · 정기결제 칸(주보 관리자 결제 관리와 같은 부품)에 넘길 교회 계정 문서 전체
+  const [ownerDoc, setOwnerDoc] = useState<Record<string, unknown> | null>(null)
+  const [ownerDocTick, setOwnerDocTick] = useState(0)
   useEffect(() => {
-    if (!currentOwnerId) { setOwnerPlan(null); return }
+    if (!currentOwnerId) { setOwnerPlan(null); setOwnerDoc(null); return }
     let alive = true
     getDoc(doc(db, 'users', currentOwnerId))
       .then(snap => {
         if (!alive) return
         const u = (snap.data() || {}) as { status?: string; lastPaymentDate?: unknown; createdAt?: unknown }
         setOwnerPlan({ status: u.status || 'active', expiry: getExpiryInfo(u) })
+        setOwnerDoc(snap.data() || null)
       })
-      .catch(() => { if (alive) setOwnerPlan(null) })
+      .catch(() => { if (alive) { setOwnerPlan(null); setOwnerDoc(null) } })
     return () => { alive = false }
-  }, [currentOwnerId])
+  }, [currentOwnerId, ownerDocTick])
   const [bulletinDefaults, setBulletinDefaults] = useState<BuilderDefaults | null>(null)
   const [bulletinDefaultsOwner, setBulletinDefaultsOwner] = useState<string | null>(null)
   const prefilledFor = useRef<string | null>(null)
@@ -809,6 +953,66 @@ export default function BuilderPage({ onBack }: Props) {
     applyBulletinDefaults(dataSource === null || dataSource === 'bulletin')
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bulletinDefaults, bulletinDefaultsOwner, currentOwnerId, currentPending, selectedProject, creating])
+
+  // 브라우저 탭 제목(2026-11-24): 편집 중인 교회 이름을 보여 줌 — 운영자가 여러 교회를 탭으로 열어 둘 때 구분용.
+  // (이 화면은 로그인 후 편집 화면이라 소개 페이지용 광고 제목 "월 9,900원…"이 맞지 않음)
+  // 교회 주보(종이 주보 만들기) 준비중(2026-11-24): 사이드바 메뉴는 회색·자물쇠 표시, 누구나 눌러서 들어갈 수는 있음.
+  // 화면 잠금(흐림 · "만드는 중" 안내 · 운영자 계속 편집)은 paperJubo/PaperJuboGate 의 PAPER_JUBO_LOCKED 로 관리
+  const PAPER_LOCKED_KEY: 'paper' | null = PAPER_JUBO_LOCKED ? 'paper' : null
+  const PAPER_BLOCKED: 'paper' | null = null
+
+  // 요금제 화면의 결제된 내역·환급 나무(2026-11-24): 서버 myPayments(읽기 전용)에서 이 사이트 소유 교회 것만.
+  // 운영자가 다른 교회를 편집 중이면 ?uid=그 교회(서버가 운영자인지 확인)
+  const [payInfo, setPayInfo] = useState<PayInfo | null | 'error' | 'pending'>(null)
+  // 결제된 내역은 접어 둠 — 누를 때만 펼쳐 봄(영수증용, 주보 관리자 결제 관리와 같게, 2026-11-25)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  useEffect(() => {
+    if (builderMode !== 'plan' || !currentOwnerId) return
+    // 운영자가 대신 만들고 아직 교회 계정을 연결하지 않은 사이트(pendingOwner)는 주인이 운영자 계정이라
+    // 운영자 결제 내역이 보이게 됨 → 불러오지 않고 "계정 연결 후 보여요"만
+    if (currentPending) { setPayInfo('pending'); return }
+    let alive = true
+    setPayInfo(null)
+    ;(async () => {
+      try {
+        const token = await auth.currentUser?.getIdToken()
+        if (!token) throw new Error('no token')
+        const r = await fetch(`https://asia-northeast3-stayonsbplatform.cloudfunctions.net/myPayments?uid=${encodeURIComponent(currentOwnerId)}`, { headers: { Authorization: `Bearer ${token}` } })
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        const j = await r.json() as PayInfo
+        if (alive) setPayInfo(j)
+      } catch (e) {
+        console.error('결제 내역 불러오기 실패:', e)
+        if (alive) setPayInfo('error')
+      }
+    })()
+    return () => { alive = false }
+  }, [builderMode, currentOwnerId, currentPending])
+
+  // 요금제·홈페이지·주보 화면 바꾸기(2026-11-24): 바꾸면 화면 맨 위부터 보이게 부드럽게 올림
+  // (아래쪽을 보다가 요금제를 누르면 내용이 짧아 아래쪽부터 보이던 문제)
+  const switchBuilderMode = (v: 'site' | 'paper' | 'plan') => {
+    setBuilderMode(v)
+    if (window.scrollY > 0) window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  // 편집 탭 목록 — 홈페이지 상단 메뉴와 같은 순서. 매주 바뀌는 것은 맨 앞 "매주 업데이트" 하나에.
+  // 가로 탭(좁은 화면)과 왼쪽 사이드바(넓은 화면)가 같이 씀
+  const builderTabs = [
+    { key: 'settings', label: '기본 설정' }, // 2026-11-24: 맨 위로(교회 이름·주소 등 처음 정하는 것)
+    { key: 'weekly', label: '매주 업데이트' },
+    { key: 'home', label: '홈 화면' },
+    { key: 'about', label: '교회소개' },
+    { key: 'worship', label: '예배' },
+    { key: 'edu', label: eduMenuLabel.trim() || '교육부서' },
+    { key: 'board', label: '게시판' }, // 2026-11-24: 은혜나눔 게시판 관리(운영자 승인 후 사용)
+  ]
+  const tabContentRef = useRef<HTMLDivElement>(null)
+
+  const editingChurchName = (selectedProject && projects.find(p => p.slug === selectedProject)?.churchName) || ''
+  useEffect(() => {
+    document.title = editingChurchName ? `${editingChurchName} 홈페이지 편집 | 스테이온` : '교회 홈페이지 편집 | 스테이온'
+  }, [editingChurchName, selectedProject])
 
   const chooseDataSource = (v: 'bulletin' | 'custom' | 'website') => {
     setDataSource(v)
@@ -951,6 +1155,7 @@ export default function BuilderPage({ onBack }: Props) {
     try {
       const url = await uploadImageAndGetUrl(file, 1920, 'image/jpeg', 0.75, uid, 'building')
       update('buildingImageUrl', url)
+      update('buildingImagePos', '50% 50%') // 새 사진은 가운데부터
     } catch {
       alert('이미지를 업로드하지 못했습니다. 다시 시도해주세요.')
     } finally {
@@ -1348,6 +1553,7 @@ export default function BuilderPage({ onBack }: Props) {
       logoUrl: site.logoUrl || '',
       heroImageUrl: site.heroImageUrl || '',
       buildingImageUrl: site.buildingImageUrl || '',
+      buildingImagePos: site.buildingImagePos || '50% 50%',
       metaTitle: site.metaTitle || '',
       metaDesc: site.metaDesc || '',
       kakaoLink: site.kakaoLink || '',
@@ -1377,6 +1583,7 @@ export default function BuilderPage({ onBack }: Props) {
     setHistoryItems((site.historyItems || []).map(h => ({ date: h.date || '', content: h.content || '' })))
     setPraiseEnabled(site.praiseEnabled === true)
     setScheduleEnabled(site.scheduleEnabled === true)
+    setAlbumEnabled((site as { albumEnabled?: boolean }).albumEnabled !== false)
     setJuboMenuEnabled((site as { juboMenuEnabled?: boolean }).juboMenuEnabled !== false)
     {
       const t = site as { staffEnabled?: boolean; officersEnabled?: boolean; historyEnabled?: boolean; newcomerEnabled?: boolean }
@@ -1431,9 +1638,13 @@ export default function BuilderPage({ onBack }: Props) {
     setActiveTab('weekly')
   }
 
+  // 홈페이지 주소는 영문 소문자·숫자·하이픈만. 한글 자판인 채로 치면(2026-11-24) 같은 자리의 영문 자판 글자로 바꿔 넣고 안내
+  //  예: 한글 자판인 채로 manna 를 치면 화면엔 "ㅡ무ㅜㅁ"이 되는데 → manna 로 바꿔 넣음(두벌식 자판 기준)
   const handleSlugChange = (value: string) => {
-    setSlug(value.toLowerCase().replace(/[^a-z0-9-]/g, ''))
-    setSlugError('')
+    const hasKo = /[ㄱ-ㅎㅏ-ㅣ가-힣]/.test(value)
+    const typed = hasKo ? koToQwerty(value) : value
+    setSlug(typed.toLowerCase().replace(/[^a-z0-9-]/g, ''))
+    setSlugError(hasKo ? '주소에는 영문만 쓸 수 있어서, 영문 자판 기준으로 바꿔 넣었어요. (한/영 키로 영문 전환)' : '')
   }
 
   // 로그인한 회원(ownerId) 소유의 교회 사이트 프로젝트 목록을 Firestore에서 불러옴
@@ -1513,6 +1724,7 @@ export default function BuilderPage({ onBack }: Props) {
     denominationFullName,
     hideLogo,
     buildingImageUrl: form.buildingImageUrl,
+    buildingImagePos: form.buildingImagePos,
     metaTitle: form.metaTitle,
     metaDesc: form.metaDesc,
     kakaoLink: form.kakaoLink,
@@ -1537,6 +1749,7 @@ export default function BuilderPage({ onBack }: Props) {
     praiseEnabled,
     praiseIntro,
     scheduleEnabled,
+    albumEnabled,
     juboMenuEnabled,
     staffEnabled,
     officersEnabled,
@@ -1633,6 +1846,8 @@ export default function BuilderPage({ onBack }: Props) {
     setDeploying(true)
     try {
       await publishChurchSite(selectedProject)
+      // 운영자 메일 알림(바뀐 곳 표시) — 서버 onSiteDeployTrigger가 받음. 실패해도 배포엔 영향 없음
+      addDoc(collection(db, 'site_deploy_triggers'), { slug: selectedProject, uid: uid || '', createdAt: serverTimestamp() }).catch(() => {})
       // 최초 배포인 경우 서버에서 firstDeployedAt/accessExpiresAt(무료체험 만료일)가 같이 설정되므로,
       // 낙관적 업데이트 대신 실제 저장된 값을 다시 불러와서 화면에 정확히 반영함
       const updated = await getChurchSite(selectedProject)
@@ -1718,7 +1933,48 @@ export default function BuilderPage({ onBack }: Props) {
   }, [])
 
   return (
-    <div style={{ minHeight: '100vh', background: THEME.surface, position: 'relative' }}>
+    <div className="bp-root" style={{ minHeight: '100vh', background: THEME.surface, position: 'relative' }}>
+      {/* 모바일(767px 이하) 전용 정리(2026-11-24): 이 화면은 PC 기준 인라인 스타일이라 여기서 한꺼번에 덮어씀.
+          - 위 바: 높이·여백 줄이고 "교회 사이트 제작" 글자 숨김(버튼만)
+          - 바깥 여백·카드 안쪽 여백(28px) 줄임, 미리보기 칸 숨김(위 바에 저장·배포 있음)
+          - 두 칸·세 칸 입력(1fr 1fr …)과 고정 폭 칸(160px·180px·200px)은 한 줄에 하나씩
+          - 편집 메뉴 탭은 위에 붙어(sticky) 스크롤해도 바로 바꿀 수 있게, 한 줄 가로 스크롤 */}
+      <style>{`
+        /* 사이드바 자리 확보(2026-11-24): 가로 1280~1599px 화면은 양옆 여백이 사이드바(196px)보다 좁아서,
+           내용 칸을 오른쪽으로 밀어 왼쪽에 사이드바 자리를 만듦. 1600px 이상은 원래 여백에 그대로 들어감 */
+        @media (min-width: 1280px) and (max-width: 1599px) {
+          .bp-root .bp-container { max-width: 1424px !important; padding-left: 248px !important; }
+        }
+        @media (max-width: 767px) {
+          .bp-root .bp-nav-inner { padding: 0 12px !important; height: 52px !important; }
+          .bp-root .bp-nav-title, .bp-root .bp-nav-divider { display: none !important; }
+          .bp-root .bp-nav-btn { padding: 7px 14px !important; white-space: nowrap; }
+          .bp-root .bp-container { padding: 12px 12px 32px !important; }
+          .bp-root .bp-main-grid { grid-template-columns: minmax(0, 1fr) !important; gap: 0 !important; }
+          .bp-root .bp-preview { display: none !important; }
+          .bp-root .bp-paper-grid { grid-template-columns: minmax(0, 1fr) !important; gap: 14px !important; }
+          .bp-root [style*="padding: 28px"] { padding: 16px !important; }
+          .bp-root [style*="padding: 20px 20px 18px"] { padding: 14px !important; }
+          .bp-root [style*="grid-template-columns: 1fr 1fr;"],
+          .bp-root [style*="grid-template-columns: 1fr 1fr 1fr;"],
+          .bp-root [style*="grid-template-columns: 160px"],
+          .bp-root [style*="grid-template-columns: 180px"],
+          .bp-root [style*="200px;"][style*="grid-template-columns: minmax"] { grid-template-columns: minmax(0, 1fr) !important; }
+          .bp-root [style*="grid-template-columns: repeat(auto-fit, minmax(240px"],
+          .bp-root [style*="grid-template-columns: repeat(auto-fit, minmax(200px"],
+          .bp-root [style*="grid-template-columns: repeat(auto-fill, minmax(230px"],
+          .bp-root [style*="grid-template-columns: repeat(auto-fill, minmax(280px"] { grid-template-columns: minmax(0, 1fr) !important; }
+          .bp-root .bp-mode-toggle { width: 100% !important; margin-bottom: 12px !important; }
+          .bp-root .bp-mode-toggle > button { flex: 1 1 0; padding: 10px 6px !important; font-size: 13.5px !important; white-space: nowrap; }
+          .bp-root .bp-mode-long { display: none; }
+          .bp-root .bp-tabs-sticky { position: sticky; top: 52px; z-index: 40; margin: 0 -12px 14px; padding: 8px 12px; background: ${THEME.surface}; }
+          .bp-root .bp-tabs-sticky > div { flex-wrap: nowrap !important; overflow-x: auto; scrollbar-width: none; margin-bottom: 0 !important; }
+          .bp-root .bp-tabs-sticky > div::-webkit-scrollbar { display: none; }
+          .bp-root .bp-tabs-sticky button { flex: 0 0 auto !important; padding: 9px 14px !important; white-space: nowrap; }
+          .bp-root .bp-title-row { margin-bottom: 12px !important; }
+          .bp-root .bp-scroll-anchor { scroll-margin-top: 116px !important; }
+        }
+      `}</style>
       {/* 온라인 주보에서 불러오기 확인 팝업: 불러올 내용을 보여 주고 "불러오기"를 눌러야 칸에 들어감(저장은 따로) */}
       {loadAsk && (
         <div onClick={() => setLoadAsk(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(17,24,39,0.45)', zIndex: 1100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
@@ -1820,13 +2076,14 @@ export default function BuilderPage({ onBack }: Props) {
         top: 0,
         zIndex: 50,
       }}>
-        <div style={{
+        <div className="bp-nav-inner" style={{
           maxWidth: 1200, margin: '0 auto', padding: '0 24px',
           height: 60, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
             <button
               onClick={onBack}
+              className="bp-nav-btn"
               style={{
                 background: 'none', border: `1px solid ${THEME.border}`, borderRadius: 8,
                 padding: '6px 14px', fontFamily: 'inherit', fontSize: 13, cursor: 'pointer',
@@ -1835,8 +2092,8 @@ export default function BuilderPage({ onBack }: Props) {
             >
               ← 뒤로
             </button>
-            <div style={{ height: 20, width: 1, background: THEME.border }} />
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div className="bp-nav-divider" style={{ height: 20, width: 1, background: THEME.border }} />
+            <div className="bp-nav-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <div style={{ width: 28, height: 28, background: THEME.navy, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 700, fontSize: 13 }}>S</div>
               <span style={{ fontWeight: 700, color: THEME.navy, fontSize: 15 }}>교회 사이트 제작</span>
             </div>
@@ -1845,6 +2102,7 @@ export default function BuilderPage({ onBack }: Props) {
             <button
               onClick={handleSave}
               disabled={saving || (!selectedProject && !creating)}
+              className="bp-nav-btn"
               style={{
                 background: 'white', border: `1px solid ${THEME.navy}`,
                 color: THEME.navy, borderRadius: 8,
@@ -1861,6 +2119,7 @@ export default function BuilderPage({ onBack }: Props) {
             <button
               onClick={handleDeploy}
               disabled={deploying || !selectedProject}
+              className="bp-nav-btn"
               style={{
                 background: selectedProject ? THEME.navy : '#D1D5DB',
                 color: 'white',
@@ -1878,7 +2137,7 @@ export default function BuilderPage({ onBack }: Props) {
         </div>
       </nav>
 
-      <div style={{ maxWidth: 1200, margin: '0 auto', padding: '32px 24px' }}>
+      <div className="bp-container" style={{ maxWidth: 1200, margin: '0 auto', padding: '32px 24px' }}>
 
         {/* 운영자가 다른 교회 사이트를 편집 중일 때 안내 (저장하면 그 교회 사이트에 바로 반영됨) */}
         {selectedProject && uid && currentOwnerId && currentOwnerId !== uid && (
@@ -2032,7 +2291,9 @@ export default function BuilderPage({ onBack }: Props) {
           </div>
         ) : (
           <>
-          {/* 사이트 운영 정보: 배포된 주소 + 이용 기간 안내 + 결제하기 (교회 사이트 제작 기능 전용) */}
+          {/* 사이드바 기준 칸: 주소 카드·홈페이지·종이 주보·요금제 화면을 다 감싸서, 어느 화면이든 왼쪽 사이드바가 붙어 있게 */}
+          <div style={{ position: 'relative' }}>
+          {/* 사이트 운영 정보: 배포된 주소(항상) / 이용 기간 안내 + 결제하기는 "요금제" 화면에서만 */}
           {selectedProject && (() => {
             const currentProject = projects.find(p => p.slug === selectedProject)
             if (!currentProject) return null
@@ -2083,10 +2344,10 @@ export default function BuilderPage({ onBack }: Props) {
                 ? { bg: '#FEF2F2', border: '#FECACA', title: '#B91C1C', desc: '#DC2626' }
                 : { bg: '#EFF6FF', border: '#BFDBFE', title: THEME.navy, desc: THEME.muted }
 
-            return (
-              <div style={{ marginBottom: 24, display: 'flex', flexDirection: 'column', gap: 12 }}>
+            const urlCard = (
+              <>
                 {/* 배포된 URL */}
-                <div style={{ background: 'white', border: `1px solid ${THEME.border}`, borderRadius: 16, padding: '20px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
+                <div style={{ background: 'white', border: `1px solid ${THEME.border}`, borderRadius: 16, padding: builderMode === 'plan' ? '18px 20px' : '14px 20px', display: 'flex', flexDirection: builderMode === 'plan' ? 'column' : 'row', alignItems: builderMode === 'plan' ? 'stretch' : 'center', flexWrap: 'wrap', justifyContent: 'space-between', gap: 14, minWidth: 0 }}>
                   <div style={{ minWidth: 0 }}>
                     <p style={{ fontSize: 12, fontWeight: 600, color: THEME.muted, marginBottom: 6 }}>🌐 배포된 사이트 주소</p>
                     <p style={{ fontSize: 16, fontWeight: 700, color: THEME.navy, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{deployedUrl}</p>
@@ -2094,6 +2355,7 @@ export default function BuilderPage({ onBack }: Props) {
                   <button
                     onClick={handleCopyUrl}
                     style={{
+                      alignSelf: 'flex-start',
                       padding: '10px 18px', borderRadius: 10, fontFamily: 'inherit', fontWeight: 700, fontSize: 13, cursor: 'pointer',
                       border: `1px solid ${urlCopied ? '#10B981' : THEME.sky}`,
                       background: urlCopied ? '#ECFDF5' : THEME.skyLight,
@@ -2104,22 +2366,31 @@ export default function BuilderPage({ onBack }: Props) {
                     {urlCopied ? '✓ 복사됨' : '📋 주소 복사'}
                   </button>
                 </div>
-
-                {/* 이용 상태 안내 배너 → 결제는 /pricing(프로·올인원) */}
-                {(expiry || planIncludesWeb) && (
+              </>
+            )
+            const planCard = (
+              <>
+                {/* 이용 상태 안내 → 결제는 /pricing(프로·올인원). "요금제" 화면에서만 */}
+                {builderMode === 'plan' && !(expiry || planIncludesWeb) && (
+                  <div style={{ borderRadius: 16, padding: '18px 20px', background: '#F9FAFB', border: `1px solid ${THEME.border}`, fontSize: 13, color: THEME.muted }}>
+                    이용 기간 정보가 아직 없어요.
+                  </div>
+                )}
+                {builderMode === 'plan' && (expiry || planIncludesWeb) && (
                   <div style={{
-                    borderRadius: 16, padding: '18px 24px',
+                    borderRadius: 16, padding: '18px 20px',
                     background: colors.bg, border: `1px solid ${colors.border}`,
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12,
+                    display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: 14, minWidth: 0,
                   }}>
                     <div>
-                      <p style={{ fontSize: 14, fontWeight: 700, color: colors.title, marginBottom: 4 }}>{title}</p>
-                      <p style={{ fontSize: 13, color: colors.desc }}>{desc}</p>
+                      <p style={{ fontSize: 14, fontWeight: 700, color: colors.title, marginBottom: 6 }}>{title}</p>
+                      <p style={{ fontSize: 13, color: colors.desc, lineHeight: 1.6, wordBreak: 'keep-all' }}>{desc}</p>
                     </div>
                     <button
                       onClick={goPricing}
                       style={{
-                        padding: '12px 22px', borderRadius: 10, fontFamily: 'inherit', fontWeight: 700, fontSize: 14, cursor: 'pointer',
+                        alignSelf: 'flex-start',
+                        padding: '10px 18px', borderRadius: 10, fontFamily: 'inherit', fontWeight: 700, fontSize: 13, cursor: 'pointer',
                         border: 'none', background: THEME.sky, color: 'white', whiteSpace: 'nowrap',
                       }}
                     >
@@ -2127,42 +2398,119 @@ export default function BuilderPage({ onBack }: Props) {
                     </button>
                   </div>
                 )}
+              </>
+            )
+            // 편집 화면: 주소 카드 한 줄만(자리 덜 차지).
+            // "요금제" 화면(2026-11-24): 왼쪽 = 주소 · 이용 기간 · 결제된 내역 / 오른쪽 = 12칸 환급 나무(좁으면 위아래)
+            if (builderMode !== 'plan') return <div style={{ marginBottom: 24 }}>{urlCard}</div>
+            return (
+              <div key="plan" className="animate-in fade-in slide-in-from-bottom-3 duration-500"
+                style={{ marginBottom: 24, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 16, alignItems: 'start' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12, minWidth: 0 }}>
+                  {urlCard}
+                  {/* 요금제 · 정기결제(주보 관리자 결제 관리와 같은 칸, 2026-11-25). 운영자가 다른 교회를 보는 중이면 보기만 */}
+                  {ownerDoc && !currentPending
+                    ? <PlanBillingCard userData={ownerDoc} readOnly={currentOwnerId !== uid} homepageOnly onChanged={() => setOwnerDocTick(t => t + 1)} />
+                    : planCard}
+                  <div>
+                    <button type="button" onClick={() => setHistoryOpen(v => !v)} aria-expanded={historyOpen}
+                      className="mx-auto flex items-center gap-1 rounded-full px-3 py-1.5 text-[12.5px] font-bold text-slate-400 hover:bg-white hover:text-slate-600">
+                      결제 내역 · 영수증 보기 <span className={`transition-transform ${historyOpen ? 'rotate-180' : ''}`}>▾</span>
+                    </button>
+                    {historyOpen && <div className="mt-2 animate-in fade-in slide-in-from-top-1 duration-200"><PaymentHistory info={payInfo} /></div>}
+                  </div>
+                </div>
+                <div style={{ minWidth: 0 }}>
+                  {/* 1년치 한 번에 결제 신청(계좌이체, 11개월 값) — 나무 바로 위. 운영자가 다른 교회를 보는 중이면 숨김 */}
+                  {!currentPending && (
+                    <AnnualRequestButton ownerId={currentOwnerId || null} readOnly={currentOwnerId !== uid}
+                      churchName={(selectedProject && projects.find(p => p.slug === selectedProject)?.churchName) || form.churchName}
+                      plans={['pro', 'lite', 'max']} currentAmount={Number(ownerDoc?.billingAmount || 0)}
+                      recurringActive={!!ownerDoc?.billingKey && ownerDoc?.subscriptionActive === true && !!ownerDoc?.billingAmount} />
+                  )}
+                  <RefundTree info={payInfo} ownerId={currentPending ? null : (currentOwnerId || null)} slug={selectedProject || ''}
+                    churchName={(selectedProject && projects.find(p => p.slug === selectedProject)?.churchName) || form.churchName} />
+                </div>
               </div>
             )
           })()}
 
-          {/* 위쪽 탭: 교회 홈페이지 / 교회 주보(종이 주보 만들기) — 사이트를 연 뒤에만 */}
+          {/* 왼쪽 사이드바(가로 1280px 이상, 2026-11-24 — 1280~1599px는 내용 칸을 밀어 자리 확보): 내용 칸 바깥 왼쪽 여백에 붙고, 안쪽은 sticky라 스크롤해도 화면에 남음.
+              🌐 교회 홈페이지(아래에 편집 메뉴 6개) / 📄 교회 주보(종이 주보 만들기). 좁은 화면은 예전처럼 위쪽 가로 탭.
+              편집 메뉴를 누르면 탭이 바뀌고, 지금 화면이 내용 시작보다 아래면 내용 맨 위로 부드럽게 올라감 */}
+          <aside className="hidden min-[1280px]:block" style={{ position: 'absolute', top: 0, bottom: 0, right: 'calc(100% + 28px)', width: 196 }}>
+            <div style={{ position: 'sticky', top: 88, display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {([['plan', '💳', '요금제'], ['site', '🌐', '교회 홈페이지'], ['paper', '📄', '교회 주보']] as const)
+                .map(([v, icon, label]) => {
+                  const on = builderMode === v
+                  // 새 사이트를 아직 저장 안 했으면(사이트 없음) 요금제·교회 주보는 흐리게 보이기만 하고 못 엶
+                  const needSave = v === 'plan' && !selectedProject
+                  return (
+                    <div key={v}>
+                      {/* 공통 사이드바 부품(components/EditorSidebar). 교회 주보는 준비중: 회색·자물쇠.
+                          요금제 부제: 오픈 프로모션 안내(전체 문구는 마우스를 올리면 보임) */}
+                      <SidebarItem icon={icon} label={label} on={on}
+                        sub={needSave ? '저장하면 열려요' : v === 'paper' ? '준비중' : v === 'plan' ? '🎉 오픈 프로모션 무료!' : undefined}
+                        subColor={!needSave && v === 'plan' ? THEME.sky : undefined} subTitle={!needSave && v === 'plan' ? '현재 오픈 프로모션으로 무료 이용 가능!' : undefined}
+                        locked={needSave || v === PAPER_LOCKED_KEY} blocked={needSave || v === PAPER_BLOCKED}
+                        title={needSave ? '먼저 교회 사이트를 저장해 주세요' : v === PAPER_LOCKED_KEY ? '준비중이에요 — 미리 둘러볼 수만 있어요' : undefined}
+                        onClick={() => switchBuilderMode(v)} />
+                      {/* 교회 홈페이지를 고른 동안만 그 아래에 편집 메뉴 6개(부드럽게 펼침/접힘) */}
+                      {v === 'site' && (
+                        <SidebarCollapse open={on}>
+                          <BuilderTabs vertical tabs={builderTabs} active={activeTab} onChange={k => {
+                            setActiveTab(k as typeof activeTab)
+                            const el = tabContentRef.current
+                            if (el && el.getBoundingClientRect().top < 88) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                          }} />
+                        </SidebarCollapse>
+                      )}
+                    </div>
+                  )
+                })}
+              {/* 온라인 주보(2026-11-25): 교회 주보 바로 아래 — 누르면 주보 관리자(/admin)로. 로그인은 그대로 이어짐 */}
+              <div onMouseEnter={() => { if (isWebsiteHost()) prefetchLoginToken() }}>
+                <SidebarItem icon="📱" label="온라인 주보" sub="주보 관리자 새 탭으로 ↗" on={false}
+                  title="주보 관리자 화면(/admin)을 새 탭으로 열어요" onClick={goOnlineBulletin} />
+              </div>
+            </div>
+          </aside>
+
+          {/* 위쪽 탭: 교회 홈페이지 / 교회 주보(종이 주보 만들기) — 사이트를 연 뒤에만. 넓은 화면에선 왼쪽 사이드바로 대신함 */}
           {selectedProject && (
-            <div style={{ display: 'flex', gap: 4, background: '#EEF1F5', borderRadius: 14, padding: 4, marginBottom: 20, width: 'fit-content' }}>
-              {([['site', '🌐 교회 홈페이지'], ['paper', '📄 교회 주보 (종이 주보 만들기)']] as const).map(([v, l]) => (
-                <button key={v} type="button" onClick={() => setBuilderMode(v)}
-                  style={{ border: 'none', borderRadius: 10, padding: '10px 18px', fontSize: 14, fontWeight: 800, cursor: 'pointer', fontFamily: 'inherit',
-                    background: builderMode === v ? 'white' : 'transparent', color: builderMode === v ? THEME.navy : THEME.muted, boxShadow: builderMode === v ? '0 1px 3px rgba(0,0,0,.08)' : 'none' }}>{l}</button>
+            // display는 className으로(flex + 넓은 화면 hidden) — style에 display를 쓰면 hidden을 덮어써서 넓은 화면에서도 보였음
+            <div className="bp-mode-toggle flex min-[1280px]:hidden" style={{ gap: 4, background: '#EEF1F5', borderRadius: 14, padding: 4, marginBottom: 20, width: 'fit-content' }}>
+              {([['plan', '💳 요금제', ''], ['site', '🌐 교회 홈페이지', ''], ['paper', '🔒 교회 주보', ' (준비중)']] as const).map(([v, l, long]) => (
+                <button key={v} type="button" disabled={v === PAPER_BLOCKED} title={v === PAPER_LOCKED_KEY ? '준비중이에요' : undefined}
+                  onClick={() => { if (v !== PAPER_BLOCKED) switchBuilderMode(v) }}
+                  style={{ border: 'none', borderRadius: 10, padding: '10px 18px', fontSize: 14, fontWeight: 800, fontFamily: 'inherit',
+                    cursor: v === PAPER_BLOCKED ? 'not-allowed' : 'pointer', opacity: v === PAPER_LOCKED_KEY && builderMode !== v ? 0.45 : 1,
+                    background: builderMode === v ? 'white' : 'transparent', color: builderMode === v ? THEME.navy : THEME.muted, boxShadow: builderMode === v ? '0 1px 3px rgba(0,0,0,.08)' : 'none',
+                    transition: 'background 0.2s, color 0.2s, box-shadow 0.2s' }}>{l}{long && <span className="bp-mode-long">{long}</span>}</button>
               ))}
             </div>
           )}
-          {selectedProject && builderMode === 'paper' && (() => {
-            const cur = projects.find(p => p.slug === selectedProject)
-            return (
-              <div style={{ marginBottom: 24 }}>
-                <PaperJuboEditor
-                  key={selectedProject}
-                  slug={selectedProject}
-                  initial={((cur as { paperJubo?: PaperJubo } | undefined)?.paperJubo) || null}
-                  churchName={cur?.churchName || form.churchName}
-                  onSaved={(pjNew) => setProjects(prev => prev.map(p => (p.slug === selectedProject ? ({ ...p, paperJubo: pjNew } as typeof p) : p)))}
-                />
-              </div>
-            )
-          })()}
+          {builderMode === 'paper' && (
+            // 교회 주보(종이 주보): 교회 계정에 저장(paperJubos/{계정}) — 홈페이지를 저장하지 않아도 씀.
+            // 운영자가 대신 만들고 계정 연결 전인 사이트는 계정이 없어 site_{주소}로 저장. 준비중 잠금은 PaperJuboGate
+            <div className="animate-in fade-in slide-in-from-bottom-3 duration-500" style={{ marginBottom: 24 }}>
+              {/* 주보 편집에서 올린 종이 주보 목록(최근 5개 + 전체 보기) — 준비중 잠금 밖이라 지금도 씀 */}
+              <PaperUploadList ownerId={currentPending ? null : (currentOwnerId || null)} viewerUid={uid || null} />
+              <PaperJuboGate
+                storeKey={currentPending && selectedProject ? `site_${selectedProject}` : (currentOwnerId || '')}
+                ownerId={currentPending ? null : currentOwnerId}
+                churchName={(selectedProject && projects.find(p => p.slug === selectedProject)?.churchName) || form.churchName} />
+            </div>
+          )}
 
           {/* BUILDER LAYOUT */}
           {/* 왼쪽 칸은 minmax(0,1fr): 안에 긴 글자(주보 파일 제목 등)가 있어도 왼쪽 칸이 늘어나 미리보기를 화면 밖으로 밀지 않게 */}
-          <div style={{ display: selectedProject && builderMode === 'paper' ? 'none' : 'grid', gridTemplateColumns: 'minmax(0, 1fr) 380px', gap: 24, alignItems: 'start' }}>
+          {/* 숨김(display:none)에서 다시 보이면 CSS 애니메이션이 다시 재생됨 → 교회 홈페이지로 돌아올 때도 부드럽게 나타남 */}
+          <div className="bp-main-grid animate-in fade-in slide-in-from-bottom-3 duration-500" style={{ display: builderMode !== 'site' ? 'none' : 'grid', gridTemplateColumns: 'minmax(0, 1fr) 380px', gap: 24, alignItems: 'start' }}>
 
             {/* LEFT: FORM */}
             <div style={{ minWidth: 0 }}>
-              <div style={{ marginBottom: 24, display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div className="bp-title-row" style={{ marginBottom: 24, display: 'flex', alignItems: 'center', gap: 12 }}>
                 <button
                   onClick={goBackToList}
                   style={{ background: 'none', border: 'none', cursor: 'pointer', color: THEME.muted, fontSize: 14, fontFamily: 'inherit' }}
@@ -2213,23 +2561,21 @@ export default function BuilderPage({ onBack }: Props) {
                 )}
               </div>
 
-              {/* TABS — 선택 표시(남색 알약)가 누른 탭으로 스르륵 미끄러져 감 */}
-              <BuilderTabs
-                tabs={[
-                  // 홈페이지 상단 메뉴와 같은 순서. 매주 바뀌는 것은 맨 앞 "매주 업데이트" 하나에
-                  { key: 'weekly', label: '매주 업데이트' },
-                  { key: 'home', label: '홈 화면' },
-                  { key: 'about', label: '교회소개' },
-                  { key: 'worship', label: '예배' },
-                  { key: 'edu', label: eduMenuLabel.trim() || '교육부서' },
-                  { key: 'settings', label: '기본 설정' },
-                ]}
-                active={activeTab}
-                onChange={k => setActiveTab(k as typeof activeTab)}
-              />
+              {/* TABS — 선택 표시(남색 알약)가 누른 탭으로 스르륵 미끄러져 감.
+                  넓은 화면(1280px 이상): 왼쪽에 세로 사이드바로 붙어 스크롤해도 따라옴(2026-11-24, 매번 위로 올라가지 않게).
+                  좁은 화면: 예전처럼 여기 가로 탭 */}
+              <div className="bp-tabs-sticky min-[1280px]:hidden">
+                <BuilderTabs tabs={builderTabs} active={activeTab} onChange={k => {
+                  setActiveTab(k as typeof activeTab)
+                  // 모바일: 탭이 위에 붙어 있으니, 아래쪽을 보다 바꾸면 새 내용 맨 위로 올려 줌
+                  const el = tabContentRef.current
+                  if (el && el.getBoundingClientRect().top < 0) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                }} />
+              </div>
 
               {/* 탭을 바꿀 때 내용이 살짝 아래에서 올라오며 나타남(key가 바뀌면 다시 재생).
                   한 탭의 카드가 아래 여러 묶음에서 올 수 있어 묶음 사이도 같은 간격(20) */}
+              <div ref={tabContentRef} className="bp-scroll-anchor" style={{ scrollMarginTop: 88 }} />
               <div key={activeTab} className="animate-in fade-in slide-in-from-bottom-2 duration-300" style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
 
               {/* 매주 업데이트: 이번 주 말씀 */}
@@ -2502,19 +2848,33 @@ export default function BuilderPage({ onBack }: Props) {
                     </div>
                     <div style={{ marginBottom: 20 }}>
                       <label style={{ fontSize: 13, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 10 }}>목사님 사진 <span style={{ fontWeight: 400, color: THEME.muted }}>(선택)</span></label>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                      {/* 사진 크기 안내 + 홈페이지와 같은 모양(세로 4:5, 위쪽 기준)으로 크게 미리보기(2026-11-25) */}
+                      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
                         {form.pastorPhotoUrl ? (
-                          <img src={form.pastorPhotoUrl} alt="목사님 사진 미리보기" style={{ width: 56, height: 56, objectFit: 'cover', borderRadius: 10, border: `1px solid ${THEME.border}` }} />
+                          <img src={form.pastorPhotoUrl} alt="목사님 사진 미리보기" style={{ width: 160, aspectRatio: '4 / 5', objectFit: 'cover', objectPosition: 'top', borderRadius: 16, border: `1px solid ${THEME.border}`, background: '#F8FAFC', flexShrink: 0 }} />
                         ) : (
-                          <div style={{ width: 56, height: 56, borderRadius: 10, border: `1px dashed ${THEME.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: THEME.muted }}>없음</div>
+                          <div style={{ width: 160, aspectRatio: '4 / 5', borderRadius: 16, border: `1px dashed ${THEME.border}`, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4, fontSize: 12, color: THEME.muted, flexShrink: 0 }}>
+                            <span style={{ fontSize: 26 }}>👤</span>사진 없음
+                          </div>
                         )}
-                        <label style={{ padding: '9px 16px', borderRadius: 8, border: `1px solid ${THEME.border}`, background: 'white', fontSize: 13, fontWeight: 600, color: THEME.text, cursor: 'pointer' }}>
-                          {uploadingPastorPhoto ? '업로드 중...' : '사진 선택'}
-                          <input type="file" accept="image/*" onChange={handlePastorPhotoFileChange} disabled={uploadingPastorPhoto} style={{ display: 'none' }} />
-                        </label>
-                        {form.pastorPhotoUrl && (
-                          <button type="button" onClick={() => update('pastorPhotoUrl', '')} style={{ fontSize: 12, color: THEME.muted, background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>삭제</button>
-                        )}
+                        <div style={{ flex: '1 1 200px', minWidth: 0 }}>
+                          <div style={{ borderRadius: 12, background: '#F8FAFC', border: `1px solid ${THEME.border}`, padding: '12px 14px', fontSize: 12.5, color: THEME.text, lineHeight: 1.7, wordBreak: 'keep-all' }}>
+                            <p style={{ fontWeight: 800, color: THEME.navy, marginBottom: 4 }}>이런 사진이 잘 어울려요</p>
+                            <p>· <b>세로 사진</b> (가로:세로 = 4:5), <b>800 × 1000px</b> 이상</p>
+                            <p>· 얼굴부터 상반신까지 나온 사진</p>
+                            <p>· <b>흰색·밝은 단색 배경</b> — 배경이 교회 대표 색에 자연스럽게 녹아들어요</p>
+                            <p style={{ color: THEME.muted, marginTop: 4 }}>비율이 다르면 <b>위쪽(얼굴)을 기준</b>으로 아래가 잘려요. 왼쪽 미리보기가 홈페이지에 보이는 모양이에요.</p>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 12 }}>
+                            <label style={{ padding: '9px 16px', borderRadius: 8, border: `1px solid ${THEME.border}`, background: 'white', fontSize: 13, fontWeight: 600, color: THEME.text, cursor: 'pointer' }}>
+                              {uploadingPastorPhoto ? '업로드 중...' : form.pastorPhotoUrl ? '사진 바꾸기' : '사진 선택'}
+                              <input type="file" accept="image/*" onChange={handlePastorPhotoFileChange} disabled={uploadingPastorPhoto} style={{ display: 'none' }} />
+                            </label>
+                            {form.pastorPhotoUrl && (
+                              <button type="button" onClick={() => update('pastorPhotoUrl', '')} style={{ fontSize: 12, color: THEME.muted, background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>삭제</button>
+                            )}
+                          </div>
+                        </div>
                       </div>
                     </div>
                     <TextareaField label="인사말 (MESSAGE)" placeholder="성도님들과 방문객을 환영하는 인사말을 적어주세요." value={form.pastorMessage} onChange={v => update('pastorMessage', v)} hint={bulletinHint('pastorMessage')} action={bulletinLoad('pastorMessage')} />
@@ -2836,8 +3196,11 @@ export default function BuilderPage({ onBack }: Props) {
                   <div style={{ background: 'white', borderRadius: 16, border: `1px solid ${THEME.border}`, padding: '28px' }}>
                     <h3 style={{ fontWeight: 700, color: THEME.navy, marginBottom: 6, fontSize: 16 }}>교회 전경 사진</h3>
                     <p style={{ color: THEME.muted, fontSize: 13, marginBottom: 16, lineHeight: 1.6 }}>교회 소개 페이지 맨 위에 표시될 건물 외관 사진이에요. 방문객이 실제 건물을 미리 알아볼 수 있게 도와줍니다.</p>
+                    {/* 보일 부분 고르기(2026-11-25): 성도 화면 PC 틀(세로 4:5)과 같은 모양에서 사진을 끌어서 정함 */}
                     {form.buildingImageUrl && (
-                      <img src={form.buildingImageUrl} alt="교회 전경 미리보기" style={{ width: '100%', aspectRatio: '16 / 9', objectFit: 'cover', borderRadius: 10, marginBottom: 12, border: `1px solid ${THEME.border}` }} />
+                      <div style={{ marginBottom: 14 }}>
+                        <ImageFocusPicker src={form.buildingImageUrl} value={form.buildingImagePos} onChange={v => update('buildingImagePos', v)} ratio={4 / 5} />
+                      </div>
                     )}
                     <div style={{ display: 'flex', gap: 10 }}>
                       <label style={{ padding: '9px 16px', borderRadius: 8, border: `1px solid ${THEME.border}`, background: 'white', fontSize: 13, fontWeight: 600, color: THEME.text, cursor: 'pointer' }}>
@@ -2930,8 +3293,13 @@ export default function BuilderPage({ onBack }: Props) {
                   </div>
                   {/* 앨범: 홈페이지 위쪽 "앨범" 메뉴(주보 오른쪽). 앨범마다 제목·날짜·사진 여러 장 */}
                   <div style={{ background: 'white', borderRadius: 16, border: `1px solid ${THEME.border}`, padding: '28px' }}>
-                    <h3 style={{ fontWeight: 700, color: THEME.navy, marginBottom: 6, fontSize: 16 }}>앨범</h3>
-                    <p style={{ color: THEME.muted, fontSize: 13, marginBottom: 20 }}>수련회·성탄절 같은 행사 사진을 앨범으로 묶어 올려 보세요. 홈페이지 위쪽 "앨범" 메뉴(주보 오른쪽)에 카드로, 최신 날짜 순으로 보여요. 앨범 하나에 사진은 최대 {ALBUM_MAX_PHOTOS}장까지 올릴 수 있어요.</p>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, marginBottom: 6 }}>
+                      <h3 style={{ fontWeight: 700, color: THEME.navy, fontSize: 16 }}>앨범</h3>
+                      <OnOffSwitch on={albumEnabled} onChange={setAlbumEnabled} />
+                    </div>
+                    {albumEnabled
+                      ? <p style={{ color: THEME.muted, fontSize: 13, marginBottom: 20, lineHeight: 1.6 }}>수련회·성탄절 같은 행사 사진을 앨범으로 묶어 올려 보세요. 홈페이지 위쪽 "앨범" 메뉴(주보 오른쪽)에 카드로, 최신 날짜 순으로 보여요. 앨범 하나에 사진은 최대 {ALBUM_MAX_PHOTOS}장까지 올릴 수 있어요.</p>
+                      : <p style={{ color: THEME.muted, fontSize: 13, marginBottom: 20, lineHeight: 1.6 }}>꺼져 있어요. 홈페이지 위쪽 메뉴에 <b>앨범이 보이지 않아요</b>. 올려 둔 앨범은 지워지지 않고, 다시 켜면 그대로 보여요.</p>}
                     <div className="space-y-4">
                       {albums.map((a, i) => (
                         <div key={a.id} className="rounded-2xl border border-slate-200 p-4 sm:p-5">
@@ -3095,6 +3463,17 @@ export default function BuilderPage({ onBack }: Props) {
               )}
 
               {/* 교육부서 */}
+              {/* 게시판 탭(2026-11-24): 은혜나눔 게시판 — 켜기·이름·글 관리. 운영자 승인 후 사용. 글은 사이트 주소별 저장이라 저장된 사이트에서만 */}
+              {activeTab === 'board' && (
+                selectedProject ? (() => {
+                  const cur = projects.find(p => p.slug === selectedProject) as { graceEnabled?: boolean; graceLabel?: string; graceDesc?: string } | undefined
+                  return <GraceAdminCard slug={selectedProject} enabled={cur?.graceEnabled === true} label={cur?.graceLabel || ''} desc={cur?.graceDesc || ''}
+                    onSaved={(patch) => setProjects(prev => prev.map(p => (p.slug === selectedProject ? ({ ...p, ...patch } as typeof p) : p)))} />
+                })() : (
+                  <div style={{ background: 'white', borderRadius: 16, border: `1px solid ${THEME.border}`, padding: '28px', fontSize: 13.5, color: THEME.muted }}>교회 사이트를 먼저 저장하면 게시판을 설정할 수 있어요.</div>
+                )
+              )}
+
               {activeTab === 'edu' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
                   <div style={{ background: 'white', borderRadius: 16, border: `1px solid ${THEME.border}`, padding: '28px' }}>
@@ -3496,8 +3875,8 @@ export default function BuilderPage({ onBack }: Props) {
               </div>
             </div>
 
-            {/* RIGHT: PREVIEW */}
-            <div style={{ position: 'sticky', top: 80 }}>
+            {/* RIGHT: PREVIEW (모바일에선 숨김 — 위 바의 저장·배포 사용) */}
+            <div className="bp-preview" style={{ position: 'sticky', top: 80 }}>
               <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <span style={{ fontSize: 13, fontWeight: 600, color: THEME.muted }}>사이트 미리보기</span>
                 <span style={{ fontSize: 11, color: THEME.muted, background: '#F3F4F6', borderRadius: 4, padding: '2px 8px' }}>실시간 반영</span>
@@ -3586,6 +3965,7 @@ export default function BuilderPage({ onBack }: Props) {
             </div>
 
           </div>
+          </div>{/* /사이드바 기준 칸 */}
 
           {/* 결제 플랜 선택 모달 */}
           {analysisReview && (() => {
@@ -3810,58 +4190,6 @@ function PersonAddButton({ label, onClick }: { label: string; onClick: () => voi
   )
 }
 
-// 빌더 상단 탭. 선택된 탭 뒤에 남색 알약이 깔리고, 다른 탭을 누르면 그 자리로 미끄러지듯 이동.
-// 화면 폭이 좁아 탭이 두 줄로 접혀도 위치·크기를 실제 버튼에서 재서 맞춤
-function BuilderTabs({ tabs, active, onChange }: { tabs: { key: string; label: string }[]; active: string; onChange: (key: string) => void }) {
-  const wrapRef = useRef<HTMLDivElement>(null)
-  const btnRefs = useRef<Record<string, HTMLButtonElement | null>>({})
-  const [pill, setPill] = useState<{ left: number; top: number; width: number; height: number } | null>(null)
-
-  useLayoutEffect(() => {
-    const measure = () => {
-      const b = btnRefs.current[active]
-      if (b) setPill({ left: b.offsetLeft, top: b.offsetTop, width: b.offsetWidth, height: b.offsetHeight })
-    }
-    measure()
-    const ro = new ResizeObserver(measure)
-    if (wrapRef.current) ro.observe(wrapRef.current)
-    return () => ro.disconnect()
-  }, [active])
-
-  return (
-    <div ref={wrapRef} style={{ position: 'relative', display: 'flex', gap: 4, flexWrap: 'wrap', background: '#F3F4F6', borderRadius: 12, padding: 4, marginBottom: 24 }}>
-      {pill && (
-        <span aria-hidden style={{
-          position: 'absolute', left: pill.left, top: pill.top, width: pill.width, height: pill.height,
-          background: THEME.navy, borderRadius: 9, boxShadow: '0 4px 12px rgba(27,58,107,0.28)',
-          transition: 'left 0.32s cubic-bezier(0.22, 1, 0.36, 1), top 0.32s cubic-bezier(0.22, 1, 0.36, 1), width 0.32s cubic-bezier(0.22, 1, 0.36, 1)',
-        }} />
-      )}
-      {tabs.map(tab => {
-        const on = tab.key === active
-        return (
-          <button
-            key={tab.key}
-            ref={el => { btnRefs.current[tab.key] = el }}
-            onClick={() => onChange(tab.key)}
-            className="active:scale-[0.97]"
-            style={{
-              position: 'relative', zIndex: 1, flex: '1 1 100px',
-              background: 'transparent', border: 'none', borderRadius: 9,
-              padding: '10px 8px', fontFamily: 'inherit', fontSize: 13,
-              fontWeight: on ? 700 : 500,
-              color: on ? 'white' : THEME.muted,
-              cursor: 'pointer',
-              transition: 'color 0.25s, transform 0.1s',
-            }}
-          >
-            {tab.label}
-          </button>
-        )
-      })}
-    </div>
-  )
-}
 
 // "화면 방식" 카드의 작은 그림. 전환형: 메뉴 탭 + 페이지 여러 장이 겹친 모습 / 원페이지형: 긴 한 장을 아래로 스크롤
 function LayoutModeSketch({ mode, active }: { mode: 'multipage' | 'onepage'; active: boolean }) {

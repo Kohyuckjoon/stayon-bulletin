@@ -61,6 +61,7 @@ export interface ChurchSite {
   heroImageUrl?: string; // 메인 화면 상단(히어로) 배경 사진. 없으면 primaryColor 그라데이션으로 대체
   galleryImages?: string[]; // 홈 화면 "이번 주 예배 시간" 바로 위에 화면 꽉 채워 표시되는 사진(최대 10장, 여러 장이면 슬라이드)
   buildingImageUrl?: string; // 교회 전경(건물) 사진. 교회 소개 섹션 상단에 표시
+  buildingImagePos?: string; // 그 사진에서 틀 안에 보일 부분(CSS object-position, 예 "50% 30%"). 없으면 가운데
 
   primaryColor?: string;
   activeMenus?: string[];
@@ -98,6 +99,8 @@ export interface ChurchSite {
   // 교회 일정(위쪽 메뉴 "교회 일정", 앨범 오른쪽): scheduleEnabled가 true일 때만 메뉴·화면에 보임
   // 홈페이지 편집 화면 > 매주 업데이트 탭에서 일정(날짜·내용)을 추가
   scheduleEnabled?: boolean;
+  // 앨범 메뉴: false일 때만 숨김(없으면 보임, 2026-11-25)
+  albumEnabled?: boolean;
   // 화면 위쪽 배너(페이지 전환형): 사진(기본) / 색상(두 색 그라데이션) / 끄기(옅은 띠) — utils/pageBanners.ts
   bannerMode?: "photo" | "color" | "off";
   bannerColors?: [string, string] | null; // null·없음 = 우리 교회 색으로 자동

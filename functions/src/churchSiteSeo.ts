@@ -314,7 +314,7 @@ function hasPage(path: string, c: Content): boolean {
     !!(str(c.site.newcomerIntro) ||
     arr(c.site.newcomerSteps).length || str(c.site.newcomerContact));
   // 홈페이지(앱)도 앨범 메뉴는 앨범이 없어도 항상 보여 주므로 404로 내지 않음
-  case "/album": return true;
+  case "/album": return c.site.albumEnabled !== false; // 편집 화면에서 끄면 숨김
   case "/schedule": return c.site.scheduleEnabled === true;
   }
   return false;
@@ -363,7 +363,7 @@ function buildPage(c: Content, base: string, path: string): Page | null {
         `<p>${a("/jubo", label(list[0].data) || "이번 주 주보")}</p>`);
     }
     // 메인에서 상세 페이지로 바로 가는 링크(구글이 하위 페이지를 타고 들어가게 —
-    // 주보플러스 메인처럼 최근 주보·교회소식·부서 상세 링크를 함께 둔다)
+    // 최근 주보·교회소식·부서 상세 링크를 함께 둔다)
     if (list.length) {
       parts.push("<h2>최근 주보</h2>" + ul(list.slice(0, 6).map((x) =>
         a(`/bulletins/${x.id}`, label(x.data) || "주보"))));
@@ -465,7 +465,7 @@ function buildPage(c: Content, base: string, path: string): Page | null {
   }
 
   // 앨범 하나(/album/{id}): 제목 · 날짜 · 사진들
-  if (seg[0] === "album" && seg.length === 2) {
+  if (seg[0] === "album" && seg.length === 2 && c.site.albumEnabled !== false) {
     const al = c.albums.find((x) => str(x.id) === seg[1]);
     if (!al) return null;
     const photos = arr(al.photos).map(str)
@@ -865,7 +865,9 @@ export function churchSitePaths(
   (ctx?.columns || []).forEach((x) => out.push(`${base}/column/${x.id}`));
   c.prayers.forEach((x) => out.push(`${base}/prayer/${x.id}`));
   c.edu.forEach((_, i) => out.push(`${base}/education/${i + 1}`));
-  c.albums.forEach((x) => out.push(`${base}/album/${str(x.id)}`));
+  if (c.site.albumEnabled !== false) {
+    c.albums.forEach((x) => out.push(`${base}/album/${str(x.id)}`));
+  }
   return out;
 }
 

@@ -10,6 +10,9 @@
   // 구조화 데이터(JSON-LD)는 React가 다시 넣으므로 중복되지 않게 지우고,
   // 교회 서브도메인에서 숨겨둔 메인 화면 내용도 비운 뒤 앱을 그린다
   const rootEl = document.getElementById("root")!;
+  // 앱이 뜰 때 body에 남은 "스크롤 잠금"(예전에 미리 찍은 HTML에 박힌 position:fixed 등)을 지움(2026-11-25)
+  // — 이게 남아 있으면 마우스 휠·스크롤이 안 됨. 팝업은 앱이 뜬 뒤 필요하면 다시 잠금
+  if (document.body.style.position === "fixed" || document.body.style.overflow === "hidden") document.body.removeAttribute("style");
 
   // 교회 홈페이지({주소}.stayon-platform.com)를 검색봇(구글 렌더러 등)이 열었을 때:
   // 서버(siteOG)가 교회 내용을 다 채운 HTML을 줬는데, 앱을 띄우면 그 본문을 지우고

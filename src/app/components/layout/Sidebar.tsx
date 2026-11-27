@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { collection, getCountFromServer, query, where } from "firebase/firestore";
+import { db } from "../../../firebase";
 import { useNavigate, useLocation } from "react-router";
 import { Menu, X } from "lucide-react";
 
@@ -18,6 +20,8 @@ const NAV_ITEMS = [
   { label: "기능 업데이트 알림", path: "/super/feature-update", match: (p: string) => p.includes("/super/feature-update") },
   { label: "홍보 팝업", path: "/super/promo-popup", match: (p: string) => p.includes("/super/promo-popup") },
   { label: "결제 · 정산", path: "/super/payments", match: (p: string) => p.includes("/super/payments") },
+  // 신청 관리(2026-11-25): 1년 결제 신청 · 1년 완납 환급 요청 · 1개월 무료 쿠폰 — 처리 대기 건수를 옆에 숫자로
+  { label: "신청 관리", path: "/super/requests", match: (p: string) => p.includes("/super/requests") },
 ];
 
 export const AdminSidebar = () => {
@@ -25,6 +29,14 @@ export const AdminSidebar = () => {
   const location = useLocation();
   const currentPath = location.pathname;
   const [mobileOpen, setMobileOpen] = useState(false);
+  // 신청 관리 처리 대기 건수(화면을 옮길 때마다 새로)
+  const [waiting, setWaiting] = useState(0);
+  useEffect(() => {
+    getCountFromServer(query(collection(db, "refundRequests"), where("status", "==", "requested")))
+      .then((r) => setWaiting(r.data().count)).catch(() => {});
+  }, [currentPath]);
+  const badge = (path: string) => path === "/super/requests" && waiting > 0
+    ? <span className="ml-2 inline-flex min-w-5 h-5 items-center justify-center rounded-full bg-amber-400 px-1.5 text-[11px] font-black text-slate-900">{waiting}</span> : null;
 
   const activeLabel = NAV_ITEMS.find((item) => item.match(currentPath))?.label || "StayOn Admin";
 
@@ -48,7 +60,7 @@ export const AdminSidebar = () => {
                 : "text-slate-400 hover:bg-white/5 hover:text-white"
                 }`}
             >
-              {item.label}
+              {item.label}{badge(item.path)}
             </div>
           ))}
         </nav>
@@ -79,7 +91,7 @@ export const AdminSidebar = () => {
                   : "text-slate-300 hover:bg-white/5 hover:text-white"
                   }`}
               >
-                {item.label}
+                {item.label}{badge(item.path)}
               </div>
             ))}
           </nav>

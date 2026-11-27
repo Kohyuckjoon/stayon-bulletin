@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from "react";
-import { useNavigate, useParams } from "react-router";
+import { useParams } from "react-router";
+import { useSmoothNavigate as useNavigate, preloadAdminPages } from "../../utils/smoothNavigate"; // 관리자 화면 사이 부드러운 이동(2026-11-25)
 import { auth, db, storage } from "../../firebase";
 import { onAuthStateChanged } from "firebase/auth";
 import {
-  doc, getDoc, setDoc, serverTimestamp, collection, addDoc,
+  doc, getDoc, setDoc, updateDoc, deleteField, serverTimestamp, collection, addDoc,
   query, where, orderBy, limit, getDocs, writeBatch
 } from "firebase/firestore";
 import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
@@ -11,15 +12,21 @@ import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Card } from "../components/ui/card";
+// 편집 화면 공통 사이드바 부품(홈페이지 편집 화면과 같이 씀, 2026-11-24)
+import { SlidingTabs, SidebarItem, SidebarCollapse } from "../components/EditorSidebar";
+import { RetreatAdmin } from "./retreat/RetreatAdmin";
+import { ComingSoonGate } from "../components/ComingSoonGate";
+import { PaperUploadCard } from "../components/PaperUploadCard";
+import { WorshipFormsManager, WorshipFormPicker } from "../components/WorshipTemplates";
 import { Textarea } from "../components/ui/textarea";
 import { Switch } from "../components/ui/switch";
 import { Checkbox } from "../components/ui/checkbox";
 import {
-  ArrowLeft, Eye, Plus, Trash2, Send, Music, UserCheck, Wallet, ChevronUp,
+  ArrowLeft, Eye, Plus, Trash2, Send, Save, Music, UserCheck, Wallet, ChevronUp,
   ChevronDown, Youtube, Check, Copy, CalendarIcon, Clock, BookOpen, Sparkles, Upload,
   MapPin, Info, ImageIcon, X, Megaphone, Share2, FileText, Move, Users,
   Pencil, GripVertical, Quote, MessagesSquare, Lock, Tent, Palette, ExternalLink, Search,
-  Instagram, AtSign, Loader2
+  Instagram, AtSign, Loader2, ListChecks
 } from "lucide-react";
 import { toast } from "sonner";
 import { useFeatureUpdateNotice } from "../../hooks/useFeatureUpdateNotice";
@@ -197,8 +204,23 @@ function TierLockBanner({ tierLabel }: { tierLabel: string }) {
   );
 }
 
+// 주보 내용 칸 바로가기(사이드바) — 카드의 id="ed-sec-{key}"와 짝
+const ED_SECTIONS = [
+  { key: "bg", label: "주보 배경" },
+  { key: "info", label: "예배 · 설교 정보" },
+  { key: "time", label: "주일 예배 시간" },
+  { key: "evening", label: "오후 · 저녁 예배" },
+  { key: "praise", label: "찬양" },
+  { key: "order", label: "예배 순서" },
+  { key: "weekday", label: "주중 예배" },
+  { key: "news", label: "교회 소식" },
+  { key: "offering", label: "헌금 · 후원" },
+  { key: "paper", label: "종이 주보" },
+];
+
 export function AdminEditor() {
   const navigate = useNavigate();
+  useEffect(() => { preloadAdminPages(); }, []);
   const { message: featureUpdateMessage, show: showFeatureUpdate } = useFeatureUpdateNotice();
   const { id } = useParams();
   const isEditing = !!id;
@@ -210,8 +232,40 @@ export function AdminEditor() {
   }, [id]);
 
   const [showPublishDialog, setShowPublishDialog] = useState(false);
+  // 발행된 주보에 "저장만 해 둔(아직 발행 안 한)" 고친 내용이 있는지
+  const [hasPendingDraft, setHasPendingDraft] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<"content" | "cover" | "church" | "sharing" | "design">("content");
+  const [activeTab, setActiveTab] = useState<"content" | "forms" | "cover" | "church" | "sharing" | "design" | "retreat">("content");
+  // 왼쪽 사이드바(넓은 화면, 2026-11-24): "주보 내용" 아래 칸 바로가기 + 지금 보고 있는 칸 표시(스크롤 따라감)
+  const [activeSection, setActiveSection] = useState<string>(ED_SECTIONS[0].key);
+  useEffect(() => {
+    if (activeTab !== "content") return;
+    let raf = 0;
+    const onScroll = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        let cur = ED_SECTIONS[0].key;
+        for (const sec of ED_SECTIONS) {
+          const el = document.getElementById(`ed-sec-${sec.key}`);
+          if (el && el.getBoundingClientRect().top <= 140) cur = sec.key;
+        }
+        // 맨 아래까지 내리면 마지막 칸
+        if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 4) cur = ED_SECTIONS[ED_SECTIONS.length - 1].key;
+        setActiveSection(cur);
+      });
+    };
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => { window.removeEventListener("scroll", onScroll); cancelAnimationFrame(raf); };
+  }, [activeTab]);
+  const jumpToSection = (key: string) => {
+    setActiveSection(key);
+    document.getElementById(`ed-sec-${key}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+  const switchTab = (t: typeof activeTab) => {
+    setActiveTab(t);
+    if (window.scrollY > 0) window.scrollTo({ top: 0, behavior: "smooth" });
+  };
   // "커스텀 디자인" 템플릿 - 표어와 같은 이유(보통 오래 유지)로 새 주보 작성 시 최근 값을 이어받는다.
   const [bulletinTemplate, setBulletinTemplate] = useState(DEFAULT_BULLETIN_TEMPLATE_ID);
   // 이 교회 계정(users/{uid}) 데이터 - 커스텀 디자인 사용 권한(allowedTemplates, 요금제) 판정에 쓴다.
@@ -1879,7 +1933,10 @@ export function AdminEditor() {
           const docRef = doc(db, "bulletins", id);
           const docSnap = await getDoc(docRef);
           if (docSnap.exists()) {
-            const data = docSnap.data();
+            // 발행된 주보를 고쳐서 "저장"만 해 둔 내용(pendingDraft)이 있으면 그걸 불러옴 — 성도 화면은 발행 전까지 그대로
+            const raw = docSnap.data();
+            const data = raw.pendingDraft ? { ...raw, ...raw.pendingDraft } : raw;
+            setHasPendingDraft(!!raw.pendingDraft);
             const loadedBank = data.bankName || "";
             if (loadedBank && !BANK_LIST.includes(loadedBank)) {
               setIsCustomBank(true);
@@ -2119,9 +2176,13 @@ export function AdminEditor() {
     }
   };
 
-  const saveToFirestore = async () => {
+  // mode(2026-11-24): "save" = 데이터만 저장(성도 화면은 그대로) / "publish" = 저장 + 발행(그 주 주보가 바뀜)
+  //  - 새 주보·초안: status "draft"로 저장(성도 화면에 안 나감)
+  //  - 이미 발행된(또는 보관된) 주보: 화면에 나가는 칸은 그대로 두고 고친 내용을 pendingDraft 에만 저장.
+  //    발행하기를 누르면 그때 pendingDraft 내용이 실제 칸으로 들어가고 pendingDraft 는 지워짐
+  const saveToFirestore = async (mode: "save" | "publish" = "publish") => {
     if (!auth.currentUser) return toast.error("로그인이 필요합니다");
-    if (!bulletinData.title || !bulletinData.date) return toast.error("날짜와 제목은 필수입니다");
+    if (mode === "publish" && (!bulletinData.title || !bulletinData.date)) return toast.error("날짜와 제목은 필수입니다");
 
     setLoading(true);
     try {
@@ -2354,6 +2415,27 @@ export function AdminEditor() {
       };
       if (!isEditing) payload.createdAt = serverTimestamp();
 
+      // ── 저장만(발행 안 함) ──
+      if (mode === "save") {
+        const { status: _st, publishedAt: _pa, createdAt: _ca, ...content } = payload;
+        void _st; void _pa; void _ca;
+        const ref = doc(db, "bulletins", bulletinId);
+        const cur = isEditing ? await getDoc(ref) : null;
+        const curStatus = cur?.exists() ? cur.data().status : null;
+        if (!curStatus || curStatus === "draft") {
+          await setDoc(ref, { ...content, status: "draft", ...(cur?.exists() ? {} : { createdAt: serverTimestamp() }) }, { merge: true });
+          toast.success("저장했어요. 발행하기를 눌러야 성도 화면에 나가요.");
+          if (!isEditing) navigate(`/admin/editor/${bulletinId}`, { replace: true }); // 다음 저장도 같은 주보로
+        } else {
+          await updateDoc(ref, { pendingDraft: content, pendingDraftSavedAt: serverTimestamp() });
+          setHasPendingDraft(true);
+          toast.success("저장했어요. 발행하기를 누르기 전까지 성도 화면은 그대로예요.");
+        }
+        return;
+      }
+      payload.pendingDraft = deleteField();
+      payload.pendingDraftSavedAt = deleteField();
+
       batch.set(doc(db, "bulletins", bulletinId), payload, { merge: true });
       await batch.commit();
 
@@ -2400,7 +2482,7 @@ export function AdminEditor() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 font-sans pb-20">
+    <div className="ae-root min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 font-sans pb-20">
       {/* 가운데 확인 팝업 */}
       {confirmBox && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 p-4 backdrop-blur-[2px] animate-in fade-in duration-150"
@@ -2438,6 +2520,12 @@ export function AdminEditor() {
       <style>{`
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        /* 사이드바 자리 확보(2026-11-24): 가로 1280~1479px 화면은 양옆 여백이 사이드바보다 좁아서,
+           내용 칸을 왼쪽 248px 띄워 오른쪽으로 밀고 사이드바는 왼쪽 28px에 둠. 1480px 이상은 원래대로 가운데 */
+        @media (min-width: 1280px) and (max-width: 1479px) {
+          .ae-root .container.max-w-4xl, .ae-root .container.max-w-5xl { margin-left: 248px !important; margin-right: auto !important; }
+          .ae-root .ae-sidebar { left: 28px !important; }
+        }
       `}</style>
       <div className="bg-white/80 backdrop-blur-md border-b sticky top-0 z-50 shadow-sm">
         <div className="container mx-auto px-3 sm:px-4 py-3 grid grid-cols-[auto_1fr_auto] items-center gap-2">
@@ -2454,6 +2542,11 @@ export function AdminEditor() {
               <Eye className="w-4 h-4 sm:mr-2" />
               <span className="hidden sm:inline">미리보기</span>
             </Button>
+            {/* 저장하기: 데이터만 저장(성도 화면은 그대로). 발행하기를 눌러야 그 주 주보가 바뀜 */}
+            <Button variant="outline" disabled={loading} onClick={() => saveToFirestore("save")} className="rounded-full border-slate-300 text-slate-700 font-bold shrink-0 h-9 w-9 sm:w-auto px-0 sm:px-4" title="저장하기 (발행 전까지 성도 화면은 그대로)">
+              <Save className="w-4 h-4 sm:mr-2" />
+              <span className="hidden sm:inline">저장하기</span>
+            </Button>
             <Button disabled={loading} onClick={() => setShowPublishDialog(true)} className="rounded-full bg-gradient-to-r from-blue-600 to-indigo-700 text-white font-bold text-sm transition-all active:scale-95 shadow-md px-4 shrink-0">
               <Send className="w-4 h-4 mr-1.5 sm:mr-2" /> 발행하기
             </Button>
@@ -2461,13 +2554,20 @@ export function AdminEditor() {
         </div>
 
         {/* 상단 탭: 이 주보 자체의 내용 vs 계정(교회) 전체에 적용되는 공유 이미지 설정/교회 소개 정보 */}
-        <div className="container mx-auto px-4 max-w-4xl flex gap-1 overflow-x-auto no-scrollbar">
+        <div className="container mx-auto px-4 max-w-4xl flex gap-1 overflow-x-auto no-scrollbar min-[1280px]:hidden">
           <button
             type="button"
             onClick={() => setActiveTab("content")}
             className={`flex items-center gap-1.5 px-4 py-3 text-sm font-bold border-b-2 transition-colors shrink-0 whitespace-nowrap ${activeTab === "content" ? "border-blue-600 text-blue-600" : "border-transparent text-slate-400 hover:text-slate-600"}`}
           >
             <FileText className="w-4 h-4" /> 주보 내용
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("forms")}
+            className={`flex items-center gap-1.5 px-4 py-3 text-sm font-bold border-b-2 transition-colors shrink-0 whitespace-nowrap ${activeTab === "forms" ? "border-blue-600 text-blue-600" : "border-transparent text-slate-400 hover:text-slate-600"}`}
+          >
+            <ListChecks className="w-4 h-4" /> 예배 형식
           </button>
           <button
             type="button"
@@ -2497,11 +2597,12 @@ export function AdminEditor() {
           >
             <Palette className="w-4 h-4" /> 커스텀 디자인
           </button>
+          {/* 수련회 설정(준비중, 2026-11-24): 눌러서 준비중 안내 화면을 볼 수 있음 */}
           <button
             type="button"
-            disabled
+            onClick={() => setActiveTab("retreat")}
             title="준비 중인 기능이에요"
-            className="flex items-center gap-1.5 px-4 py-3 text-sm font-bold border-b-2 border-transparent text-slate-300 shrink-0 whitespace-nowrap cursor-not-allowed"
+            className={`flex items-center gap-1.5 px-4 py-3 text-sm font-bold border-b-2 transition-colors shrink-0 whitespace-nowrap ${activeTab === "retreat" ? "border-blue-600 text-blue-600" : "border-transparent text-slate-300 hover:text-slate-500"}`}
           >
             <Tent className="w-4 h-4" /> 수련회 설정
             <span className="flex items-center gap-0.5 text-[9px] font-black tracking-wider text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded-full">
@@ -2510,6 +2611,52 @@ export function AdminEditor() {
           </button>
         </div>
       </div>
+
+      {/* 발행된 주보에 저장만 해 둔 고친 내용이 있을 때 안내 */}
+      {hasPendingDraft && (
+        <div className="container mx-auto px-4 max-w-4xl pt-4">
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] font-semibold text-amber-800 break-keep">
+            저장만 해 둔 내용을 불러왔어요. <b>발행하기</b>를 누르기 전까지 성도 화면에는 이전에 발행한 내용이 그대로 나가요.
+          </div>
+        </div>
+      )}
+
+      {/* 왼쪽 사이드바(가로 1280px 이상, 2026-11-24 — 1280~1479px는 내용을 오른쪽으로 밀어 자리 확보): 위쪽 탭 대신. 위치는 모든 탭에서 고정 — 가장 넓은 "커스텀 디자인"(1024px) 기준이라 어느 탭에서도 안 겹침. 화면에 붙어 있어 스크롤해도 그대로.
+          "주보 내용" 아래에 칸 바로가기(누르면 그 칸으로, 스크롤하면 지금 칸에 알약이 따라감). 좁은 화면은 위쪽 탭 그대로 */}
+      <aside className="ae-sidebar hidden min-[1280px]:block" style={{ position: "fixed", top: 84, left: "calc(50% - 736px)", width: 196, zIndex: 40, maxHeight: "calc(100vh - 100px)", overflowY: "auto", scrollbarWidth: "none" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {([
+            // 순서(2026-11-25): 주보 내용 바로 다음에 커스텀 디자인
+            ["content", <FileText key="i" className="w-[17px] h-[17px]" />, "주보 내용"],
+            // 예배 형식(2026-11-25): 주보 내용과 커스텀 디자인 사이 — 예배 순서를 형식(템플릿)으로 만들어 두는 별도 화면
+            ["forms", <ListChecks key="i" className="w-[17px] h-[17px]" />, "예배 형식"],
+            ["design", <Palette key="i" className="w-[17px] h-[17px]" />, "커스텀 디자인"],
+            ["cover", <Share2 key="i" className="w-[17px] h-[17px]" />, "공유 이미지 설정"],
+            ["church", <Users key="i" className="w-[17px] h-[17px]" />, "교회 소개"],
+            ["sharing", <MessagesSquare key="i" className="w-[17px] h-[17px]" />, "나눔 설정"],
+          ] as const).map(([k, icon, label]) => (
+            <div key={k}>
+              {/* 커스텀 디자인은 프로 요금제부터 — 이름 아래 작은 글씨로 */}
+              <SidebarItem icon={icon} label={label} on={activeTab === k} onClick={() => switchTab(k)}
+                {...(k === "design" ? { sub: "프로 요금제부터 사용 가능", subColor: "#7C3AED" } : {})} />
+              {k === "content" && (
+                <SidebarCollapse open={activeTab === "content"}>
+                  <SlidingTabs vertical tabs={ED_SECTIONS} active={activeSection} onChange={jumpToSection} />
+                </SidebarCollapse>
+              )}
+            </div>
+          ))}
+          <SidebarItem icon={<Tent className="w-[17px] h-[17px]" />} label="수련회 설정" sub="COMING SOON" on={activeTab === "retreat"} locked title="준비 중인 기능이에요" onClick={() => switchTab("retreat")} />
+        </div>
+      </aside>
+
+      {/* 수련회 설정(2026-11-24): 수련회 안내 페이지(/retreat/{id}) · 자체 신청서 · 신청자 목록 */}
+      {/* 준비중(2026-11-24): 화면은 보이되 흐리게 + 손댈 수 없게 + "만드는 중" 안내(운영자는 "운영자로 계속 편집"). 열 때는 locked={false} */}
+      {activeTab === "retreat" && (
+        <ComingSoonGate locked desc={<>곧 수련회 안내 페이지를 만들고<br />신청서까지 바로 받을 수 있어요.</>}>
+          <RetreatAdmin />
+        </ComingSoonGate>
+      )}
 
       {activeTab === "content" && (
       <div className="container mx-auto px-4 py-6 max-w-4xl space-y-5">
@@ -2527,7 +2674,7 @@ export function AdminEditor() {
         )}
 
         {/* 기존 카드 디자인 코드 동일... (생략하지 않고 유지) */}
-        <Card className="p-5 rounded-[1.75rem] border-0 bg-white shadow-xl shadow-blue-500/5">
+        <Card id="ed-sec-bg" className="scroll-mt-24 p-5 rounded-[1.75rem] border-0 bg-white shadow-xl shadow-blue-500/5">
           <h2 className="text-xl font-bold mb-4 flex items-center gap-3 text-gray-800">
             <div className="w-2.5 h-8 bg-indigo-500 rounded-full"></div> 주보 배경 선택
           </h2>
@@ -2667,7 +2814,7 @@ export function AdminEditor() {
           </div>
         </Card>
 
-        <Card className="p-5 rounded-[1.75rem] border-0 bg-white shadow-xl shadow-blue-500/5">
+        <Card id="ed-sec-info" className="scroll-mt-24 p-5 rounded-[1.75rem] border-0 bg-white shadow-xl shadow-blue-500/5">
           <h2 className="text-xl font-bold mb-4 flex items-center gap-3 text-gray-800">
             <div className="w-2.5 h-8 bg-blue-500 rounded-full"></div> 예배 및 봉사 정보
           </h2>
@@ -2765,7 +2912,7 @@ export function AdminEditor() {
           </div>
         </Card>
 
-        <Card className="p-5 rounded-[1.75rem] border-0 bg-white shadow-xl shadow-blue-500/5">
+        <Card id="ed-sec-time" className="scroll-mt-24 p-5 rounded-[1.75rem] border-0 bg-white shadow-xl shadow-blue-500/5">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
             <div className="min-w-0">
               <h2 className="text-xl font-bold flex items-center gap-3 text-gray-800">
@@ -2819,7 +2966,7 @@ export function AdminEditor() {
         </Card>
 
         {/* 🟢 [수정 후 코드] 주일 오후 / 저녁 예배 설정 카드 */}
-        <Card className="p-5 rounded-[1.75rem] border-0 bg-white shadow-xl shadow-indigo-500/5">
+        <Card id="ed-sec-evening" className="scroll-mt-24 p-5 rounded-[1.75rem] border-0 bg-white shadow-xl shadow-indigo-500/5">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
             <div className="min-w-0">
               <h2 className="text-xl font-bold flex items-center gap-3 text-gray-900 tracking-tight">
@@ -3027,7 +3174,7 @@ export function AdminEditor() {
           )}
         </Card>
 
-        <Card className="p-5 rounded-[1.75rem] border-0 bg-white shadow-xl shadow-red-500/5 overflow-hidden relative">
+        <Card id="ed-sec-praise" className="scroll-mt-24 p-5 rounded-[1.75rem] border-0 bg-white shadow-xl shadow-red-500/5 overflow-hidden relative">
           <div className="absolute top-0 right-0 p-6 opacity-5">
             <Youtube className="w-32 h-32 text-red-600" />
           </div>
@@ -3152,14 +3299,18 @@ export function AdminEditor() {
           )}
         </Card>
 
-        <Card className="p-5 rounded-[1.75rem] border-0 bg-white shadow-xl shadow-purple-500/5">
+        <Card id="ed-sec-order" className="scroll-mt-24 p-5 rounded-[1.75rem] border-0 bg-white shadow-xl shadow-purple-500/5">
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-xl font-bold flex items-center gap-3">
               <div className="w-2.5 h-8 bg-purple-500 rounded-full"></div> 예배 순서
             </h2>
-            <Button onClick={addSection} variant="outline" className="rounded-full border-dashed border-2 px-6 border-purple-100 text-purple-600 hover:bg-purple-50">
-              <Plus className="w-4 h-4 mr-2" /> 순서 추가
-            </Button>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {/* 예배 형식 불러오기 — 형식은 "예배 형식" 탭에서 만듦 */}
+              <WorshipFormPicker currentSections={sections} onApply={(items) => setSections(items)} onManage={() => switchTab("forms")} />
+              <Button onClick={addSection} variant="outline" className="rounded-full border-dashed border-2 px-6 border-purple-100 text-purple-600 hover:bg-purple-50">
+                <Plus className="w-4 h-4 mr-2" /> 순서 추가
+              </Button>
+            </div>
           </div>
 
           {/* 특별 주일 - 예배 순서 목록의 다른 항목들(입례송, 신앙고백 등)과는 다르게, 예배 순서
@@ -3243,7 +3394,7 @@ export function AdminEditor() {
           </div>
         </Card>
 
-        <Card className="p-5 rounded-[1.75rem] border-0 bg-white shadow-xl shadow-slate-500/5">
+        <Card id="ed-sec-weekday" className="scroll-mt-24 p-5 rounded-[1.75rem] border-0 bg-white shadow-xl shadow-slate-500/5">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
             <div className="min-w-0">
               <h2 className="text-xl font-bold flex items-center gap-3 text-gray-900 tracking-tight">
@@ -3552,7 +3703,7 @@ export function AdminEditor() {
           )}
         </Card>
 
-        <Card className="p-5 rounded-[1.75rem] border-0 bg-white shadow-xl shadow-orange-500/5">
+        <Card id="ed-sec-news" className="scroll-mt-24 p-5 rounded-[1.75rem] border-0 bg-white shadow-xl shadow-orange-500/5">
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-xl font-bold flex items-center gap-3">
               <div className="w-2.5 h-8 bg-orange-500 rounded-full"></div> 교회 소식
@@ -3604,7 +3755,7 @@ export function AdminEditor() {
           </div>
         </Card> */}
 
-        <Card className="p-5 rounded-[1.75rem] border-0 bg-white shadow-xl shadow-green-500/5">
+        <Card id="ed-sec-offering" className="scroll-mt-24 p-5 rounded-[1.75rem] border-0 bg-white shadow-xl shadow-green-500/5">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-xl font-bold flex items-center gap-3 text-gray-800">
               <div className="w-2.5 h-8 bg-green-500 rounded-full"></div> 헌금 및 후원 안내
@@ -3684,7 +3835,14 @@ export function AdminEditor() {
             </div>
           </div>
         </Card>
+
+        {/* 종이 주보(2026-11-25): PDF·사진 올리기 — 올리는 즉시 저장, 홈페이지 편집 "교회 주보"에서도 보임 */}
+        <PaperUploadCard id="ed-sec-paper" bulletinId={id || null} date={String(bulletinData.date || "")} />
       </div>
+      )}
+
+      {activeTab === "forms" && (
+        <WorshipFormsManager currentSections={sections} onApply={(items) => { setSections(items); }} />
       )}
 
       {activeTab === "church" && (

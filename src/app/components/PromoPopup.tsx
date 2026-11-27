@@ -102,7 +102,7 @@ export function PromoPopupCard({ data, onGo, onClose, onHideToday }: {
       {data.title.trim() && <p className="text-[22px] font-bold leading-[1.4] tracking-[-0.02em] text-[#191F28] whitespace-pre-line break-keep">{data.title}</p>}
       {/* 설명(2026-11-20 가독성 개편): 한 줄마다 연회색 둥근 칸 하나씩 — 굵은 본문 한 줄.
           줄 끝에 (괄호)가 있으면 괄호 안 내용을 아래에 작은 파란 글씨로 따로 보여 줌
-          예) "한 달 7,900원부터(현재 오픈 프로모션 무료 사용 가능)" → 본문 "한 달 7,900원부터" + 아래 "현재 오픈 프로모션 무료 사용 가능" */}
+          예) "한 달 9,900원부터(현재 오픈 프로모션 무료 사용 가능)" → 본문 "한 달 9,900원부터" + 아래 "현재 오픈 프로모션 무료 사용 가능" */}
       {data.message.trim() && (
         <ul className="mt-5 space-y-2">
           {data.message.split("\n").map((l) => l.trim()).filter(Boolean).map((l, i) => {
@@ -146,6 +146,8 @@ export function PromoPopup() {
 
   useEffect(() => {
     if (hiddenToday()) return;
+    // 배포 때 첫 화면을 미리 찍는 자동 브라우저(prerender)에선 띄우지 않음 — 팝업·스크롤 잠금이 HTML에 박히지 않게
+    if (typeof navigator !== "undefined" && navigator.webdriver) return;
     let alive = true;
     getDoc(doc(db, ...PROMO_POPUP_DOC))
       .then((snap) => {
@@ -163,10 +165,11 @@ export function PromoPopup() {
     if (!open) return;
     const y = window.scrollY;
     const s = document.body.style;
-    const prev = { position: s.position, top: s.top, left: s.left, right: s.right, overflow: s.overflow };
     Object.assign(s, { position: "fixed", top: `-${y}px`, left: "0", right: "0", overflow: "hidden" });
     return () => {
-      Object.assign(s, prev);
+      // 닫을 때는 "원래 값"이 아니라 완전히 풀어 줌 — 원래 값이 이미 잠금 상태였으면(미리 찍은 HTML에 박힌 잠금 등)
+      // 그 잠금으로 되돌아가 스크롤이 계속 안 되던 문제(2026-11-25)
+      Object.assign(s, { position: "", top: "", left: "", right: "", overflow: "" });
       window.scrollTo(0, y);
     };
   }, [open]);

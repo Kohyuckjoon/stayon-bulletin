@@ -1,5 +1,7 @@
 import { Fragment, useEffect, useState } from "react";
-import { collection, getDocs, query, orderBy, doc, setDoc, where } from "firebase/firestore";
+import { collection, getDocs, query, orderBy, doc, setDoc, where, Timestamp } from "firebase/firestore";
+import { getExpiryInfo } from "../../../utils/subscriptionTier";
+import { useConfirm } from "../../components/ConfirmDialog";
 import { auth, db } from "../../../firebase";
 import { onAuthStateChanged } from "firebase/auth";
 import { Mail, Calendar, Shield, UserCheck, Search, Globe } from "lucide-react";
@@ -7,7 +9,7 @@ import { Switch } from "../../components/ui/switch";
 import { DenominationPicker } from "../../components/DenominationPicker";
 
 // 교회별 주보 전용 주소({주소}-jubo.stayon-platform.com) — functions/src/bulletinSeo.ts의
-// BULLETIN_SLUG_REGEX / verificationCode와 같은 규칙. 주보플러스처럼 교회 하나를 네이버·구글에
+// BULLETIN_SLUG_REGEX / verificationCode와 같은 규칙. 교회 하나를 네이버·구글에
 // 사이트 하나로 등록하기 위한 주소이고, 기존 QR 주소(/view/교회ID)는 그대로 열린다
 const JUBO_HOST_SUFFIX = "-jubo.stayon-platform.com";
 const BULLETIN_SLUG_REGEX = /^[a-z0-9](?:[a-z0-9-]{0,28}[a-z0-9])?$/;
@@ -105,6 +107,62 @@ const JuboSiteEditor = ({ user, onSaved, onClose }: { user: any; onSaved: (data:
   );
 };
 
+// 이용 기간 한 달 줄이기/늘리기(2026-11-25) — 결제를 취소했을 때 운영자가 이용 만료일(users.lastPaymentDate)을 직접 맞춤.
+// 결제가 되면 서버가 "한 달(같은 날짜)"씩 늘리므로 여기서도 30일이 아니라 한 달 단위(말일은 그 달 마지막 날로).
+// 결제·정기결제(다음 결제일·금액)는 건드리지 않음 — 날짜만 바꿈
+const addMonthsClamped = (d: Date, n: number) => {
+  const r = new Date(d);
+  const day = r.getDate();
+  r.setDate(1);
+  r.setMonth(r.getMonth() + n);
+  const last = new Date(r.getFullYear(), r.getMonth() + 1, 0).getDate();
+  r.setDate(Math.min(day, last));
+  return r;
+};
+const ExpiryAdjust = ({ user, onSaved }: { user: any; onSaved: (d: Date) => void }) => {
+  const [busy, setBusy] = useState(false);
+  const info = getExpiryInfo(user);
+  const cur = info.date;
+  const fmt = (d: Date) => `${d.getFullYear()}. ${d.getMonth() + 1}. ${d.getDate()}.`;
+  const { ask, node } = useConfirm(); // 머티리얼 확인 창
+  const move = (n: number) => {
+    if (!cur) return;
+    const next = addMonthsClamped(cur, n);
+    ask({
+      title: `이용 기간을 ${n > 0 ? `${n}개월 늘릴까요?` : `${-n}개월 줄일까요?`}`,
+      desc: "정기결제와 다음 결제일은 바뀌지 않아요.",
+      rows: [
+        { label: "교회", value: user.churchName || user.email || "-" },
+        { label: "이용 기간", value: <>{fmt(cur)} → <span className={n > 0 ? "text-blue-600" : "text-red-600"}>{fmt(next)}</span></> },
+      ],
+      confirmLabel: n > 0 ? "늘리기" : "줄이기",
+      danger: n < 0,
+      onConfirm: async () => {
+        setBusy(true);
+        try {
+          await setDoc(doc(db, "users", user.id), { lastPaymentDate: Timestamp.fromDate(next) }, { merge: true });
+          onSaved(next);
+        } catch (e) {
+          console.error("이용 기간 변경 오류:", e);
+          alert("이용 기간을 바꾸지 못했습니다.");
+        } finally {
+          setBusy(false);
+        }
+      },
+    });
+  };
+  const btn = "rounded-md border border-gray-300 bg-white px-2 py-1 text-[11px] font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-40";
+  return (
+    <div className="flex items-center gap-1.5 whitespace-nowrap">
+      {node}
+      <span className={`text-xs font-bold tabular-nums ${info.isTrial ? "text-sky-600" : "text-gray-700"}`}>{cur ? fmt(cur) : "미설정"}{info.isTrial ? " (체험)" : ""}</span>
+      <button type="button" disabled={busy || !cur} onClick={() => move(-1)} className={btn} title="결제를 취소했을 때 — 이용 기간을 한 달 줄임">−1개월</button>
+      <button type="button" disabled={busy || !cur} onClick={() => move(1)} className={btn} title="이용 기간을 한 달 늘림">+1개월</button>
+      <button type="button" disabled={busy || !cur} onClick={() => move(12)} className={btn} title="1년치 결제(계좌이체) 입금 확인 후 — 이용 기간을 12개월 늘림">+12개월</button>
+    </div>
+  );
+};
+
 const JuboSiteLink = ({ user, onEdit }: { user: any; onEdit: () => void }) => (
   <div className="flex items-center gap-2">
     {user.bulletinSlug ? (
@@ -123,6 +181,9 @@ export const AdminAuthUsers = () => {
   const [loading, setLoading] = useState<boolean>(true);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [editingSiteId, setEditingSiteId] = useState<string | null>(null); // 주보 전용 주소 편집 중인 교회
+  const handleExpirySaved = (userId: string, d: Date) => {
+    setUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, lastPaymentDate: Timestamp.fromDate(d) } : u)));
+  };
   const handleSiteSaved = (userId: string, data: Record<string, string>) => {
     setUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, ...data } : u)));
     setEditingSiteId(null);
@@ -215,7 +276,13 @@ export const AdminAuthUsers = () => {
                       <span>가입일 {user.createdAt ? new Date(user.createdAt.toDate ? user.createdAt.toDate() : user.createdAt).toLocaleDateString() : "기록 없음"}</span>
                       <span className="truncate">UID {user.uid || user.id}</span>
                     </div>
-                    <div className="flex items-center justify-between pt-1.5 mt-1.5 border-t border-gray-100">
+                    <div className="flex items-center justify-between gap-2 pt-1.5 mt-1.5 border-t border-gray-100">
+                      <span className="text-[11px] font-bold text-gray-500 flex items-center gap-1.5 shrink-0">
+                        <Calendar className="w-3 h-3 text-gray-400" /> 이용 기간
+                      </span>
+                      <ExpiryAdjust user={user} onSaved={(d) => handleExpirySaved(user.id, d)} />
+                    </div>
+                    <div className="flex items-center justify-between">
                       <span className="text-[11px] font-bold text-gray-500 flex items-center gap-1.5">
                         <Search className="w-3 h-3 text-gray-400" /> 검색엔진 노출
                       </span>
@@ -248,6 +315,7 @@ export const AdminAuthUsers = () => {
                       <th className="px-4 py-3">교회명</th>
                       <th className="px-4 py-3">로그인 방식</th>
                       <th className="px-4 py-3">가입일</th>
+                      <th className="px-4 py-3">이용 기간</th>
                       <th className="px-4 py-3">UID</th>
                       <th className="px-4 py-3">검색엔진 노출</th>
                       <th className="px-4 py-3">주보 전용 주소</th>
@@ -272,6 +340,9 @@ export const AdminAuthUsers = () => {
                         <td className="px-4 py-3 text-gray-600 tabular-nums">
                           {user.createdAt ? new Date(user.createdAt.toDate ? user.createdAt.toDate() : user.createdAt).toLocaleDateString() : "기록 없음"}
                         </td>
+                        <td className="px-4 py-3">
+                          <ExpiryAdjust user={user} onSaved={(d) => handleExpirySaved(user.id, d)} />
+                        </td>
                         <td className="px-4 py-3 text-gray-400 font-mono text-xs max-w-[180px] truncate" title={user.uid || user.id}>
                           {user.uid || user.id}
                         </td>
@@ -294,7 +365,7 @@ export const AdminAuthUsers = () => {
                       </tr>
                       {editingSiteId === user.id && (
                         <tr className="bg-blue-50/30">
-                          <td colSpan={7} className="px-4 pb-4 pt-1">
+                          <td colSpan={8} className="px-4 pb-4 pt-1">
                             <JuboSiteEditor user={user} onSaved={(data) => handleSiteSaved(user.id, data)} onClose={() => setEditingSiteId(null)} />
                           </td>
                         </tr>

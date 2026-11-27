@@ -132,6 +132,22 @@ export const onBulletinMailTrigger = onDocumentCreated(
         }
       }
 
+      // 같은 주보 날짜로 올린 종이 주보(paperJuboFiles)가 있으면 발행 메일에 같이(2026-11-25)
+      let paperFiles: { name: string; url: string }[] = [];
+      if (data.authorId && data.date) {
+        try {
+          const ps = await db.collection("paperJuboFiles")
+            .where("ownerId", "==", String(data.authorId))
+            .where("date", "==", String(data.date)).get();
+          paperFiles = ps.docs.map((d) => ({
+            name: String(d.data().fileName || "파일"),
+            url: String(d.data().fileUrl || ""),
+          }));
+        } catch (e) {
+          console.error("종이 주보 찾기 실패(메일은 그대로 보냄):", e);
+        }
+      }
+
       await sendMailNotification(
         data.isUpdate ? "BULLETIN_UPDATE" : "BULLETIN_PUBLISH",
         {
@@ -139,6 +155,7 @@ export const onBulletinMailTrigger = onDocumentCreated(
           pastorName: pastorName || "-",
           date: String(data.date || ""),
           bulletinId: String(data.bulletinId || ""),
+          paperFiles,
         },
       );
       console.log("✅ [주보 발행 알림 메일 완료]");
@@ -639,6 +656,129 @@ export const superPayments = functions.https.onRequest(
   }
 );
 
+// 교회 홈페이지 편집 화면 > 요금제(2026-11-24): 로그인한 교회 "자기" 결제 기록만(읽기 전용).
+// 결제를 일으키거나 바꾸지 않음 — 포트원 조회(GET)와 users 문서 읽기만.
+// GET ?uid=교회uid(운영자만 다른 교회 지정 가능), 헤더 Authorization: Bearer <ID 토큰>
+// 최근 400일 결제 중 이 교회 것만:
+// 정기결제(stayon_recurring_{uid}_…) · 고객 id = uid · 고객 이메일 = 계정 이메일
+export const myPayments = functions.https.onRequest(
+  {secrets: ["PORTONE_API_SECRET"], cors: true},
+  async (req, res) => {
+    let uid = "";
+    try {
+      const token = String(req.headers.authorization || "")
+        .replace(/^Bearer\s+/i, "");
+      const decoded = await admin.auth().verifyIdToken(token);
+      const want = String(req.query.uid || "");
+      if (want && want !== decoded.uid) {
+        if (!SUPER_OPERATOR_EMAILS.includes(decoded.email || "")) {
+          res.status(403).json({error: "다른 교회 결제 내역은 볼 수 없어요."});
+          return;
+        }
+        uid = want;
+      } else {
+        uid = decoded.uid;
+      }
+    } catch {
+      res.status(401).json({error: "로그인이 필요합니다."});
+      return;
+    }
+    const secret = process.env.PORTONE_API_SECRET;
+    if (!secret) {
+      res.status(500).json({error: "PORTONE_API_SECRET 미설정"});
+      return;
+    }
+    const snap = await db.collection("users").doc(uid).get();
+    const u = snap.data() || {};
+    // 이메일은 users 문서(교회 쪽에서 고칠 수 있음)가 아니라 로그인 계정
+    // (Firebase Auth)에서 가져옴 — users 문서 이메일을 남의 것으로 바꿔
+    // 남의 결제를 보는 일을 막음(2026-11-25)
+    let email = "";
+    try {
+      email = String((await admin.auth().getUser(uid)).email || "")
+        .toLowerCase();
+    } catch {
+      email = "";
+    }
+    const ts = (v: unknown) => {
+      const t = v as FirebaseFirestore.Timestamp | undefined;
+      return t && typeof t.toDate === "function" ?
+        t.toDate().toISOString() : "";
+    };
+    type Raw = {
+      id: string; status: string; orderName?: string; paidAt?: string;
+      requestedAt?: string; receiptUrl?: string;
+      amount?: {total?: number; paid?: number; cancelled?: number};
+      customer?: {id?: string; email?: string};
+    };
+    const mine: Raw[] = [];
+    try {
+      const from = new Date(Date.now() - 400 * 86400000).toISOString();
+      for (let page = 0; page < 30; page++) {
+        const body = {
+          page: {number: page, size: 100},
+          filter: {
+            from,
+            status: ["PAID", "PARTIAL_CANCELLED", "CANCELLED"],
+            sortBy: "STATUS_CHANGED_AT",
+            sortOrder: "DESC",
+          },
+        };
+        const r = await fetch(
+          "https://api.portone.io/payments?requestBody=" +
+            encodeURIComponent(JSON.stringify(body)),
+          {headers: {Authorization: `PortOne ${secret}`}}
+        );
+        const json = (await r.json()) as {
+          items?: Raw[]; page?: {totalCount?: number}; message?: string;
+        };
+        if (!r.ok) {
+          res.status(502).json({error: json.message || `포트원 HTTP ${r.status}`});
+          return;
+        }
+        const items = json.items || [];
+        // 주보·홈페이지 요금제 결제만(2026-11-25) — 같은 포트원 계정의
+        // 수련회 장소 예약금 등 다른 서비스 결제는 보내지 않음
+        const platform = (p: Raw) =>
+          p.id.startsWith("stayon_recurring_") ||
+          /(플랜|정기결제|관리형|셀프형|프로|베이직|스탠다드|주보|홈페이지)/
+            .test(p.orderName || "");
+        mine.push(...items.filter((p) => platform(p) && (
+          p.id.startsWith(`stayon_recurring_${uid}_`) ||
+          p.customer?.id === uid ||
+          (!!email &&
+            String(p.customer?.email || "").toLowerCase() === email))));
+        const total = json.page?.totalCount ?? 0;
+        if (!items.length || (page + 1) * 100 >= total) break;
+      }
+    } catch (e) {
+      console.error("[myPayments] 포트원 조회 오류:", e);
+      res.status(502).json({error: "결제 내역을 불러오지 못했어요."});
+      return;
+    }
+    res.json({
+      billing: {
+        active: u.subscriptionActive === true,
+        planName: String(u.billingPlanName || ""),
+        amount: Number(u.billingAmount || 0),
+        refund: Number(u.billingRefundAmount || 0),
+        startedAt: ts(u.billingStartedAt) || ts(u.billingKeyRegisteredAt),
+        nextAt: ts(u.nextBillingDate),
+      },
+      items: mine.map((p) => ({
+        id: p.id,
+        status: p.status,
+        orderName: p.orderName || "",
+        paidAt: p.paidAt || p.requestedAt || "",
+        paid: p.amount?.paid ?? 0,
+        cancelled: p.amount?.cancelled ?? 0,
+        recurring: p.id.startsWith("stayon_recurring_"),
+        receiptUrl: p.receiptUrl || "",
+      })),
+    });
+  }
+);
+
 // 카드 등록 직후 첫 결제. /pricing에서 정기결제 카드를 등록하면 프론트
 // (useBillingKey.ts)가 바로 이 함수를 불러 그 자리에서 첫 달 금액을 결제하고,
 // 다음 결제일을 한 달 뒤로 잡는다. firstChargePending이 켜진 계정만, 한 번만
@@ -690,6 +830,110 @@ export const chargeFirstRecurring = functions.https.onRequest(
     });
     console.log(`[정기결제 첫 결제 실패] ${uid} — ${result.message}`);
     res.status(402).json({error: result.message || "결제에 실패했어요."});
+  }
+);
+
+// 정기결제 요금제 올리기(2026-11-25, 사용자 승인). 예: 베이직 990원 → 셀프형 9,900원.
+// - 올리기만(셀프형·관리형 라이트·맥스, 지금 금액보다 비싼 것만). 내리기는 해지 후 다시 결제
+// - 바꾸는 즉시 새 요금제 금액 전액을 등록된 카드로 결제. 차액 계산·환불 없음(이번 달 낸 금액은 그대로)
+// - 성공하면 새 요금제로 바꾸고 다음 결제일 = 오늘 + 1개월(applyRecurringSuccess 그대로 사용),
+//   환급 나무는 새 요금제 기준으로 다시 시작(billingStartedAt = 지금)
+// - 실패하면 아무것도 바꾸지 않음(지금 요금제 그대로 유지, 정기결제도 그대로)
+// - 금액은 화면이 보낸 값이 아니라 아래 서버 가격표로 정함(조작 방지)
+// 기존 결제 함수(chargeBillingKeyPayment·applyRecurringSuccess·
+// processOneRecurringUser)는 고치지 않고 불러 씀.
+// POST {plan: "standard"|"pro"|"lite"|"max"}, 헤더 Authorization: Bearer <ID 토큰>
+// 순서대로 한 단계씩 올라감: 베이직 990 → 스탠다드 2,900 → 셀프형 9,900 → 라이트 14,900 → 맥스 19,900
+// scope: 결제 이름에 붙는 범위(스탠다드는 주보만, 나머지는 주보·홈페이지)
+const UPGRADE_PLANS: Record<string, {
+  amount: number; refund: number; label: string; featurePlan: string;
+  scope?: string;
+}> = {
+  standard: {amount: 2900, refund: 0, label: "스탠다드", featurePlan: "standard",
+    scope: "주보"},
+  pro: {amount: 9900, refund: 16800, label: "프로 · 셀프형", featurePlan: "pro"},
+  lite: {amount: 14900, refund: 20000, label: "관리형 라이트",
+    featurePlan: "allinone"},
+  max: {amount: 19900, refund: 30000, label: "관리형 맥스",
+    featurePlan: "allinone"},
+};
+export const upgradeRecurringPlan = functions.https.onRequest(
+  {secrets: ["PORTONE_API_SECRET"], cors: true},
+  async (req, res) => {
+    if (req.method !== "POST") {
+      res.status(405).json({error: "POST만 받아요."});
+      return;
+    }
+    let uid = "";
+    try {
+      const token = String(req.headers.authorization || "")
+        .replace(/^Bearer\s+/i, "");
+      uid = (await admin.auth().verifyIdToken(token)).uid;
+    } catch {
+      res.status(401).json({error: "로그인이 필요합니다."});
+      return;
+    }
+    const key = String((req.body || {}).plan || "");
+    const next = UPGRADE_PLANS[key];
+    if (!next) {
+      res.status(400).json({error: "바꿀 요금제를 다시 골라 주세요."});
+      return;
+    }
+    const ref = db.collection("users").doc(uid);
+    // 버튼 연타로 두 번 결제되지 않게: 진행 중 표시를 트랜잭션으로 먼저 켬(2분 지나면 풀림)
+    const data = await db.runTransaction(async (tx) => {
+      const d = (await tx.get(ref)).data();
+      if (!d || !d.billingKey || d.subscriptionActive !== true ||
+        !d.billingAmount) return {err: "정기결제 중인 요금제가 없어요."};
+      if (Number(d.billingAmount) >= next.amount) {
+        return {err: "지금보다 높은 요금제로만 바꿀 수 있어요."};
+      }
+      const lock = d.upgradeInProgressAt as
+        FirebaseFirestore.Timestamp | undefined;
+      if (lock?.toMillis && Date.now() - lock.toMillis() < 2 * 60 * 1000) {
+        return {err: "요금제를 바꾸는 중이에요. 잠시 후 다시 확인해 주세요."};
+      }
+      tx.update(ref, {upgradeInProgressAt: admin.firestore.Timestamp.now()});
+      return {d};
+    });
+    if ("err" in data) {
+      res.status(409).json({error: data.err});
+      return;
+    }
+    const before = data.d as FirebaseFirestore.DocumentData;
+    const planName = `${next.label} ${next.scope || "주보·홈페이지"} 정기결제 플랜`;
+    const result = await chargeBillingKeyPayment(
+      before.billingKey as string, next.amount, planName, uid
+    );
+    if (!result.success) {
+      await ref.update({
+        upgradeInProgressAt: admin.firestore.FieldValue.delete(),
+      });
+      console.log(`[요금제 올리기 실패] ${uid} — ${result.message}`);
+      res.status(402).json({error: result.message || "결제에 실패했어요."});
+      return;
+    }
+    const patch = {
+      billingAmount: next.amount,
+      billingPlanName: planName,
+      billingFeaturePlan: next.featurePlan,
+      billingRefundAmount: next.refund,
+      billingStartedAt: admin.firestore.FieldValue.serverTimestamp(),
+      billingUpgradedFrom: String(before.billingPlanName || ""),
+      upgradeInProgressAt: admin.firestore.FieldValue.delete(),
+    };
+    await ref.update(patch);
+    // 등급·다음 결제일(오늘 + 1개월)·이용 기간·결제 알림 메일
+    await applyRecurringSuccess(uid, {
+      ...before,
+      billingAmount: next.amount,
+      billingPlanName: planName,
+      billingFeaturePlan: next.featurePlan,
+    }, new Date());
+    console.log(
+      `[요금제 올리기] ${uid} — ${before.billingAmount}원 → ${next.amount}원`
+    );
+    res.json({ok: true, planName, amount: next.amount});
   }
 );
 
@@ -1474,6 +1718,35 @@ ${imgTag}
 <p>${escapeHtml(ogDesc)}</p></body></html>`);
 });
 
+/**
+ * 교회 홈페이지 HTML에서 bulletin 사이트용 네이버 소유확인 코드(index.html 고정값)를 뺌.
+ * 이 코드가 모든 교회 주소에 똑같이 붙어 나가 서로 다른 교회 사이트가 한 사이트의
+ * 복사본처럼 보일 수 있어서(2026-11-24). 교회 자기 코드는 따로 넣으므로 그대로 둠.
+ * @param {string} html 껍데기 HTML
+ * @return {string} 코드를 뺀 HTML
+ */
+function stripBulletinNaverCode(html: string): string {
+  const code = "fad7558d8dce1f7e0585580e0aeeda9892365990";
+  const re = new RegExp("[ \\t]*<meta name=\"naver-site-verification\" " +
+    `content="${code}"\\s*/?>\\r?\\n?`, "g");
+  return html.replace(re, "");
+}
+
+/**
+ * 교회 홈페이지 HTML의 사이트 이름(og:site_name)을 그 교회 이름으로 바꿈.
+ * index.html 고정값 "스테이온(STAYON)"이 모든 교회에 똑같이 나가서
+ * 서로 다른 교회 사이트가 한 사이트처럼 보일 수 있었음(2026-11-24).
+ * @param {string} html 껍데기 HTML
+ * @param {string} churchName 교회 이름
+ * @return {string} 바꾼 HTML
+ */
+function withChurchSiteName(html: string, churchName: string): string {
+  const name = escapeHtml(churchName);
+  return html.replace(
+    /(<meta property="og:site_name" content=")[^"]*(")/,
+    (_m, a: string, b: string) => `${a}${name}${b}`);
+}
+
 // /view/** 를 제외한 모든 경로의 캐치올 라우트. /view/**는 위의 bulletinOG가
 // 우선 매칭되므로 이 함수까지 절대 오지 않음(firebase.json 라우팅 우선순위,
 // 이 함수는 그 규칙에 손대지 않음). 교회 서브도메인 + 링크 미리보기 봇(카카오톡
@@ -1619,7 +1892,7 @@ export const siteOG = functions.https.onRequest(async (req, res) => {
   // 일반 방문자(사람)도 교회 페이지 HTML을 받음(2026-11-10). 예전엔 사람에게는 Hosting의
   // 주보 플랫폼 메인(제목 "온라인 주보 제작 스테이온", 대표 주소 bulletin)이 나가고 봇에게만
   // 교회 페이지를 줘서, 구글이 "교회 주소 = bulletin 메인 복사본 + 봇에게만 다른 내용"으로 보고
-  // 색인하지 않았음. 주보플러스처럼 누구에게나 같은 HTML을 주고, 사람은 그 위에 React가 뜸
+  // 색인하지 않았음. 누구에게나 같은 HTML을 주고, 사람은 그 위에 React가 뜸
   const isHumanVisit = !isPreviewBot && !isSearchBot;
   if (churchSlug) {
     try {
@@ -1714,7 +1987,8 @@ export const siteOG = functions.https.onRequest(async (req, res) => {
           const ctx = ownerId ? await resolveCtx(ownerId) : null;
           const base = `https://${churchSlug}.stayon-platform.com`;
           const page = churchSitePage(site, ctx, base, pagePath);
-          const shell = fs.readFileSync(SHELL_HTML_PATH, "utf8");
+          const shell = withChurchSiteName(stripBulletinNaverCode(
+            fs.readFileSync(SHELL_HTML_PATH, "utf8")), churchName);
           const metas = [
             ["naver-site-verification", site.naverSiteVerification],
             ["google-site-verification", site.googleSiteVerification],
@@ -1736,7 +2010,7 @@ export const siteOG = functions.https.onRequest(async (req, res) => {
           // 파비콘: 홈페이지에서 고른 교단 → 교회 계정 교단 → 스테이온 기본
           const denom = denominationId(site.denomination) ||
             (ctx ? ctx.denomination : "");
-          // 교회 정보 구조화 데이터(주보플러스와 같은 schema.org "Church")
+          // 교회 정보 구조화 데이터(schema.org "Church")
           const str = (v: unknown) => typeof v === "string" ? v.trim() : "";
           const ld: Record<string, unknown> = {
             "@context": "https://schema.org",
@@ -1755,7 +2029,12 @@ export const siteOG = functions.https.onRequest(async (req, res) => {
           res.setHeader("Content-Type", "text/html; charset=utf-8");
           // 없는 페이지(/community 같은 옛 주소, 오타 주소)는 200+noindex가 아니라 404로
           // (200으로 주면 구글이 "내용 없는 페이지가 많은 사이트"로 봄 - soft 404)
-          res.status(page ? 200 : 404).send(withFavicon(
+          // 은혜나눔 게시판(2026-11-24, /grace · /grace/{글}): 글은 화면에서 불러오는
+          // 성도 게시판이라 검색봇용 본문은 없지만, 켜 둔 교회면 404가 아니라 정상(200)
+          const graceOk = !page && site.graceEnabled === true &&
+            site.graceAllowed === true &&
+            /^\/grace(\/[A-Za-z0-9]{10,40})?\/?$/.test(pagePath);
+          res.status(page || graceOk ? 200 : 404).send(withFavicon(
             html.replace("<head>",
               `<head>\n${page ? movedScript : ""}${metas}`)
               .replace("</head>", `${ldTag}\n</head>`), denom));
@@ -1766,7 +2045,8 @@ export const siteOG = functions.https.onRequest(async (req, res) => {
         if (isSearchBot) {
           const indexPath = SHELL_HTML_PATH;
           if (fs.existsSync(indexPath)) {
-            const indexHtml = fs.readFileSync(indexPath, "utf8");
+            const indexHtml = withChurchSiteName(stripBulletinNaverCode(
+              fs.readFileSync(indexPath, "utf8")), churchName);
             const merged = injectChurchMeta(indexHtml, {
               title: safeTitle,
               description: safeDesc,
@@ -1781,7 +2061,7 @@ export const siteOG = functions.https.onRequest(async (req, res) => {
             let bodyHtml =
                 buildChurchBodyHtml(site, churchName, description);
             // 이 교회가 주보 검색엔진 노출을 켰으면 교회 사이트 → 주보로 가는
-            // 링크를 건다(주보플러스처럼 교회 홈에서 주보로 크롤링이 이어지게)
+            // 링크를 건다(교회 홈에서 주보로 크롤링이 이어지게)
             const ownerId = typeof site.ownerId === "string" ?
               site.ownerId : "";
             let denom = denominationId(site.denomination);
@@ -2184,7 +2464,7 @@ export const onChurchSitePublished = onDocumentUpdated(
 );
 
 // 교회별 주보 전용 주소({bulletinSlug}-jubo.stayon-platform.com) 전용 함수.
-// 주보플러스처럼 교회 하나를 검색엔진에 사이트 하나로 등록할 수 있게, 그 주소의
+// 교회 하나를 검색엔진에 사이트 하나로 등록할 수 있게, 그 주소의
 // 첫 화면·하위 메뉴·지난 주보·robots.txt·sitemap.xml·rss.xml을 내려준다.
 // Cloudflare Worker(flat-shape-14)가 이 주소로 온 요청(정적 파일 제외)을
 // ?host=&path= 로 넘겨준다. 기존 bulletinOG(/view, QR 주소)와는 완전히 별개
@@ -2336,3 +2616,11 @@ export {fundraiserTotals, fundraiserModeChange} from "./fundraising";
 // bulletin → website 주소 로그인 이어 주기(일회용 로그인 열쇠)
 // 별개 파일(./websiteHandoff.ts)
 export {websiteLoginHandoff} from "./websiteHandoff";
+// 교회 홈페이지 "은혜나눔" 게시판(성도 글쓰기 · 비밀번호 · 스팸/욕설 검사 · 신고 · 교회별 관리)
+export {gracePosts} from "./grace";
+// 교회 홈페이지 "배포" 알림 메일(바뀐 곳 표시) — siteDeployNotify.ts
+export {onSiteDeployTrigger} from "./siteDeployNotify";
+// 관리형 1년 완납 "환급 요청하기" 알림 메일(알림만, 결제 취소·송금 없음) — refundRequestNotify.ts
+export {onRefundRequest} from "./refundRequestNotify";
+// 종이 주보 올림 알림 메일(여러 장은 한 통으로 묶음) — paperJuboNotify.ts
+export {onPaperJuboUpload} from "./paperJuboNotify";

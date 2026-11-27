@@ -34,6 +34,7 @@ export interface SiteContent {
   heroTextColor: string; // 메인 사진 위 글자 색(#RRGGBB). 기본 흰색
   homeCards: { title?: string; desc?: string; hidden?: boolean }[]; // 메인 바로가기 카드 문구(저장값 그대로, 화면에서 기본 문구로 채움)
   buildingImageUrl: string;
+  buildingImagePos: string; // 보일 부분(object-position). 기본 "50% 50%"
   galleryImages: string[];
   // 교회 소개
   motto: { text: string; reference: string; label: string } | null;
@@ -54,6 +55,7 @@ export interface SiteContent {
   praiseEnabled: boolean;
   // 교회 일정(편집 화면 > 매주 업데이트). 꺼져 있으면(scheduleEnabled false) 메뉴·화면 모두 숨김
   scheduleEnabled: boolean;
+  albumEnabled: boolean; // 앨범 메뉴(편집 화면 > 매주 업데이트 > 앨범 ON/OFF). 기본 켜짐
   // 홈페이지 "온라인 주보" 메뉴 보이기(편집 화면 > 매주 업데이트). false면 온라인 주보가 있어도 숨김
   juboMenuEnabled: boolean;
   bannerMode: "photo" | "color" | "off";
@@ -361,7 +363,15 @@ export function buildSiteContent(site: ChurchSite, owner: OwnerData): SiteConten
   const address = (b.addressEnabled !== false && s(b.churchAddress)) || s(site.address);
   const sns: { label: string; url: string }[] = [];
   // 같은 종류(유튜브 등)가 주보·빌더 양쪽에 있으면 주보 것 하나만
-  const addSns = (label: string, url: unknown) => { if (isUrl(url) && !sns.some((x) => x.url === s(url) || x.label === label)) sns.push({ label, url: s(url) }); };
+  // 링크를 https:// 없이 넣어도(예: instagram.com/아이디) 앞에 붙여서 인정(2026-11-24). 인스타그램은 @아이디 만 넣어도 됨
+  const fixUrl = (label: string, v: unknown) => {
+    const t = s(v).replace(/\s+/g, "");
+    if (!t) return "";
+    if (/^https?:\/\//i.test(t)) return t;
+    if (label === "인스타그램" && /^@?[A-Za-z0-9._]{1,30}$/.test(t) && !t.includes(".com")) return `https://www.instagram.com/${t.replace(/^@/, "")}/`;
+    return /^[a-z0-9-]+(\.[a-z0-9-]+)+(\/.*)?$/i.test(t) ? `https://${t}` : "";
+  };
+  const addSns = (label: string, url: unknown) => { const u = fixUrl(label, url); if (u && isUrl(u) && !sns.some((x) => x.url === u || x.label === label)) sns.push({ label, url: u }); };
   if (b.snsEnabled !== false) {
     addSns("유튜브", b.youtubeChannelUrl);
     addSns("네이버 블로그", b.snsNaverBlog);
@@ -399,6 +409,7 @@ export function buildSiteContent(site: ChurchSite, owner: OwnerData): SiteConten
     heroTextColor: /^#[0-9a-f]{6}$/i.test(s(site.heroTextColor)) ? s(site.heroTextColor) : "#FFFFFF",
     // 교회 사진: 빌더의 "교회 전경 사진" → 없으면 주보 편집 화면의 교회 이미지(교회 소개용)
     buildingImageUrl: isImage(site.buildingImageUrl) ? s(site.buildingImageUrl) : (isImage(b.churchImage) ? s(b.churchImage) : ""),
+    buildingImagePos: /^\d{1,3}(\.\d+)?% \d{1,3}(\.\d+)?%$/.test(s(site.buildingImagePos)) ? s(site.buildingImagePos) : "50% 50%",
     galleryImages: arr(site.galleryImages).filter(isImage),
     motto,
     intro: (b.churchIntroEnabled !== false && s(b.churchIntro)) || s(site.intro),
@@ -413,6 +424,7 @@ export function buildSiteContent(site: ChurchSite, owner: OwnerData): SiteConten
     youtubeLink: s(b.youtubeChannelUrl) || s(site.youtubeLink),
     praiseEnabled: site.praiseEnabled === true,
     scheduleEnabled: site.scheduleEnabled === true,
+    albumEnabled: site.albumEnabled !== false,
     juboMenuEnabled: (site as { juboMenuEnabled?: boolean }).juboMenuEnabled !== false,
     bannerMode: site.bannerMode === "color" || site.bannerMode === "off" ? site.bannerMode : "photo",
     bannerColors: Array.isArray(site.bannerColors) && site.bannerColors.length === 2 ? [s(site.bannerColors[0]), s(site.bannerColors[1])] : null,

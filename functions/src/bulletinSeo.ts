@@ -3,7 +3,7 @@
 // 성도 화면은 React(BulletinView 등)가 브라우저에서 Firestore를 불러와 그리는
 // 구조라, 검색봇이 첫 HTML만 보면 빈 페이지가 된다. 그래서 bulletinOG가 검색봇
 // 요청일 때만 이 파일의 함수로 같은 내용을 서버에서 완성된 HTML로 만들어 준다.
-// 주보플러스(joobo.kr) 교회 페이지 구조를 그대로 따름:
+// 페이지 구조:
 //  - 페이지마다 고유 title/description/canonical/robots/og/twitter
 //  - Church(주소·전화 포함)/WebSite/WebPage/BreadcrumbList/Article 구조화 데이터
 //  - 모든 페이지 상단 메뉴(주보/교회 소개/섬기시는 분/칼럼/교회 소식/오시는 길…)
@@ -23,7 +23,7 @@ const NAVER_SITE_VERIFICATION = "fad7558d8dce1f7e0585580e0aeeda9892365990";
 type Doc = Record<string, unknown>;
 
 // 교회별 주보 전용 주소: {bulletinSlug}-jubo.stayon-platform.com
-// (주보플러스 anjeongch.joobo.kr처럼 교회 하나 = 검색엔진에 사이트 하나).
+// (교회 하나 = 검색엔진에 사이트 하나).
 // users/{uid}.bulletinSlug를 /super에서 넣은 교회만 해당. 기존 QR 주소
 // (/view/{uid})는 그대로 열리고, 검색엔진에 알리는 대표 주소만 이쪽으로 바뀐다
 export const JUBO_HOST_SUFFIX = "-jubo.stayon-platform.com";

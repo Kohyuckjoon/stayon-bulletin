@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router";
+import { useSmoothNavigate as useNavigate, preloadAdminPages } from "../../utils/smoothNavigate"; // 관리자 화면 사이 부드러운 이동(2026-11-25)
 import { auth, db, storage } from "../../firebase"; // 이미지 업로드를 위해 storage 임포트 경로 포함 ( 기존 auth, db 유지 )
 import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, query, orderBy } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage"; // 파이어베이스 스토리지 함수 임포트
@@ -12,6 +12,7 @@ import { NoticeImageCarousel } from "../components/NoticeImageCarousel";
 
 export function NoticeBoard() {
     const navigate = useNavigate();
+    useEffect(() => { preloadAdminPages(); }, []);
     const [notices, setNotices] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [isSuperUser, setIsSuperUser] = useState(false);

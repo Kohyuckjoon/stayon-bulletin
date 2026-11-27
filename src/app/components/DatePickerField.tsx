@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { format } from "date-fns";
 import { ko } from "date-fns/locale";
-import { Calendar as CalendarIcon } from "lucide-react";
+import { Calendar as CalendarIcon, Clock } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { Calendar } from "./ui/calendar";
 
@@ -70,6 +70,55 @@ export function DatePickerField({ value, onChange, placeholder = "날짜 선택"
             day_disabled: "text-gray-200",
           }}
         />
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+// 시간 선택(2026-11-24) — 날짜 달력과 같은 토스·머티리얼 스타일 팝업. 값은 "HH:mm".
+// 왼쪽 오전/오후, 가운데 시(1~12), 오른쪽 분(5분 단위). 고른 칸은 파란 알약
+export function TimePickerField({ value, onChange, placeholder = "시간 선택" }: {
+  value: string; onChange: (value: string) => void; placeholder?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const m = value.match(/^(\d{1,2}):(\d{2})$/);
+  const H = m ? Number(m[1]) : null;
+  const M = m ? Number(m[2]) : null;
+  const pm = H !== null && H >= 12;
+  const h12 = H === null ? null : (H % 12 === 0 ? 12 : H % 12);
+  const label = H === null ? placeholder : `${pm ? "오후" : "오전"} ${h12}시${M ? ` ${M}분` : ""}`;
+  const set = (nextPm: boolean, nextH12: number, nextM: number) => {
+    const h24 = (nextH12 % 12) + (nextPm ? 12 : 0);
+    onChange(`${pad2(h24)}:${pad2(nextM)}`);
+  };
+  const pill = (on: boolean) => `h-9 w-full rounded-full text-sm font-semibold transition-colors ${on ? "bg-blue-600 text-white shadow-md shadow-blue-200" : "text-gray-700 hover:bg-blue-50"}`;
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button type="button"
+          className="w-full h-[42px] rounded-lg border border-gray-300 bg-white px-3 flex items-center justify-between gap-2 text-sm font-semibold text-gray-800 transition-all hover:border-blue-400 data-[state=open]:border-blue-500 data-[state=open]:ring-4 data-[state=open]:ring-blue-500/10">
+          <span className={`truncate ${H === null ? "text-gray-400 font-medium" : ""}`}>{label}</span>
+          <Clock className="w-4 h-4 text-blue-500 shrink-0" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" sideOffset={8} className="w-auto p-0 rounded-[1.5rem] border-0 bg-white shadow-[0_12px_40px_rgba(15,23,42,0.16)] overflow-hidden">
+        <div className="flex gap-2 p-3">
+          <div className="flex w-16 flex-col gap-1">
+            {[false, true].map((p) => (
+              <button key={String(p)} type="button" className={pill(H !== null && pm === p)} onClick={() => set(p, h12 ?? 12, M ?? 0)}>{p ? "오후" : "오전"}</button>
+            ))}
+          </div>
+          <div className="w-16 max-h-60 overflow-y-auto flex flex-col gap-1 pr-0.5" style={{ scrollbarWidth: "thin" }}>
+            {Array.from({ length: 12 }, (_, i) => i + 1).map((h) => (
+              <button key={h} type="button" className={pill(h12 === h)} onClick={() => set(H === null ? true : pm, h, M ?? 0)}>{h}시</button>
+            ))}
+          </div>
+          <div className="w-16 max-h-60 overflow-y-auto flex flex-col gap-1 pr-0.5" style={{ scrollbarWidth: "thin" }}>
+            {Array.from({ length: 12 }, (_, i) => i * 5).map((mm) => (
+              <button key={mm} type="button" className={pill(M === mm)} onClick={() => { set(H === null ? true : pm, h12 ?? 12, mm); setOpen(false); }}>{pad2(mm)}분</button>
+            ))}
+          </div>
+        </div>
       </PopoverContent>
     </Popover>
   );

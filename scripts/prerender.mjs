@@ -125,6 +125,11 @@ try {
       document.querySelectorAll("style").forEach((el) => {
         if (!el.textContent.trim()) el.remove();
       });
+      // 팝업이 떠 있던 순간에 찍히면 팝업과 "스크롤 잠금"(body position:fixed)까지 HTML에 박혀
+      // 첫 화면이 스크롤 안 되던 문제(2026-11-25) → 열린 팝업(대화상자) 빼고, body·html 인라인 스타일 지움
+      document.querySelectorAll('[role="dialog"][aria-modal="true"]').forEach((el) => el.remove());
+      document.body.removeAttribute("style");
+      document.documentElement.removeAttribute("style");
       // body에는 #root와 원래 있던 스크립트만 남긴다(팝업·포털 등 제거)
       [...document.body.children].forEach((el) => {
         if (el.id === "root" || (el.tagName === "SCRIPT" && original.has(el.outerHTML))) return;

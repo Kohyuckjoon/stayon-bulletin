@@ -7,3 +7,22 @@
   animation-duration: 0.5s;
   animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
 }
+
+/* 주보 관리자(/admin…) 화면 사이 이동(2026-11-25, utils/smoothNavigate.ts):
+   지금 화면은 빠르게 옅어지고, 새 화면은 살짝 아래에서 떠오르며 겹쳐 나타남 */
+::view-transition-old(root) {
+  animation: 160ms ease-out both stayon-vt-out;
+}
+::view-transition-new(root) {
+  animation: 300ms cubic-bezier(0.2, 0.8, 0.2, 1) both stayon-vt-in;
+}
+@keyframes stayon-vt-out {
+  to { opacity: 0; }
+}
+@keyframes stayon-vt-in {
+  from { opacity: 0; transform: translateY(10px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) { animation: none; }
+}

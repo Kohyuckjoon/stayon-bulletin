@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { GraceBoard } from "./GraceBoard"; // 은혜나눔 게시판(2026-11-24)
 import { useNavigate } from "react-router";
 import { QRCodeSVG } from "qrcode.react";
 import { LayoutGrid, List as ListIcon, Search, HandHeart, Church, Youtube, Car } from "lucide-react";
@@ -17,7 +18,7 @@ import { defaultBannerPhoto, resolveBannerColors, bannerTextIsDark } from "../..
 type PageKey =
   | "home" | "about" | "pastor" | "history" | "staff" | "location"
   | "worship" | "online" | "sermons" | "bulletins" | "jubo"
-  | "news" | "column" | "prayer" | "education" | "album" | "praise" | "newcomer" | "schedule";
+  | "news" | "column" | "prayer" | "education" | "album" | "praise" | "newcomer" | "schedule" | "grace";
 
 interface PageDef { key: PageKey; path: string; label: string }
 interface GroupDef { en: string; label: string; pages: PageDef[]; navHidden?: boolean } // navHidden: 위쪽 메뉴·휴대폰 메뉴에는 안 보이는 묶음(주소로는 열림)
@@ -62,6 +63,11 @@ export const SITE_GROUPS: GroupDef[] = [
   { en: "ALBUM", label: "앨범", pages: [
     { key: "album", path: "/album", label: "앨범" },
   ] },
+  // 은혜나눔(2026-11-24): 성도가 직접 글을 쓰는 게시판. 편집 화면 > 기본 설정에서 켜면(ON) 메뉴에 보임.
+  // 메뉴 이름은 교회가 정함(site.graceLabel, 기본 "나눔 게시판"). 글은 이 교회(slug) 것만(gracePosts)
+  { en: "GRACE", label: "나눔 게시판", pages: [
+    { key: "grace", path: "/grace", label: "나눔 게시판" },
+  ] },
   // 교회 일정(2026-11-12): 편집 화면 > 매주 업데이트 탭에서 켜면(ON) "앨범" 오른쪽 메뉴에 보이고, 끄면(OFF) 메뉴·화면 모두 숨김.
   // 왼쪽 달력 + 오른쪽 "이 달의 일정" 목록. 서버 검색봇용 페이지(churchSiteSeo /schedule)도 같은 조건
   { en: "SCHEDULE", label: "교회 일정", pages: [
@@ -105,9 +111,11 @@ function hasPage(key: PageKey, c: SiteContent, site: ChurchSite): boolean {
     case "column": return c.columns.length > 0;
     case "prayer": return c.prayers.length > 0;
     case "education": return c.eduDepartments.length > 0;
-    case "album": return true;
+    case "album": return c.albumEnabled; // 편집 화면에서 끄면 메뉴·화면 숨김(기본 켜짐)
     case "praise": return c.praiseEnabled;
     case "schedule": return c.scheduleEnabled;
+    // 은혜나눔: 운영자 승인(graceAllowed) + 교회가 켬(graceEnabled) 둘 다일 때만 메뉴에 보임
+    case "grace": return (site as { graceEnabled?: boolean; graceAllowed?: boolean }).graceEnabled === true && (site as { graceAllowed?: boolean }).graceAllowed === true;
     case "newcomer": return !!(c.newcomerIntro || c.newcomerSteps.length || c.newcomerContact);
   }
 }
@@ -124,7 +132,7 @@ function parsePath(pathname: string): { key: PageKey; id: string } {
       if (p === pg.path) return { key: pg.key, id: "" };
     }
   }
-  if (["bulletins", "news", "column", "prayer", "album", "education"].includes(seg[0]) && seg[1]) {
+  if (["bulletins", "news", "column", "prayer", "album", "education", "grace"].includes(seg[0]) && seg[1]) {
     return { key: seg[0] as PageKey, id: seg[1] };
   }
   return { key: "home", id: "" };
@@ -255,6 +263,8 @@ export function MultiPageSite({ site, pathname, preview }: Props) {
     <a href={to} onClick={go(to)} className={className} style={style}>{children}</a>
   );
 
+  // 은혜나눔 메뉴 이름(교회가 정함)
+  const graceLabel = ((site as { graceLabel?: string }).graceLabel || "").trim() || "나눔 게시판";
   const groups = useMemo(() => {
     if (!content) return [];
     return SITE_GROUPS
@@ -267,8 +277,9 @@ export function MultiPageSite({ site, pathname, preview }: Props) {
         ? { ...g, label: content.eduLabel, pages: content.eduDepartments.length > 1
             ? content.eduDepartments.map((d, i) => ({ key: "education" as PageKey, path: `/education/${i + 1}`, label: d.name }))
             : g.pages.map((p) => ({ ...p, label: content.eduLabel })) }
+        : g.en === "GRACE" ? { ...g, label: graceLabel, pages: g.pages.map((p) => ({ ...p, label: graceLabel })) }
         : g));
-  }, [content, site]);
+  }, [content, site, graceLabel]);
 
   // 교회 소식처럼 두 메뉴(교회소식·주보)에 같이 있는 페이지: 기본은 교회소식 메뉴로 보되, 그 메뉴에
   // 보여 줄 페이지가 교회 소식 하나뿐이면(칼럼·중보기도 없음) 탭이 있는 주보 메뉴로 봄
@@ -282,14 +293,14 @@ export function MultiPageSite({ site, pathname, preview }: Props) {
   // 화면에 보이는 메뉴/페이지 이름(교육부서는 교회가 정한 이름으로)
   // 상단 메뉴 선택 표시는 페이지 원래 소속(교회 소식 → "교회소식")으로. 아래 탭은 위 group 기준(주보 탭)
   const navGroup = baseGroup;
-  const groupLabel = navGroup?.en === "EDUCATION" ? (content?.eduLabel || navGroup.label) : navGroup?.label;
+  const groupLabel = navGroup?.en === "EDUCATION" ? (content?.eduLabel || navGroup.label) : navGroup?.en === "GRACE" ? graceLabel : navGroup?.label;
   // /bulletins/주보ID 는 온라인(모바일) 주보 보기라서 "교회 주보"(이미지·PDF 파일) 탭이 아니라 "온라인 주보" 탭으로 보이게
   // 교회 주보(올린 파일) 상세는 /bulletins/{교회 주보 id} — 이때는 "교회 주보" 탭(2026-11-17)
   const paperDetail = key === "bulletins" && !!id && !!content?.paperBulletins.some((x) => x.id === id);
   const onlineBulletin = key === "bulletins" && !!id && !paperDetail;
   // 주일학교 부서별 화면(/education/1 …)은 제목을 부서 이름으로
   const eduDept = key === "education" && id ? content?.eduDepartments[Number(id) - 1] : undefined;
-  const pageLabel = onlineBulletin ? "온라인 주보" : eduDept ? eduDept.name : key === "education" ? (content?.eduLabel || page?.label) : page?.label;
+  const pageLabel = onlineBulletin ? "온라인 주보" : eduDept ? eduDept.name : key === "education" ? (content?.eduLabel || page?.label) : key === "grace" ? graceLabel : page?.label;
 
   useEffect(() => {
     if (!content || preview) return;
@@ -426,8 +437,10 @@ export function MultiPageSite({ site, pathname, preview }: Props) {
             );
           })()}
           <main className="max-w-6xl mx-auto px-4 sm:px-8 py-8 sm:py-12">
-            {group && group.en !== "EDUCATION" && (groups.find((g) => g.en === group.en)?.pages.length || 0) > 1 && (
-              <SubTabs pages={groups.find((g) => g.en === group.en)!.pages} activeKey={onlineBulletin ? "jubo" : key} color={color} A={A} shortBar={group.en === "BULLETIN"} />
+            {/* 탭은 화면이 2개 이상인 메뉴에만. 앨범·게시판은 1개여도 탭 하나를 보여 줌(2026-11-24) — 주보 화면처럼
+                검색창 위가 비어 보이지 않게 */}
+            {group && group.en !== "EDUCATION" && ((groups.find((g) => g.en === group.en)?.pages.length || 0) > 1 || group.en === "ALBUM" || group.en === "GRACE") && (
+              <SubTabs pages={groups.find((g) => g.en === group.en)!.pages} activeKey={onlineBulletin ? "jubo" : key} color={color} A={A} shortBar={group.en === "BULLETIN" || group.en === "ALBUM" || group.en === "GRACE"} />
             )}
             {visible
               ? <PageBody pageKey={key} id={id} c={c} site={site} color={color} A={A} />
@@ -793,7 +806,8 @@ function WelcomeSection({ c, color, A }: { c: SiteContent; color: string; A: Lin
     { en: "ABOUT", title: "교회 소개", desc: "교회의 비전과 섬기는 사람들을 소개합니다.", to: "/about" },
     { en: "WORSHIP", title: "예배 시간 및 장소 안내", desc: "주일과 주중 예배 시간·장소를 안내합니다.", to: "/worship" },
     c.youtubeLink
-      ? { en: "YOUTUBE", title: `${name} 유튜브 채널`, desc: "멀리서도 함께 예배드릴 수 있어요.", to: c.youtubeLink, external: true }
+      // 교회 이름을 앞에 붙이면 긴 이름(통영베다니감리교회 등)은 두 줄로 넘어가서 "유튜브 채널"만(위에 YOUTUBE 표시도 있음)
+      ? { en: "YOUTUBE", title: "유튜브 채널", desc: "멀리서도 함께 예배드릴 수 있어요.", to: c.youtubeLink, external: true }
       : { en: "ONLINE", title: "온라인 예배", desc: "멀리서도 함께 예배드릴 수 있어요.", to: "/sermons/live" },
     { en: "LOCATION", title: "찾아오시는 길", desc: "교회 위치와 오시는 방법을 안내합니다.", to: "/location" },
   ];
@@ -1091,7 +1105,8 @@ function PageBody({ pageKey, id, c, site, color, A }: { pageKey: PageKey; id: st
               </div>
               {c.buildingImageUrl && (
                 <div className={`order-1 md:order-none md:col-start-2 md:sticky md:top-24 ${c.motto ? "md:row-start-2" : "md:row-start-1"}`}>
-                  <img src={c.buildingImageUrl} alt={c.churchName} className="w-full aspect-[4/3] md:aspect-[4/5] object-cover rounded-3xl shadow-lg" />
+                  {/* 보일 부분은 편집 화면 > 교회소개에서 사진을 끌어서 정함(buildingImagePos) */}
+                  <img src={c.buildingImageUrl} alt={c.churchName} className="w-full aspect-[4/3] md:aspect-[4/5] object-cover rounded-3xl shadow-lg" style={{ objectPosition: c.buildingImagePos || "50% 50%" }} />
                 </div>
               )}
             </section>
@@ -1706,6 +1721,8 @@ function PageBody({ pageKey, id, c, site, color, A }: { pageKey: PageKey; id: st
       return id ? <AlbumDetail c={c} id={id} color={color} A={A} /> : <AlbumList c={c} color={color} A={A} />;
     case "schedule":
       return <ScheduleCalendar c={c} color={color} />;
+    case "grace":
+      return <GraceBoard slug={site.slug} id={id} label={((site as { graceLabel?: string }).graceLabel || "").trim() || "나눔 게시판"} desc={(site as { graceDesc?: string }).graceDesc || ""} color={color} A={A} />;
     default:
       return null;
   }
@@ -1810,7 +1827,8 @@ function ShortsRow({ c, color }: { c: SiteContent; color: string }) {
       {/* PC: 한 화면에 5개 꽉 차게 + 양옆 ‹ › 로 넘김(최대 10개). 휴대폰: 2개 + 다음 카드 살짝, 손가락으로 밀기 */}
       <div className="relative mt-5">
         <div ref={scroller} onScroll={checkEdge}
-          className="-mx-4 px-4 sm:mx-0 sm:px-0 flex gap-3 sm:gap-4 overflow-x-auto snap-x snap-mandatory pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          // scroll-px-4: 카드가 맞춰 멈출 때(snap) 왼쪽 여백 16px을 남김 — 없으면 첫 카드가 화면 왼쪽 끝에 딱 붙음
+          className="-mx-4 px-4 scroll-px-4 sm:mx-0 sm:px-0 sm:scroll-px-0 flex gap-3 sm:gap-4 overflow-x-auto snap-x snap-mandatory pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {shorts.map((v) => (
           <button key={v.id} type="button" onClick={() => setPlaying(v)}
             className="group snap-start shrink-0 w-[42%] sm:w-[calc((100%-64px)/5)] text-left">
@@ -2879,20 +2897,29 @@ function JuboPage({ c, color, initialId, A }: { c: SiteContent; color: string; i
         <PhoneFrame src={url} title={selected ? `${selected.date} 주보` : "온라인 주보"} />
       </div>
       {/* 오른쪽: 제목·버튼·QR */}
-      <div className="order-3 lg:order-3 flex flex-col items-start gap-5 lg:pt-4">
-        <div>
-          <p className="text-xs font-black tracking-[0.2em]" style={{ color }}>{isLatest ? "THIS WEEK" : "ARCHIVE"}</p>
-          <p className="mt-2 text-2xl font-black text-gray-900">{isLatest ? "이번 주 온라인 주보" : "지난 주보"}</p>
-          {/* 날짜와 제목을 줄바꿈해서 따로 — 날짜는 작게, 제목은 한 단계 크게 */}
+      {/* 휴대폰(2026-11-25): 위 휴대폰 화면 바로 아래에 붙는 카드 하나로 정리(날짜·제목 + 꽉 찬 버튼).
+          QR은 이미 휴대폰으로 보고 있으니 PC에서만 */}
+      <div className="order-3 lg:order-3 w-full max-w-[320px] sm:max-w-[360px] mx-auto lg:mx-0 lg:max-w-none lg:w-auto flex flex-col items-stretch lg:items-start gap-5 lg:pt-4">
+        <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4 lg:border-0 lg:bg-transparent lg:p-0">
+          <div className="flex items-center gap-2 lg:block">
+            <p className="text-[11px] lg:text-xs font-black tracking-[0.2em]" style={{ color }}>{isLatest ? "THIS WEEK" : "ARCHIVE"}</p>
+            {selected && <p className="lg:hidden text-[13px] font-bold tabular-nums text-gray-400">· {selected.date.replace(/-/g, ".")}</p>}
+          </div>
+          <p className="hidden lg:block mt-2 text-2xl font-black text-gray-900">{isLatest ? "이번 주 온라인 주보" : "지난 주보"}</p>
+          {/* PC: 날짜와 제목을 줄바꿈해서 따로 — 날짜는 작게, 제목은 한 단계 크게. 휴대폰: 날짜는 위 이름표 옆 */}
           {selected && (
-            <div className="mt-3">
-              <p className="text-sm font-bold tabular-nums text-gray-400">{selected.date}</p>
-              {selected.title && <p className="mt-1 text-lg font-bold leading-snug text-gray-800 break-keep">{selected.title}</p>}
+            <div className="mt-1.5 lg:mt-3">
+              <p className="hidden lg:block text-sm font-bold tabular-nums text-gray-400">{selected.date}</p>
+              <p className="lg:mt-1 text-[17px] lg:text-lg font-bold leading-snug text-gray-900 lg:text-gray-800 break-keep">{selected.title || (isLatest ? "이번 주 온라인 주보" : "지난 주보")}</p>
             </div>
           )}
+          <a href={url} target="_blank" rel="noopener noreferrer"
+            className="mt-4 flex lg:hidden w-full items-center justify-center gap-1.5 rounded-xl py-3.5 text-[15px] font-bold text-white" style={{ background: color }}>
+            주보 크게 보기 <span aria-hidden>↗</span>
+          </a>
         </div>
-        <a href={url} target="_blank" rel="noopener noreferrer" className="inline-block px-6 py-3 rounded-lg text-white font-bold" style={{ background: color }}>모바일 주보 보기</a>
-        <div className="inline-flex flex-col items-center gap-2 rounded-2xl border border-gray-100 p-5 shadow-sm">
+        <a href={url} target="_blank" rel="noopener noreferrer" className="hidden lg:inline-block px-6 py-3 rounded-lg text-white font-bold" style={{ background: color }}>모바일 주보 보기</a>
+        <div className="hidden lg:inline-flex flex-col items-center gap-2 rounded-2xl border border-gray-100 p-5 shadow-sm">
           <QRCodeSVG value={fixedBulletinUrl(c.ownerId)} size={160} />
           <p className="text-xs text-gray-500">휴대폰 카메라로 찍으면 이번 주 주보가 열려요</p>
         </div>
@@ -2907,14 +2934,15 @@ function BulletinPreview({ title, sub, url, color, qr }: { title: string; sub: s
       <div className="mx-auto w-[320px] sm:w-[360px] h-[640px] rounded-[2.5rem] border-[10px] border-gray-900 overflow-hidden shadow-xl bg-white">
         <PhoneFrame src={url} title={title} />
       </div>
-      <div className="flex flex-col items-start gap-5">
+      {/* 휴대폰: 휴대폰 화면 아래 카드 하나(제목 + 꽉 찬 버튼), QR은 PC에서만 */}
+      <div className="w-full max-w-[320px] sm:max-w-[360px] mx-auto md:mx-0 md:max-w-none flex flex-col items-stretch md:items-start gap-5 rounded-2xl border border-gray-100 bg-gray-50 p-4 md:border-0 md:bg-transparent md:p-0">
         <div>
-          <p className="text-2xl font-black text-gray-900">{title}</p>
-          {sub && <p className="mt-1 text-gray-500">{sub}</p>}
+          <p className="text-[17px] md:text-2xl font-black text-gray-900 break-keep">{title}</p>
+          {sub && <p className="mt-1 text-sm md:text-base text-gray-500">{sub}</p>}
         </div>
-        <a href={url} target="_blank" rel="noopener noreferrer" className="inline-block px-6 py-3 rounded-lg text-white font-bold" style={{ background: color }}>모바일 주보 보기</a>
+        <a href={url} target="_blank" rel="noopener noreferrer" className="flex md:inline-block w-full md:w-auto items-center justify-center -mt-1 md:mt-0 px-6 py-3.5 md:py-3 rounded-xl md:rounded-lg text-white font-bold" style={{ background: color }}>모바일 주보 보기</a>
         {qr && (
-          <div className="inline-flex flex-col items-center gap-2 rounded-2xl border border-gray-100 p-5 shadow-sm">
+          <div className="hidden md:inline-flex flex-col items-center gap-2 rounded-2xl border border-gray-100 p-5 shadow-sm">
             <QRCodeSVG value={url} size={160} />
             <p className="text-xs text-gray-500">휴대폰 카메라로 찍으면 주보가 열립니다</p>
           </div>

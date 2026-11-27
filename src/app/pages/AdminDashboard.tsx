@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { useNavigate } from "react-router";
+import { useSmoothNavigate as useNavigate, preloadAdminPages } from "../../utils/smoothNavigate"; // 관리자 화면 사이 부드러운 이동(2026-11-25)
 import { PromoPopup } from "../components/PromoPopup";
 import { auth, db } from "../../firebase";
 import { KakaoChannelButton } from "../components/KakaoChannelButton";
@@ -11,7 +11,8 @@ import {
 import { onAuthStateChanged } from "firebase/auth";
 import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
-import { QuickMenu } from "../components/QuickMenu"; // 교회 이름에 마우스 올리면 로그아웃 메뉴
+import { QuickMenu } from "../components/QuickMenu";
+import { SidebarItem } from "../components/EditorSidebar"; // 교회 이름에 마우스 올리면 로그아웃 메뉴
 import {
   Plus, FileText, History as HistoryIcon, LogOut, Calendar, Eye, Smartphone, Download, Send,
   CheckCircle2, BookOpen, Globe, Copy, Zap, ChevronRight, ShieldCheck, Lock, Megaphone,
@@ -31,6 +32,10 @@ import { calculateDaysLeft, getPlanTierMeta } from "../../utils/subscriptionTier
 
 export function AdminDashboard() {
   const navigate = useNavigate();
+  // 교회 홈페이지 편집 화면은 새 탭으로(2026-11-25). opener를 남겨 열어야 이 탭의 로그인이 새 탭에 이어짐(noopener 금지).
+  // 팝업이 막히면 이 탭에서 엶
+  const openBuilder = (path: string) => { if (!window.open(path, "_blank")) navigate(path); };
+  useEffect(() => { preloadAdminPages(); }, []);
   const { enabled: jobBoardEnabled } = useJobBoardEnabled();
   const { message: featureUpdateMessage, show: showFeatureUpdate } = useFeatureUpdateNotice();
   const [noticeMarqueeNeeded, setNoticeMarqueeNeeded] = useState(true);
@@ -454,7 +459,7 @@ export function AdminDashboard() {
   const currentNotice = bannerNotices.length > 0 ? bannerNotices[currentSlideIndex] : null;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 font-sans">
+    <div className="ad-root min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 font-sans">
       {/* 홍보 팝업(/super > 홍보 팝업에서 켜고 끔) */}
       <PromoPopup />
       <style>{`
@@ -466,6 +471,11 @@ export function AdminDashboard() {
         .animate-strong-glow {
           animation: strongGlow 2s infinite ease-in-out;
           border-width: 2px;
+        }
+        /* 왼쪽 사이드바 자리(2026-11-25, 주보 편집 화면과 같은 방식): 가로 1280~1479px은 양옆 여백이 좁아 내용을 오른쪽으로 밂 */
+        @media (min-width: 1280px) and (max-width: 1479px) {
+          .ad-root .container.max-w-5xl { margin-left: 248px !important; margin-right: auto !important; }
+          .ad-root .ad-sidebar { left: 28px !important; }
         }
         .locked-feature {
           filter: grayscale(1) opacity(0.5) blur(1px);
@@ -540,13 +550,29 @@ export function AdminDashboard() {
               */}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <button className="flex items-center gap-1 shrink-0 bg-blue-600 text-white px-3 sm:px-4 py-2 sm:py-2.5 rounded-full shadow-md active:scale-95 transition-all text-xs sm:text-sm font-black relative">
+                  {/* 넓은 화면(1280px 이상)은 왼쪽 사이드바 "바로가기"가 대신함 */}
+                  <button className="min-[1280px]:hidden flex items-center gap-1 shrink-0 bg-blue-600 text-white px-3 sm:px-4 py-2 sm:py-2.5 rounded-full shadow-md active:scale-95 transition-all text-xs sm:text-sm font-black relative">
                     바로가기
                     <ChevronDown className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                     <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-red-400 rounded-full"></span>
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" sideOffset={8} className="rounded-2xl border-0 shadow-xl p-2 w-64 bg-white">
+                  {/* 종이 주보 만들기(2026-11-24): 홈페이지 없이도 종이 주보를 만드는 화면. 지금은 준비중(들어가면 흐린 미리보기) */}
+                  <DropdownMenuItem
+                    onClick={() => navigate("/admin/paper-jubo")}
+                    className="rounded-xl px-2.5 py-2.5 gap-3 cursor-pointer focus:bg-blue-50"
+                  >
+                    <div className="w-9 h-9 rounded-xl bg-blue-50 flex items-center justify-center text-blue-600 shrink-0">
+                      <FileText className="w-4 h-4" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-bold text-sm text-slate-900">종이 주보 만들기</p>
+                      <p className="text-[11px] text-slate-400 truncate">A4 접는 주보 · PDF 내려받기</p>
+                    </div>
+                    <span className="text-[9px] font-black tracking-wider text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded-full shrink-0">준비중</span>
+                  </DropdownMenuItem>
+
                   {/* 1) 수련회 장소 찾기: 항상 이용 가능, 외부 링크로 새 탭 오픈 */}
                   <DropdownMenuItem
                     onClick={() => window.open("https://place.stayon-platform.com/venues", "_blank", "noopener,noreferrer")}
@@ -594,10 +620,9 @@ export function AdminDashboard() {
                     <ExternalLink className="w-3.5 h-3.5 text-slate-300 shrink-0" />
                   </DropdownMenuItem>
 
-                  {/* 교회 사이트 제작: 지금은 준비 중(자물쇠+비활성, 청빙 게시판과 같은 모양).
-                      열 때는 아래 주석의 활성 버전으로 바꾸면 홈페이지 편집 화면(/website-builder)으로 이동
+                  {/* 교회 사이트 제작: 오픈(2026-11-25) — 홈페이지 편집 화면(/website-builder)으로 이동 */}
                   <DropdownMenuItem
-                    onClick={() => navigate("/website-builder")}
+                    onClick={() => openBuilder("/website-builder")}
                     className="rounded-xl px-2.5 py-2.5 gap-3 cursor-pointer focus:bg-blue-50"
                   >
                     <div className="w-9 h-9 rounded-xl bg-blue-50 flex items-center justify-center text-blue-600 shrink-0">
@@ -608,16 +633,6 @@ export function AdminDashboard() {
                       <p className="text-[11px] text-slate-400 truncate">주보 내용으로 우리 교회 홈페이지 만들기</p>
                     </div>
                     <ChevronRight className="w-3.5 h-3.5 text-slate-300 shrink-0" />
-                  </DropdownMenuItem>
-                  */}
-                  <DropdownMenuItem disabled className="rounded-xl px-2.5 py-2.5 gap-3">
-                    <div className="w-9 h-9 rounded-xl bg-gray-100 flex items-center justify-center text-gray-400 shrink-0">
-                      <Lock className="w-4 h-4" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="font-bold text-sm text-gray-400">교회 사이트 제작</p>
-                      <p className="text-[11px] text-gray-300 truncate">서비스 준비 중입니다</p>
-                    </div>
                   </DropdownMenuItem>
 
                   {/* 4) 청빙 게시판: 기존 기능 플래그(jobBoardEnabled)를 그대로 따름 — 켜지면 활성, 꺼지면 자물쇠+비활성 */}
@@ -661,6 +676,44 @@ export function AdminDashboard() {
           </div>
         </div>
       </div>
+
+      {/* 왼쪽 사이드바(가로 1280px 이상, 2026-11-25): 주보 편집·홈페이지 편집 화면과 같은 모양.
+          위: 자주 쓰는 메뉴 / 아래: 바로가기(예전 오른쪽 위 "바로가기" 메뉴). 휴대폰·좁은 화면은 지금 화면 그대로 */}
+      <aside className="ad-sidebar hidden min-[1280px]:block" style={{ position: "fixed", top: 84, left: "calc(50% - 736px)", width: 196, zIndex: 20, maxHeight: "calc(100vh - 100px)", overflowY: "auto", scrollbarWidth: "none" }}>
+        {/* 메뉴판처럼 보이게(2026-11-25): 회색 판 위에 메뉴, 지금 화면은 흰 칸 + 그림자, 마우스를 올리면 옅게 밝아짐 */}
+        <style>{`.ad-sidebar .ad-panel > button:not(:disabled):hover, .ad-sidebar .ad-panel > div > button:not(:disabled):hover { background: rgba(255,255,255,.7); }`}</style>
+        <p style={{ margin: "0 6px 8px", fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", color: "#94A3B8" }}>주보 관리</p>
+        <div className="ad-panel" style={{ display: "flex", flexDirection: "column", gap: 4, background: "#EEF1F5", borderRadius: 18, padding: 6, border: "1px solid #E2E8F0" }}>
+          <SidebarItem icon={<Smartphone className="w-[17px] h-[17px]" />} label="대시보드" sub="이번 주 주보 · QR" on onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })} />
+          <SidebarItem icon={isExpired ? <Lock className="w-[17px] h-[17px]" /> : <Plus className="w-[17px] h-[17px]" />} label="주보 만들기" sub={isExpired ? "결제 후 사용할 수 있어요" : undefined} on={false} onClick={() => navigate(isExpired ? "/admin/pricing" : "/admin/editor")} />
+          <SidebarItem icon={<HistoryIcon className="w-[17px] h-[17px]" />} label="지난 주보" on={false} locked={isExpired} blocked={isExpired} onClick={() => navigate("/admin/history")} />
+          <SidebarItem icon={<Megaphone className="w-[17px] h-[17px]" />} label="교회 소식" on={false} locked={isExpired} blocked={isExpired} onClick={() => navigate("/admin/church-news")} />
+          <SidebarItem icon={<Zap className="w-[17px] h-[17px]" />} label="결제 관리" sub="요금제 · 카드 · 정기결제" on={false} onClick={() => navigate("/admin/billing")} />
+        </div>
+
+        <p style={{ margin: "18px 6px 8px", fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", color: "#94A3B8" }}>바로가기</p>
+        <div className="ad-panel" style={{ display: "flex", flexDirection: "column", gap: 2, background: "#EEF1F5", borderRadius: 18, padding: 6, border: "1px solid #E2E8F0" }}>
+          {([
+            // 두 줄(2026-11-25): 위 = 이름, 아래 = 짧은 설명(준비중 · 새 창 등) — 오른쪽에 작은 꼬리표를 붙이지 않아 좁아 보이지 않게
+            { icon: <Globe className="w-4 h-4" />, label: "교회 홈페이지 편집", sub: "새 탭으로 열려요 ↗", go: () => openBuilder("/website-builder") },
+            // 종이 주보 만들기 → 홈페이지 편집 화면의 "교회 주보"(올린 종이 주보 목록 + 종이 주보 디자인)로 바로(2026-11-25)
+            { icon: <FileText className="w-4 h-4" />, label: "종이 주보 만들기", sub: "준비중이에요", soon: true, go: () => openBuilder("/website-builder?mode=paper") },
+            { icon: <MapPin className="w-4 h-4" />, label: "수련회 장소 찾기", sub: "새 창으로 열려요 ↗", go: () => window.open("https://place.stayon-platform.com/venues", "_blank", "noopener,noreferrer") },
+            { icon: <Briefcase className="w-4 h-4" />, label: "외부사역팀 섭외", sub: "새 창으로 열려요 ↗", go: () => window.open("https://place.stayon-platform.com/teams", "_blank", "noopener,noreferrer") },
+            // 청빙 게시판: 잠시 숨김(2026-11-25). 다시 보이려면 아래 줄 주석 해제
+            // { icon: jobBoardEnabled ? <Briefcase className="w-4 h-4" /> : <Lock className="w-4 h-4" />, label: "청빙 게시판", sub: jobBoardEnabled ? "사역자 채용 공고" : "준비중이에요", soon: !jobBoardEnabled, disabled: !jobBoardEnabled, go: () => navigate("/jobs", { state: { from: "admin" } }) },
+          ] as { icon: React.ReactNode; label: string; sub: string; soon?: boolean; disabled?: boolean; go: () => void }[]).map((x) => (
+            <button key={x.label} type="button" disabled={x.disabled} onClick={x.go}
+              className="group flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-left transition-colors hover:bg-white hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:bg-transparent disabled:hover:shadow-none">
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-slate-500 shadow-[0_1px_2px_rgba(0,0,0,.06)] group-hover:text-blue-600">{x.icon}</span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[13.5px] font-bold text-slate-700 group-hover:text-slate-900">{x.label}</span>
+                <span className={`mt-0.5 block truncate text-[11px] font-semibold ${x.soon ? "text-amber-500" : "text-slate-400"}`}>{x.sub}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      </aside>
 
       <div className="container mx-auto px-4 py-5 max-w-5xl">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 mb-6 items-stretch">

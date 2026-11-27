@@ -439,7 +439,9 @@ export const AdminChurchSites = () => {
         style={site.editLocked ? { background: C.redBg, color: C.red } : { background: C.greenBg, color: C.green }}>
         {site.editLocked ? <Lock className="w-3.5 h-3.5" /> : <LockOpen className="w-3.5 h-3.5" />} {site.editLocked ? "Close" : "Open"}
       </button>
-      <button onClick={() => openBuilder(site.slug)} className={actionBtn} style={{ background: C.blue, color: "#fff" }}><Pencil className="w-3.5 h-3.5" /> 편집</button>
+      {/* 편집 화면은 새 탭으로(2026-11-25) — 목록 화면을 그대로 둔 채 여러 교회를 오가며 편집.
+                    rel="opener" 필수: 로그인이 탭 단위(세션)라 noopener면 새 탭이 로그아웃 상태로 열려 빈 목록이 됨 */}
+      <a href={`/website-builder?site=${encodeURIComponent(site.slug)}`} target="_blank" rel="opener" className={actionBtn} style={{ background: C.blue, color: "#fff" }}><Pencil className="w-3.5 h-3.5" /> 편집</a>
       {site.pendingOwner && <button onClick={() => toggle(site.slug, "link")} className={actionBtn} style={{ background: C.greenBg, color: C.green }}><Link2 className="w-3.5 h-3.5" /> 교회 계정 연결</button>}
       <button onClick={() => toggle(site.slug, "period")} className={actionBtn} style={{ background: C.blueBg, color: C.blue }}><CalendarClock className="w-3.5 h-3.5" /> 기간 조정</button>
       <button onClick={() => toggle(site.slug, "naver")} className={actionBtn} style={{ background: C.bg, color: C.sub }}><ShieldCheck className="w-3.5 h-3.5" /> 네이버</button>

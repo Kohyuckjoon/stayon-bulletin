@@ -1,14 +1,16 @@
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router";
+import { useSmoothNavigate as useNavigate, preloadAdminPages } from "../../utils/smoothNavigate"; // 관리자 화면 사이 부드러운 이동(2026-11-25)
 import { auth, db } from "../../firebase";
 import { doc, getDoc } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import { Button } from "../components/ui/button";
-import { Card } from "../components/ui/card";
-import { ArrowLeft, CreditCard, Calendar, Loader2, Info, Trash2, ShieldCheck, Lock } from "lucide-react";
+import { ArrowLeft, Loader2, Info } from "lucide-react";
 import { toast } from "sonner";
-import { getPlanTierMeta, getExpiryInfo } from "../../utils/subscriptionTier";
-import { useBillingKey } from "../../hooks/useBillingKey";
+import { PlanBillingCard } from "../components/PlanBillingCard";
+import { AnnualRequestButton } from "../components/AnnualRequest";
+import { PaymentHistory, RefundTree, type PayInfo } from "../components/PaymentTree";
+import { WineJars, isBulletinPlan } from "../components/WineJars";
+import { getChurchSiteByOwner } from "../../utils/churchSite";
 
 // 결제 관리(정기결제) 화면. /admin 하위 전용 페이지 — AdminDashboard.tsx의
 // "연장 및 결제하기" 버튼 옆에 이 화면으로 가는 링크를 추가해서 연결한다.
@@ -30,11 +32,14 @@ const PREVIEW_UNLOCKED = true;
 
 export function Billing() {
   const navigate = useNavigate();
-  const { requestIssueBillingKey, cancelSubscription } = useBillingKey();
+  useEffect(() => { preloadAdminPages(); }, []);
   const [userData, setUserData] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [registering, setRegistering] = useState(false);
-  const [cancelling, setCancelling] = useState(false);
+  // 결제된 내역 + 1년 완납 환급 나무(2026-11-25, 홈페이지 편집 화면 요금제와 같은 부품) — 서버 myPayments(읽기 전용)에서 내 결제만
+  const [payInfo, setPayInfo] = useState<PayInfo | null | "error">(null);
+  const [siteSlug, setSiteSlug] = useState("");
+  // 주보 요금제(베이직·스탠다드) 교회는 결제된 내역을 접어 둠 — 누를 때만 펼쳐 봄(영수증용, 2026-11-25)
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   const refetchUserData = async (uid: string) => {
     try {
@@ -54,44 +59,23 @@ export function Billing() {
       }
       await refetchUserData(user.uid);
       setIsLoading(false);
+      getChurchSiteByOwner(user.uid).then((site) => setSiteSlug(site?.slug || "")).catch(() => {});
+      try {
+        const token = await user.getIdToken();
+        const r = await fetch(`https://asia-northeast3-stayonsbplatform.cloudfunctions.net/myPayments?uid=${encodeURIComponent(user.uid)}`, { headers: { Authorization: `Bearer ${token}` } });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        setPayInfo(await r.json() as PayInfo);
+      } catch (e) {
+        console.error("결제 내역 불러오기 실패:", e);
+        setPayInfo("error");
+      }
     });
     return () => unsubscribe();
   }, [navigate]);
 
-  const planMeta = getPlanTierMeta(userData?.status);
-  const expiry = userData ? getExpiryInfo(userData) : null;
-
-  const hasBillingKey = !!userData?.billingKey;
-  // 정기결제 중 = 카드 + 요금제·금액이 걸려 있고 해지 안 됨. 카드만 등록한 상태는 결제가 일어나지 않음
-  const subscriptionActive = hasBillingKey && userData?.subscriptionActive === true && !!userData?.billingAmount;
-  const nextBillingDate: Date | null = userData?.nextBillingDate?.toDate ? userData.nextBillingDate.toDate() : null;
-
-  const handleRegisterCard = async () => {
-    const uid = auth.currentUser?.uid;
-    if (!uid) return;
-    setRegistering(true);
-    try {
-      await requestIssueBillingKey();
-      await refetchUserData(uid); // 등록 성공 시 화면에 바로 반영
-    } finally {
-      setRegistering(false);
-    }
-  };
-
-  // 참고: 자동 결제 자체(매달 실제로 긁는 것)는 서버의 스케줄 함수가 따로
-  // 필요함 — 저장된 빌링키로 결제 주기가 된 사용자를 찾아 포트원 서버 API를
-  // 호출하는 부분은 이 화면(클라이언트)이 아니라 functions 쪽에 추가해야 함.
-  const handleCancelSubscription = async () => {
-    const uid = auth.currentUser?.uid;
-    if (!uid) return;
-    setCancelling(true);
-    try {
-      await cancelSubscription();
-      await refetchUserData(uid);
-    } finally {
-      setCancelling(false);
-    }
-  };
+  // 주보 플랫폼(이 화면)은 언제나 "물이 포도주로" 항아리, 홈페이지 플랫폼(홈페이지 편집 > 요금제)은 포도나무(2026-11-25 확정).
+  // 셀프형·관리형 결제도 항아리를 채움. 결제된 내역은 접어 두고 눌러야 보임
+  const showJars = true;
 
   if (isLoading) {
     return (
@@ -121,138 +105,45 @@ export function Billing() {
         </div>
       </div>
 
-      <div className="container mx-auto px-4 py-6 sm:py-8 max-w-2xl space-y-5">
-        {/* 현재 요금제 — 전체 페이지가 아직 준비중이라 섹션별로 잠금 처리 */}
-        <Card className="relative p-5 sm:p-6 rounded-[1.75rem] border-0 bg-white shadow-sm overflow-hidden">
-          {!PREVIEW_UNLOCKED && (
-            <div className="absolute top-3 right-3 flex items-center gap-1 px-2 py-1 rounded-full bg-slate-100 border border-slate-200 text-slate-400 text-[9px] font-black uppercase tracking-wider whitespace-nowrap z-10">
-              <Lock className="w-2.5 h-2.5" /> 준비중
-            </div>
-          )}
-          <div className={PREVIEW_UNLOCKED ? "" : "opacity-50 grayscale-[0.6] pointer-events-none select-none"}>
-            <h2 className="text-sm font-bold text-slate-400 mb-3">현재 요금제</h2>
-            <div className="flex items-center justify-between flex-wrap gap-3">
-              <div className="flex items-center gap-2">
-                <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-extrabold ${planMeta.chipClass} ${planMeta.textClass}`}>
-                  {planMeta.icon ? <planMeta.icon className="w-3.5 h-3.5" /> : null} {planMeta.label}
-                </span>
-              </div>
-              {expiry?.date && (
-                <div className="flex items-center gap-1.5 text-xs sm:text-sm text-slate-500 font-medium">
-                  <Calendar className="w-4 h-4" />
-                  {expiry.isTrial ? "무료체험 만료일" : "이용 만료일"} {expiry.date.toLocaleDateString()}
-                  {typeof expiry.daysLeft === "number" && (
-                    <span className={expiry.daysLeft <= 7 ? "text-red-500 font-bold" : ""}>
-                      (D{expiry.daysLeft >= 0 ? "-" : "+"}{Math.abs(expiry.daysLeft)})
-                    </span>
-                  )}
-                </div>
-              )}
-            </div>
-            <Button
-              variant="outline"
-              disabled={!PREVIEW_UNLOCKED}
-              onClick={() => navigate("/admin/pricing")}
-              className="w-full mt-4 rounded-xl font-bold text-slate-600 border-slate-200"
-            >
-              요금제 변경 / 1회 결제로 연장
-            </Button>
-          </div>
-        </Card>
-
-        {/* 등록된 카드 / 정기결제 */}
-        <Card className="relative p-5 sm:p-6 rounded-[1.75rem] border-0 bg-white shadow-sm overflow-hidden">
-          {!PREVIEW_UNLOCKED && (
-            <div className="absolute top-3 right-3 flex items-center gap-1 px-2 py-1 rounded-full bg-slate-100 border border-slate-200 text-slate-400 text-[9px] font-black uppercase tracking-wider whitespace-nowrap z-10">
-              <Lock className="w-2.5 h-2.5" /> 준비중
-            </div>
-          )}
-          <div className={PREVIEW_UNLOCKED ? "" : "opacity-50 grayscale-[0.6] pointer-events-none select-none"}>
-            <h2 className="text-sm font-bold text-slate-400 mb-3">정기결제</h2>
-
-            {hasBillingKey ? (
-              <div className="space-y-4">
-                <div className="flex items-center gap-3 p-4 rounded-2xl bg-slate-50 border border-slate-100">
-                  <div className="w-10 h-10 rounded-xl bg-slate-900 flex items-center justify-center text-white shrink-0">
-                    <CreditCard className="w-5 h-5" />
-                  </div>
-                  <div className="min-w-0">
-                    <p className="font-bold text-slate-900 text-sm">
-                      {userData?.billingCardName || "등록된 카드"} •••• {userData?.billingCardLast4 || "••••"}
-                    </p>
-                    <p className="text-xs text-slate-400 font-medium">
-                      {subscriptionActive ? "이 카드로 매달 자동 결제돼요" : "정기결제에 쓰이고 있지 않은 카드예요"}
-                    </p>
-                  </div>
-                </div>
-
-                {subscriptionActive ? (
-                  <div className="rounded-2xl border border-slate-100 p-4 space-y-2 text-sm">
-                    <div className="flex justify-between gap-3"><span className="text-slate-400 font-medium">요금제</span><span className="font-bold text-slate-800 text-right">{userData?.billingPlanName || "정기결제"}</span></div>
-                    <div className="flex justify-between gap-3"><span className="text-slate-400 font-medium">결제 금액</span><span className="font-bold text-slate-800">{Number(userData?.billingAmount).toLocaleString()}원 / 월</span></div>
-                    {nextBillingDate && (
-                      <div className="flex justify-between gap-3"><span className="text-slate-400 font-medium">다음 결제일</span><span className="font-bold text-slate-800">{nextBillingDate.toLocaleDateString()}</span></div>
-                    )}
-                  </div>
-                ) : (
-                  <div className="rounded-2xl bg-blue-50 p-4 text-sm text-blue-900">
-                    <p className="font-bold">아직 정기결제를 시작하지 않았어요.</p>
-                    <p className="mt-1 text-blue-800/80 text-[13px]">요금제를 고르면 이 카드로 첫 달이 바로 결제되고, 다음 달부터 매달 자동으로 결제돼요.</p>
-                    <Button onClick={() => navigate("/admin/pricing")} className="mt-3 w-full rounded-xl font-bold bg-blue-600 hover:bg-blue-700">요금제 고르고 정기결제 시작</Button>
-                  </div>
-                )}
-
-                {/* 카드 변경 · 정기결제 해지 — 한 줄에 양쪽으로. 머티리얼 느낌의 채워진 버튼(그림자 + 누르면 눌림) */}
-                <div className={`grid gap-3 ${subscriptionActive ? "grid-cols-2" : "grid-cols-1"}`}>
-                  <button
-                    type="button"
-                    onClick={handleRegisterCard}
-                    disabled={!PREVIEW_UNLOCKED || registering}
-                    className="h-12 rounded-xl bg-blue-600 text-white text-sm font-bold flex items-center justify-center gap-2 shadow-md shadow-blue-600/25 transition-all duration-150 hover:bg-blue-700 hover:shadow-lg active:scale-[0.97] active:shadow-sm disabled:opacity-50 disabled:pointer-events-none"
-                  >
-                    <CreditCard className="w-4 h-4" /> {registering ? "처리 중..." : "카드 변경"}
-                  </button>
-
-                  {subscriptionActive && (
-                    <button
-                      type="button"
-                      onClick={handleCancelSubscription}
-                      disabled={!PREVIEW_UNLOCKED || cancelling}
-                      className="h-12 rounded-xl bg-red-50 text-red-600 text-sm font-bold flex items-center justify-center gap-2 shadow-md shadow-red-500/10 ring-1 ring-red-100 transition-all duration-150 hover:bg-red-100 hover:shadow-lg active:scale-[0.97] active:shadow-sm disabled:opacity-50 disabled:pointer-events-none"
-                    >
-                      <Trash2 className="w-4 h-4" /> {cancelling ? "처리 중..." : "정기결제 해지"}
-                    </button>
-                  )}
-                </div>
-              </div>
-            ) : (
-              <div className="text-center py-6">
-                <div className="w-12 h-12 mx-auto rounded-2xl bg-slate-100 flex items-center justify-center text-slate-400 mb-3">
-                  <CreditCard className="w-6 h-6" />
-                </div>
-                <p className="text-sm text-slate-500 font-medium mb-1">등록된 카드가 없어요.</p>
-                <p className="text-xs text-slate-400 font-medium mb-5">카드를 등록해 두면 요금제를 고를 때 카드 번호를 다시 입력하지 않아도 돼요.</p>
-                <Button
-                  onClick={handleRegisterCard}
-                  disabled={!PREVIEW_UNLOCKED || registering}
-                  className="rounded-xl font-bold px-6 bg-blue-600 hover:bg-blue-700"
-                >
-                  {registering ? "처리 중..." : "카드 등록하기"}
-                </Button>
-              </div>
-            )}
-
-            <p className="text-[11px] text-slate-400 font-medium mt-4 flex items-start gap-1.5 leading-relaxed">
-              <ShieldCheck className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-              카드 번호는 저희 서버에 저장되지 않아요. 결제 대행사(포트원)가 안전하게 보관해요.
-            </p>
-          </div>
-        </Card>
+      {/* 넓은 화면: 왼쪽 요금제·정기결제·결제된 내역 / 오른쪽 환급 나무. 휴대폰은 위아래로 */}
+      <div className="container mx-auto px-4 py-6 sm:py-8 max-w-5xl grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] items-start">
+      <div className="space-y-5 min-w-0">
+        {/* 요금제 · 정기결제 — components/PlanBillingCard(홈페이지 편집 화면 요금제와 같은 부품) */}
+        <PlanBillingCard userData={userData} onChanged={() => { const uid = auth.currentUser?.uid; if (uid) void refetchUserData(uid); }} />
 
         <div className="flex items-start gap-2 text-xs text-slate-400 font-medium px-1">
           <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
           정기결제는 요금제 화면에서 시작해요. 시작하는 날 첫 달이 바로 결제되고, 다음 달부터 같은 날 자동으로 결제돼요. 카드 변경·해지는 이 화면에서 할 수 있어요.
         </div>
+
+        {showJars ? (
+          // 주보 요금제: 기본은 접힘. 누르면 결제 내역·영수증이 펼쳐짐
+          <div>
+            <button type="button" onClick={() => setHistoryOpen((v) => !v)} aria-expanded={historyOpen}
+              className="mx-auto flex items-center gap-1 rounded-full px-3 py-1.5 text-[12.5px] font-bold text-slate-400 hover:bg-white hover:text-slate-600">
+              결제 내역 · 영수증 보기 <span className={`transition-transform ${historyOpen ? "rotate-180" : ""}`}>▾</span>
+            </button>
+            {historyOpen && <div className="mt-2 animate-in fade-in slide-in-from-top-1 duration-200"><PaymentHistory info={payInfo} /></div>}
+          </div>
+        ) : (
+          <PaymentHistory info={payInfo} />
+        )}
+      </div>
+      <div className="min-w-0 lg:sticky lg:top-6">
+        {/* 주보 요금제(베이직·스탠다드)는 "물이 포도주로" 항아리, 셀프형·관리형은 홈페이지 포도나무.
+            테스트(운영자): ?refundTest=basic|standard → 항아리 / pro|lite|max → 포도나무 */}
+        {(() => {
+          return showJars
+            ? <>
+                {/* 1년치 한 번에 결제 신청(계좌이체, 11개월 값) — 항아리 바로 위 */}
+                <AnnualRequestButton ownerId={auth.currentUser?.uid || null} churchName={String(userData?.churchName || "")}
+                  plans={["basic", "standard", "pro", "lite", "max"]} currentAmount={Number(userData?.billingAmount || 0)}
+                  recurringActive={!!userData?.billingKey && userData?.subscriptionActive === true && !!userData?.billingAmount} />
+                <WineJars info={payInfo} ownerId={auth.currentUser?.uid || null} churchName={String(userData?.churchName || "")} />
+              </>
+            : <RefundTree info={payInfo} ownerId={auth.currentUser?.uid || null} slug={siteSlug} churchName={String(userData?.churchName || "")} />;
+        })()}
+      </div>
       </div>
     </div>
   );

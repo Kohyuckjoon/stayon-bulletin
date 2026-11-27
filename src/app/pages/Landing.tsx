@@ -1596,12 +1596,8 @@ export function Landing() {
           {searchableChurches.length > 0 && (
             <nav aria-label="교회 주보" className="mb-3 flex flex-wrap justify-center gap-x-3 gap-y-1 px-4 text-[11px] text-gray-300">
               {searchableChurches.map((c) => (
-                <span key={c.id} className="contents">
-                  {/* onlySite: 주보 없이 홈페이지만 있는 교회 → 홈페이지 링크만 */}
-                  {!c.onlySite && <a href={c.url || `/view/${c.id}`} className="hover:text-gray-500">{c.name}</a>}
-                  {/* 교회 홈페이지가 있으면 그 링크도(구글이 메인에서 교회 홈페이지를 찾아가게) */}
-                  {c.site && <a href={c.site} className="hover:text-gray-500">{c.name} 홈페이지</a>}
-                </span>
+                // 교회 이름은 한 번만(2026-11-26). 홈페이지가 있으면 홈페이지로, 없으면 주보로 연결
+                <a key={c.id} href={c.site || c.url || `/view/${c.id}`} className="hover:text-gray-500">{c.name}</a>
               ))}
             </nav>
           )}

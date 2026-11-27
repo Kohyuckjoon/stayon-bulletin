@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { updateChurchSite } from "../../../../utils/churchSite";
-import { PaperSheet, PAPER_FONTS_HREF, SHEET_W_MM, SHEET_H_MM } from "./PaperSheet";
+import { loadPaperJubo, savePaperJubo } from "../../../../utils/paperJubo";
+import { PaperSheet, PAPER_FONTS_HREF, PAPER_FONT_FACES, SHEET_W_MM, SHEET_H_MM } from "./PaperSheet";
+import { PJ_THEMES, themeIdOf } from "./themes";
 import { BLOCK_LABELS, PAGE_NAMES, emptyBlock, emptyJubo, sampleJubo, type PaperJubo, type PjBlock, type PjBlockType, type PjRow } from "./types";
 
 // 홈페이지 편집 화면 > "교회 주보" 탭: 종이 주보(A4 한 장 양면 → 반 접어 4면) 만들기(2026-11-17)
@@ -21,15 +22,26 @@ function useFonts() {
   }, []);
 }
 
-export function PaperJuboEditor({ slug, initial, churchName, onSaved }: { slug: string; initial: PaperJubo | null; churchName: string; onSaved: (pj: PaperJubo) => void }) {
+// storeKey: 저장 열쇠(교회 계정 uid, 계정 없는 사이트면 site_{주소}) · ownerId: 저장하는 교회 계정(예전 저장본 찾기·기록용)
+// sample: 저장된 게 없을 때 예시 주보로 채움(준비중 미리보기용)
+export function PaperJuboEditor({ storeKey, ownerId, churchName, sample }: { storeKey: string; ownerId: string | null; churchName: string; sample?: boolean }) {
   useFonts();
-  const [pj, setPj] = useState<PaperJubo | null>(initial);
+  const [pj, setPj] = useState<PaperJubo | null>(null);
+  const [loaded, setLoaded] = useState(false);
   const [pageIdx, setPageIdx] = useState(0);
   const [openId, setOpenId] = useState<string | null>(null);
   const [side, setSide] = useState<"outside" | "inside">("outside");
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
-  useEffect(() => { setPj(initial); setDirty(false); }, [slug]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    let alive = true;
+    setLoaded(false); setDirty(false);
+    loadPaperJubo(storeKey, ownerId)
+      .then((j) => { if (alive) setPj(j || (sample ? sampleJubo() : null)); })
+      .catch((e) => { console.error("종이 주보 불러오기 실패:", e); if (alive) setPj(sample ? sampleJubo() : null); })
+      .finally(() => { if (alive) setLoaded(true); });
+    return () => { alive = false; };
+  }, [storeKey, ownerId, sample]);
 
   // 미리보기 배율: 오른쪽 칸 너비에 A4 가로를 맞춤
   const boxRef = useRef<HTMLDivElement>(null);
@@ -48,8 +60,8 @@ export function PaperJuboEditor({ slug, initial, churchName, onSaved }: { slug: 
     setSaving(true);
     try {
       const next = { ...pj, updatedAt: Date.now() };
-      await updateChurchSite(slug, { paperJubo: next } as never);
-      onSaved(next); setDirty(false);
+      await savePaperJubo(storeKey, ownerId || storeKey, next);
+      setPj(next); setDirty(false);
     } catch (e) {
       console.error("종이 주보 저장 실패:", e);
       alert("저장하지 못했습니다. 다시 시도해 주세요.");
@@ -69,7 +81,7 @@ export function PaperJuboEditor({ slug, initial, churchName, onSaved }: { slug: 
       const [{ default: html2canvas }, { jsPDF }] = await Promise.all([import("html2canvas-pro"), import("jspdf")]);
       // 글꼴이 다 받아진 뒤에 찍어야 글자가 바뀌지 않음
       try {
-        await Promise.all(["400", "700", "900"].flatMap((w) => [document.fonts.load(`${w} 12px "Noto Serif KR"`, "가나다"), document.fonts.load(`${w} 12px "Noto Sans KR"`, "가나다")]));
+        await Promise.all(PAPER_FONT_FACES.flatMap(([f, ws]) => ws.map((w) => document.fonts.load(`${w} 12px "${f}"`, "가나다"))));
         await document.fonts.ready;
       } catch { /* 글꼴 확인 실패해도 계속 */ }
       const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4", compress: true });
@@ -109,6 +121,7 @@ export function PaperJuboEditor({ slug, initial, churchName, onSaved }: { slug: 
     if (fonts?.ready) fonts.ready.then(() => setTimeout(go, 300)); else setTimeout(go, 1200);
   };
 
+  if (!loaded) return <div style={{ padding: 40, textAlign: "center", fontSize: 13, color: C.muted }}>불러오는 중이에요…</div>;
   if (!pj) {
     return (
       <div style={{ background: "white", border: `1px solid ${C.border}`, borderRadius: 16, padding: 40, textAlign: "center" }}>
@@ -129,20 +142,28 @@ export function PaperJuboEditor({ slug, initial, churchName, onSaved }: { slug: 
   const add = (t: PjBlockType) => { const b = emptyBlock(t); update((p) => { p.pages[pageIdx].blocks.push(b); return p; }); setOpenId(b.id); };
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1.15fr)", gap: 24, alignItems: "start" }}>
+    // bp-paper-grid: 모바일에선 BuilderPage의 모바일 스타일이 한 칸(설정 → 미리보기 순)으로 바꿈
+    <div className="bp-paper-grid" style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1.15fr)", gap: 24, alignItems: "start" }}>
       {/* 왼쪽: 편집 */}
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         <div style={{ background: "white", border: `1px solid ${C.border}`, borderRadius: 16, padding: 20 }}>
           <p style={{ fontWeight: 800, color: C.navy, fontSize: 15 }}>디자인</p>
-          <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-            {([["classic", "클래식 (흑백 · 테두리)"], ["modern", "모던 (포인트 색)"]] as const).map(([v, l]) => (
-              <button key={v} type="button" onClick={() => update((p) => ({ ...p, template: v }))}
-                style={{ ...small, padding: "8px 12px", fontWeight: 700, borderColor: pj.template === v ? C.sky : C.border, background: pj.template === v ? "#EFF6FF" : "white", color: pj.template === v ? C.sky : C.text }}>{l}</button>
-            ))}
-            <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: C.muted, marginLeft: 4 }}>
-              포인트 색 <input type="color" value={pj.color} onChange={(e) => update((p) => ({ ...p, color: e.target.value }))} style={{ width: 32, height: 28, border: "none", background: "none", padding: 0, cursor: "pointer" }} />
-            </label>
+          {/* 디자인 7종(2026-11-24, themes.ts): 누르면 그 디자인 기본 색으로 바뀜. 내용은 그대로 */}
+          <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 8 }}>
+            {PJ_THEMES.map((th) => {
+              const on = themeIdOf(pj.template) === th.id;
+              return (
+                <button key={th.id} type="button" onClick={() => update((p) => ({ ...p, template: th.id, color: th.accent }))}
+                  style={{ ...small, display: "flex", alignItems: "center", gap: 8, padding: "9px 10px", textAlign: "left", fontWeight: 700, borderColor: on ? C.sky : C.border, background: on ? "#EFF6FF" : "white", color: on ? C.sky : C.text }}>
+                  <span aria-hidden style={{ flexShrink: 0, width: 18, height: 18, borderRadius: 5, background: th.accent, border: "1px solid rgba(0,0,0,.08)" }} />
+                  <span style={{ minWidth: 0 }}><span style={{ fontSize: 10.5, color: C.muted, marginRight: 4 }}>{th.no}</span>{th.name}</span>
+                </button>
+              );
+            })}
           </div>
+          <label style={{ marginTop: 10, display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: C.muted }}>
+            포인트 색 <input type="color" value={pj.color} onChange={(e) => update((p) => ({ ...p, color: e.target.value }))} style={{ width: 32, height: 28, border: "none", background: "none", padding: 0, cursor: "pointer" }} />
+          </label>
         </div>
 
         <div style={{ background: "white", border: `1px solid ${C.border}`, borderRadius: 16, padding: 20 }}>
@@ -244,7 +265,7 @@ function BlockEditor({ b, onChange }: { b: PjBlock; onChange: (fn: (b: PjBlock) 
     return (
       <div style={wrap}>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>{f("founded", "설립", "설립 2006. 1. 1.")}{f("issue", "호수", "제2026-46")}{f("date", "날짜", "2026. 11. 15.")}</div>
-        {f("motto", "표어(큰 글씨)", "교회비전 : “1백 1천 세계비전”")}
+        {f("motto", "표어(큰 글씨)", "교회비전 : “예배로 하나 되는 교회”")}
         {f("slogan", "표어 아래 문구", "“여호와를 기뻐하라!”")}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 120px", gap: 8 }}>{f("verse", "말씀")}{f("verseRef", "말씀 출처", "시편37:4")}</div>
         <label>{label("짧은 줄 (한 줄에 하나)")}<textarea style={{ ...input, minHeight: 80 }} value={c.lines.join("\n")} onChange={(e) => onChange((x) => { x.cover!.lines = e.target.value.split("\n"); })} /></label>

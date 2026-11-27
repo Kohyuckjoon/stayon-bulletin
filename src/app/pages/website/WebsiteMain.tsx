@@ -599,7 +599,7 @@ export function WebsiteMain() {
             </nav>
 
             {/* 히어로 섹션 - 스테이온 플랫폼 통일감 적용 (상단 알림 배너 + 카드형 레이아웃) */}
-            <section className="px-4 sm:px-6 pt-6 sm:pt-8 pb-10 sm:pb-16 md:pt-14 md:pb-24 lg:pt-4 lg:pb-8">
+            <section className="px-4 sm:px-6 pt-6 sm:pt-8 pb-10 sm:pb-16 md:pt-14 md:pb-24 lg:pt-10 lg:pb-12">
                 <div className="max-w-6xl mx-auto">
 
                     {/* 상단 프로모션 인포 배너("견적서 비교 없이, 빈칸 3개만 채우면…" + 지금 시작하기) — 숨김(2026-11-12, 요청).
@@ -649,7 +649,7 @@ export function WebsiteMain() {
                                     <div className="text-[10px] sm:text-xs text-gray-400 font-bold mb-1">월 이용요금</div>
                                     {/* 오픈 프로모션(2026-11-20): 원래 가격에 취소선 + 무료 */}
                                     <div className="flex flex-wrap items-baseline gap-x-1.5">
-                                        <span className="text-[11px] sm:text-sm font-bold text-gray-400 line-through decoration-gray-400 decoration-2">7,900원~</span>
+                                        <span className="text-[11px] sm:text-sm font-bold text-gray-400 line-through decoration-gray-400 decoration-2">9,900원~</span>
                                         <span className="text-sm sm:text-base font-black text-[#F04452] break-keep">오픈 프로모션 무료!</span>
                                     </div>
                                 </div>
@@ -968,7 +968,7 @@ export function WebsiteMain() {
                                 </div>
                                 <div className="flex items-center gap-3 text-sm font-semibold text-white">
                                     <div className="w-6 h-6 rounded-full bg-emerald-400/20 text-emerald-400 flex items-center justify-center flex-shrink-0 text-xs font-bold">✓</div>
-                                    <span>월 7,900원부터 투명하고 합리적인 비용 <span className="text-slate-400 text-xs font-normal">(관리형 라이트 {MANAGED_PLANS.lite.monthly.toLocaleString()}원 · 관리형 맥스 {MANAGED_PLANS.max.monthly.toLocaleString()}원)</span></span>
+                                    <span>월 9,900원부터 투명하고 합리적인 비용 <span className="text-slate-400 text-xs font-normal">(관리형 라이트 {MANAGED_PLANS.lite.monthly.toLocaleString()}원 · 관리형 맥스 {MANAGED_PLANS.max.monthly.toLocaleString()}원)</span></span>
                                 </div>
                             </div>
                         </div>
@@ -1031,7 +1031,7 @@ export function WebsiteMain() {
                                         <span className="text-xs font-bold text-blue-200 uppercase tracking-wider">Open Event</span>
                                         <span className="text-[10px] bg-amber-400 text-gray-900 font-black px-2.5 py-1 rounded-full shrink-0 whitespace-nowrap">기간 한정</span>
                                     </div>
-                                    {/* 요금(2026-11-20 /pricing과 통일): 프로·셀프형 월 7,900원 / 관리형 라이트 14,900원 / 관리형 맥스 19,900원 — 모두 모바일 주보 포함.
+                                    {/* 요금(2026-11-20 /pricing과 통일): 프로·셀프형 월 9,900원 / 관리형 라이트 14,900원 / 관리형 맥스 19,900원 — 모두 모바일 주보 포함.
                                         관리형은 정기결제 12개월 다 채우면 환급. 오픈 이벤트 기간에는 무료라는 안내를 아래에 */}
                                     <div className="space-y-2.5">
                                         <div className="flex items-center justify-between gap-3 rounded-2xl bg-white/5 px-4 py-3">
@@ -1039,7 +1039,7 @@ export function WebsiteMain() {
                                                 <p className="text-sm font-black text-white">프로 · 셀프형</p>
                                                 <p className="text-[11px] text-slate-400 break-keep">직접 편집 + 모바일 주보 포함</p>
                                             </div>
-                                            <p className="shrink-0 text-white"><span className="text-xs text-blue-200 mr-1">월</span><span className="text-2xl sm:text-3xl font-black tracking-tight">7,900</span><span className="text-xs text-blue-200 ml-0.5">원</span></p>
+                                            <p className="shrink-0 text-white"><span className="text-xs text-blue-200 mr-1">월</span><span className="text-2xl sm:text-3xl font-black tracking-tight">9,900</span><span className="text-xs text-blue-200 ml-0.5">원</span></p>
                                         </div>
                                         <div className="flex items-center justify-between gap-3 rounded-2xl bg-white/5 px-4 py-3">
                                             <div className="min-w-0">
@@ -1091,7 +1091,7 @@ export function WebsiteMain() {
                             <div className="mt-4 pt-4 border-t border-gray-100 text-xs text-gray-500 space-y-1">
                                 <div className="flex justify-between"><span>구축비</span><b className="text-[#191F28]">0원</b></div>
                                 <div className="flex justify-between"><span>월 이용료</span><b className="text-[#3182F6]">이벤트 기간 무료</b></div>
-                                <div className="flex justify-between"><span>이벤트 종료 이후</span><b className="text-[#191F28]">월 7,900원</b></div>
+                                <div className="flex justify-between"><span>이벤트 종료 이후</span><b className="text-[#191F28]">월 9,900원</b></div>
                             </div>
                         </div>
                         <div className="bg-white p-6 sm:p-7 rounded-[1.5rem] border-2 border-[#3182F6]/30 shadow-2xs flex flex-col">

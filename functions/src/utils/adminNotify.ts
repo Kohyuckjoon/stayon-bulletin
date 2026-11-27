@@ -146,6 +146,19 @@ export const sendMailNotification = async (
         value: isUpdate ? "재발행(업데이트)" : "신규 발행",
       },
     ];
+    // 같은 날짜로 올린 종이 주보(2026-11-25)
+    const paper = Array.isArray(data.paperFiles) ?
+      data.paperFiles as { name: string; url: string }[] : [];
+    if (paper.length) {
+      fields.push({
+        title: `종이 주보 ${paper.length}개`,
+        value: paper.map((p) =>
+          p.url ?
+            "<a href=\"" + p.url + "\" style=\"color:#2563EB\">" +
+              p.name.replace(/[<>&"]/g, "") + "</a>" :
+            p.name.replace(/[<>&"]/g, "")).join("<br>"),
+      });
+    }
     if (data.bulletinId) {
       const url =
         "https://bulletin.stayon-platform.com/view/" + data.bulletinId;
